@@ -5,7 +5,6 @@ import random as rand
 def pick_particle(frame):
     num_particles = len(frame)
     rand_idx = rand.randint(0, num_particles - 1)
-    print(rand_idx)
     return rand_idx
 
 
@@ -16,19 +15,21 @@ def nudge_com(frame, particle_idx, delta, copy=True):
         nframe = frame
     displacement = [rand.uniform(-delta/2, delta/2) for _ in range(3)]
     nframe[particle_idx].position += displacement
+    nframe.wrap()
     return nframe
 
 
-def nudge_orientation(frame, particle_idx, delta, copy=True):
+def nudge_orientation(frame, particle_idx, delta, copy=True, quat_key="c_q"):
     if copy:
         nframe = frame.copy()
     else:
         nframe = frame
     displacement = get_rand_unit_quat()
-    new_orientation = nframe.arrays["quats"][particle_idx] + (displacement * delta)
+    new_orientation = nframe.arrays[quat_key][particle_idx] + (displacement * delta)
     new_mag = np.linalg.norm(new_orientation)
     new_orientation /= new_mag
-    nframe.arrays["quats"][particle_idx] = new_orientation
+    nframe.arrays[quat_key][particle_idx] = new_orientation
+    nframe.wrap()
     return nframe
 
 

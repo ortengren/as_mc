@@ -7,6 +7,8 @@ from anisoap.representations import EllipsoidalDensityProjection
 from anisoap.utils import ClebschGordanReal
 from anisoap.asecg import CGRep as cg
 import datetime
+import metatensor
+import random
 
 
 def separate_mols(frame):
@@ -57,9 +59,49 @@ def get_ell_frames(frames, write_file=False):
     return ell_frames
 
 
-if __name__ == "__main__":
-    data_path = "Pentacene/Pentacene/traj-pentacene.xyz"
-    frames = ase.io.read(data_path, ":")
-    print(len(frames))
+def get_rep_raw(
+        ell_frames,
+        write_file=False,
+        lmax=9,
+        nmax=6,
+        gaussian=1.5,
+        cutoff_radius=15,
+        hypers=None
+):
+    if hypers is None:
+        hypers = {
+            "max_angular": lmax,
+            "max_radial": nmax,
+            "radial_basis_name": "gto",
+            "rotation_type": "quaternion",
+            "rotation_key": "quats",
+            "subtract_center_contribution": True,
+            "radial_gaussian_width": gaussian,
+            "cutoff_radius": cutoff_radius,
+            "basis_rcond": 1e-8,
+            "basis_tol": 1e-4,
+        }
+    calculator = EllipsoidalDensityProjection(**hypers)
+    rep_raw = calculator.transform(ell_frames)
+    if write_file:
+        dt = datetime.datetime.today().isoformat(timespec="minutes")
+        fname = "output/as_rep_" + dt + ".npz"
+        metatensor.save(fname, rep_raw)
+    return rep_raw
 
-    ell_frames = get_ell_frames(frames, write_file=True)
+
+def get_power_spectrum_reps(rep_raw_path):
+    rep_raw = metatensor.load(rep_raw_path)
+
+
+if __name__ == "__main__":
+    data_path = "benzenes.xyz"
+    frames = ase.io.read(data_path, ":")
+    ell_frames = ase.io.read("ellipsoids.xyz", ":")
+    print(len(frames))
+    #ell_frames = get_ell_frames(frames, write_file=True)
+    two_benzenes = [frame for frame in frames if len(frame) == 24]
+    two_ellipsoids = [frame for frame in ell_frames if len(frame) == 2]
+    print(len(two_ellipsoids))
+    #ase.io.write("two_benzenes.xyz", two_benzenes)
+    ase.io.write("two_ellipsoids.xyz", two_ellipsoids)
