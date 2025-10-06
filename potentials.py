@@ -10,7 +10,9 @@ def read_props(filename):
         "cluster_cutoff_5a": [],
     }
     with open(filename) as f:
+        # throw away the first line
         _ = f.readline()
+        # iterate through lines of file and update dict
         l = f.readline()
         while l != "":
             l = l.split()

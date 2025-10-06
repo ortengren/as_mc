@@ -11,9 +11,6 @@ BETA = 1 / (BOLTZCONST * TEMP)
 
 def decide_accept(old_energy, new_energy):
     r = random.uniform(0, 1)
-    print(f"old energy: {old_energy}; new energy: {new_energy}")
-    print(f"r: {r}; compared to: {np.exp(-BETA * (new_energy - old_energy))}")
-    print(f"new energy - old energy: {new_energy-old_energy}")
     return r < np.exp(-BETA * (new_energy - old_energy))
 
 
@@ -42,24 +39,26 @@ class MetropolisCalculator:
             return NotImplementedError()
 
     def step(self):
+        # calculate a possible new state and calculate its energy
         trial_frame = simultaneous_move(self.frames[-1], self.pos_delt, self.or_delt)
         trial_energy = self.calc_energy(trial_frame)
-        print(f"trial energy: {trial_energy}")
+        # decide whether trajectory will assume the new state or retain its current state
         keep_move = decide_accept(self.energies[-1], trial_energy)
-        print(f"keep move: {keep_move}")
         if keep_move:
+            # add trial state to trajectory
             self.frames.append(trial_frame)
             self.energies.append(trial_energy)
-            print(f"trial energy added: {trial_energy}")
         else:
+            # add a copy of the current state to the trajectory
             self.frames.append(self.frames[-1])
             self.energies.append(self.energies[-1])
-            print(f"old energy kept: {self.energies[-1]}")
+        # update object's step_count variable
         self.step_count += 1
 
     def calculate_trajectory(self, num_steps):
         while self.step_count < num_steps:
             self.step()
+            # print progress of simulation
             if self.step_count % 100 == 0:
                 print(self.step_count, " / ", num_steps)
             

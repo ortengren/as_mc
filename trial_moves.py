@@ -13,7 +13,9 @@ def nudge_com(frame, particle_idx, delta, copy=True):
         nframe = frame.copy()
     else:
         nframe = frame
+    # generate random displacement (x_1, x_2, x_3) such that |x_i| <= delta / 2
     displacement = [rand.uniform(-delta/2, delta/2) for _ in range(3)]
+    # add displacement to particle position
     nframe[particle_idx].position += displacement
     nframe.wrap()
     return nframe
@@ -24,7 +26,9 @@ def nudge_orientation(frame, particle_idx, delta, copy=True, quat_key="c_q"):
         nframe = frame.copy()
     else:
         nframe = frame
+    # generate random orientational displacement
     displacement = get_rand_unit_quat()
+    # add displacement to particle orientation and normalize the result
     new_orientation = nframe.arrays[quat_key][particle_idx] + (displacement * delta)
     new_mag = np.linalg.norm(new_orientation)
     new_orientation /= new_mag
@@ -40,8 +44,8 @@ def get_rand_unit_quat():
     v1 = -1
     v2 = -1
     while v1**2 + v2**2 >= 1:
-        v1 = rand.uniform(-1,1)
-        v2 = rand.uniform(-1,1)
+        v1 = rand.uniform(-1, 1)
+        v2 = rand.uniform(-1, 1)
     s1 = v1**2 + v2**2
 
     v3 = -1
