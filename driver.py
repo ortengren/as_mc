@@ -3,16 +3,20 @@ def main():
     from metropolis import MetropolisCalculator
     import ase
     import pickle
+    import datetime
 
     frames = ase.io.read("two_benzenes.xyz", ":")
-    ell_frames = ase.io.read("two_ellipsoids.xyz", ":")
+    ell_frames = ase.io.read("two_ells_with_axes.xyz", ":")
     for ell_frame, frame in zip(ell_frames, frames):
         ell_frame.info["energy"] = frame.get_total_energy()
 
-    metro = MetropolisCalculator(ell_frames[0], ell_frames[0].info["energy"])
-    metro.calculate_trajectory(1_000)
+    metro = MetropolisCalculator(ell_frames[0], ell_frames[0].info["energy"], energy_func="GB")
+    metro.calculate_trajectory(10_000)
 
-    pickle.dump(metro, "metro_9-29-25_2:05.pickle")
+    dt = datetime.datetime.today().isoformat(timespec="minutes")
+    with open(f"metro_{dt}.pkl", "wb") as f:
+        # noinspection PyTypeChecker
+        pickle.dump(metro, f)
     print("done")
 
 

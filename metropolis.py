@@ -1,7 +1,7 @@
 import numpy as np
 import random
 from trial_moves import simultaneous_move
-from potentials import get_rand_energy
+from potentials import get_rand_energy, gay_berne_uniaxial
 
 
 BOLTZCONST = 8.617333262e-5 # eV / K
@@ -15,7 +15,7 @@ def decide_accept(old_energy, new_energy):
 
 
 class MetropolisCalculator:
-    def __init__(self, init_frame, init_energy, energy_func="random", seed=1234, pos_delt=2, or_delt=0.1):
+    def __init__(self, init_frame, energy_func="random", seed=1234, pos_delt=2, or_delt=0.1):
         self.init_frame = init_frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
@@ -23,7 +23,7 @@ class MetropolisCalculator:
         self.energy_func = energy_func
         self.seed = seed
         self.frames = [init_frame]
-        self.energies = [init_energy]
+        self.energies = [self.calc_energy(init_frame)]
         if self.seed is not None:
             self.rand = random.Random(self.seed)
         else:
@@ -35,6 +35,11 @@ class MetropolisCalculator:
                 return get_rand_energy(frame, self.energies[-1], self.rand)
             else:
                 return get_rand_energy(frame, self.energies[-1])
+        elif self.energy_func == "GB":
+            r_ij = frame.get_distance(0, 1, mic=True, vector=True)
+            u_i_hat = frame.arrays["or_vec"][0]
+            u_j_hat = frame.arrays["or_vec"][1]
+            return gay_berne_uniaxial(r_ij, u_i_hat, u_j_hat)
         else:
             return NotImplementedError()
 

@@ -45,7 +45,7 @@ def gay_berne_uniaxial(rij, ui_hat, uj_hat, kappa=3, kappa_prime=5, mu=2, nu=1):
     rij_hat = rij/rij_mag
     chi = (kappa**2 - 1) / (kappa**2 + 1)
     chi_prime = (kappa_prime**(1/mu) - 1) / (kappa_prime**(1/mu) + 1)
-    common = (np.dot(ui_hat, rij_hat) + np.dot(uj_hat, rij_hat))**2 / (1 + chi_prime * np.dot(ui_hat, uj_hat))    +    (np.dot(ui_hat, rij_hat) - np.dot(uj_hat, rij_hat))**2 / (1 - chi_prime * np.dot(ui_hat, uj_hat))
+    common = (np.dot(ui_hat, rij_hat) + np.dot(uj_hat, rij_hat))**2 / (1 + chi_prime * np.dot(ui_hat, uj_hat)) + (np.dot(ui_hat, rij_hat) - np.dot(uj_hat, rij_hat))**2 / (1 - chi_prime * np.dot(ui_hat, uj_hat))
     eps_prime = 1 - 0.5 * chi_prime * common
     eps = (1 - chi**2 * np.dot(ui_hat, uj_hat)**2)**-0.5
     eps = eps0 * eps_prime**mu * eps ** nu
