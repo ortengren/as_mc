@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import random
+from scipy.spatial.transform import Rotation
 
 def read_props(filename):
     props = {
@@ -50,9 +51,45 @@ def gay_berne_uniaxial(rij, ui_hat, uj_hat, kappa=3, kappa_prime=5, mu=2, nu=1):
     eps = (1 - chi**2 * np.dot(ui_hat, uj_hat)**2)**-0.5
     eps = eps0 * eps_prime**mu * eps ** nu
     sigma = sigma_s * (1 - 0.5 * chi * common) ** -0.5
+    #TODO: Look into units to make sure they align with rest of algorithm
     return 4 * eps * ((sigma_s / (rij_mag - sigma + sigma_s))**12 - (sigma_s / (rij_mag - sigma + sigma_s))**6)
+
+
+def gay_berne_walsh(frame, sigma_0=1, sigma_c=1, eps_0=1, eps_x=1, eps_y=1, eps_z=1, mu=1, nu=1):
+    """
+    Walsh, T. R. Towards an Anisotropic Bead-Spring Model for Polymers: A Gay-Berne Parametrization for Benzene.
+    Molecular Physics 2002, 100 (17), 2867–2876. https://doi.org/10.1080/00268970210148796.
+    """
+    r_12 = frame.get_distance(0, 1, mic=True, vector=True) # units of Å
+    r_12_mag = np.linalg.norm(r_12)
+    r_12_hat = r_12 / r_12_mag
+    # set ellipsoid semiaxis lengths using first ellipsoid; we assume second is the same
+    sigma_x, sigma_y, sigma_z = sigma_0 * frame.arrays["axes"][0] # units of Å
+    S = np.diag([sigma_x, sigma_y, sigma_z])
+    # define orientational quantities
+    R_1 = Rotation.from_quat(np.roll(frame.arrays["c_q"][0], -1))
+    M_1 = R_1.as_matrix()
+    R_2 = Rotation.from_quat(np.roll(frame.arrays["c_q"][1], -1))
+    M_2 = R_2.as_matrix()
+    # calculate shape parameter sigma
+    A = (M_1.T @ S @ S @ M_1) + (M_2.T @ S @ S @ M_2)
+    sigma = (2 * r_12_hat.T @ np.linalg.inv(A) @ r_12_hat)**(-1/2)
+    # calculate strength parameter epsilon
+    eps = (sigma_x * sigma_y + sigma_z**2) * ((2 * sigma_x * sigma_y / np.linalg.det(A))**(-1/2))
+    E = np.diag([(eps_x/eps_0)**(1/mu), (eps_y/eps_0)**(1/mu), (eps_z/eps_0)**(1/mu)])
+    B = (M_1.T @ E @ M_1) + (M_2.T @ E @ M_2)
+    eps_prime = 2 * r_12_hat.T @ np.linalg.inv(B) @ r_12_hat
+    epsilon = eps**nu * eps_prime**mu
+    # calculate Gay-Berne potential
+    t_1 = (sigma_c / (r_12_mag - sigma + sigma_c))**12
+    t_2 = (sigma_c / (r_12_mag - sigma + sigma_c))**6
+    U_GB = 4 * eps_0 * epsilon * (t_1 - t_2)
+    return U_GB
+
+
 
 
 if __name__ == "__main__":
     props = read_props("Pentacene/Pentacene/traj-pentacene.prop")
     print(props)
+
