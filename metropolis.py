@@ -1,7 +1,7 @@
 import numpy as np
 import random
 from trial_moves import simultaneous_move
-from potentials import get_rand_energy, gay_berne_uniaxial
+from potentials import get_rand_energy, gay_berne_walsh
 
 
 BOLTZCONST = 8.617333262e-5 # eV / K
@@ -39,7 +39,7 @@ class MetropolisCalculator:
             r_ij = frame.get_distance(0, 1, mic=True, vector=True)
             u_i_hat = frame.arrays["or_vec"][0]
             u_j_hat = frame.arrays["or_vec"][1]
-            return gay_berne_uniaxial(r_ij, u_i_hat, u_j_hat)
+            return gay_berne_walsh(frame)
         else:
             return NotImplementedError()
 
