@@ -25,7 +25,7 @@ def decide_accept(old_energy, new_energy):
 
 
 class MetropolisCalculator:
-    def __init__(self, init_frame, energy_func="random", seed=1234, pos_delt=2, or_delt=0.1):
+    def __init__(self, init_frame, energy_func="GB", seed=None, pos_delt=0.02, or_delt=0.001):
         self.init_frame = init_frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
@@ -74,6 +74,7 @@ class MetropolisCalculator:
         while self.step_count < num_steps:
             self.step()
             # print progress of simulation
+            # TODO: use tqdm instead of printing
             if self.step_count % 100 == 0:
                 print(self.step_count, " / ", num_steps)
 
@@ -81,7 +82,7 @@ class MetropolisCalculator:
         if at_step is None:
             at_step = self.step_count
         num_acc = 0
-        for dec in self.decisions[1, at_step+1:]:
+        for dec in self.decisions[1 : at_step+1:]:
             num_acc += dec.value
         return num_acc / at_step
             

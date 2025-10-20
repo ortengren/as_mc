@@ -95,13 +95,13 @@ def get_power_spectrum_reps(rep_raw_path):
 
 
 if __name__ == "__main__":
-    data_path = "benzenes.xyz"
+    data_path = "xyz_files/benzenes.xyz"
     frames = ase.io.read(data_path, ":")
-    ell_frames = ase.io.read("ellipsoids.xyz", ":")
+    ell_frames = ase.io.read("xyz_files/ellipsoids.xyz", ":")
     print(len(frames))
     #ell_frames = get_ell_frames(frames, write_file=True)
     two_benzenes = [frame for frame in frames if len(frame) == 24]
     two_ellipsoids = [frame for frame in ell_frames if len(frame) == 2]
     print(len(two_ellipsoids))
     #ase.io.write("two_benzenes.xyz", two_benzenes)
-    ase.io.write("two_ellipsoids.xyz", two_ellipsoids)
+    ase.io.write("xyz_files/two_ellipsoids.xyz", two_ellipsoids)
