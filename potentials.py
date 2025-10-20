@@ -69,6 +69,7 @@ def gay_berne_walsh(
     """
     Walsh, T. R. Towards an Anisotropic Bead-Spring Model for Polymers: A Gay-Berne Parametrization for Benzene.
     Molecular Physics 2002, 100 (17), 2867–2876. https://doi.org/10.1080/00268970210148796.
+    Assumes frame has only two particles.
 
     :param frame:
     :param sigma_0: scaling parameter of ellipsoid axes, units of Å
@@ -109,8 +110,4 @@ def gay_berne_walsh(
     U_GB = 4 * eps_0 * epsilon * (t_1 - t_2)
     return U_GB
 
-
-if __name__ == "__main__":
-    props = read_props("Pentacene/Pentacene/traj-pentacene.prop")
-    print(props)
 

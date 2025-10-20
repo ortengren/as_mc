@@ -2,11 +2,21 @@ import numpy as np
 import random
 from trial_moves import simultaneous_move
 from potentials import get_rand_energy, gay_berne_walsh
+from enum import Enum
 
 
 BOLTZCONST = 8.617333262e-5 # eV / K
 TEMP = 300 # K
 BETA = 1 / (BOLTZCONST * TEMP)
+
+
+class Decision(Enum):
+    """
+    Enum for tracking whether a trial move is accepted or rejected.
+    """
+    ACCEPT = 1
+    REJECT = 0
+    INIT = -1
 
 
 def decide_accept(old_energy, new_energy):
@@ -24,6 +34,7 @@ class MetropolisCalculator:
         self.seed = seed
         self.frames = [init_frame]
         self.energies = [self.calc_energy(init_frame)]
+        self.decisions = [Decision.INIT]
         if self.seed is not None:
             self.rand = random.Random(self.seed)
         else:
@@ -36,9 +47,6 @@ class MetropolisCalculator:
             else:
                 return get_rand_energy(frame, self.energies[-1])
         elif self.energy_func == "GB":
-            r_ij = frame.get_distance(0, 1, mic=True, vector=True)
-            u_i_hat = frame.arrays["or_vec"][0]
-            u_j_hat = frame.arrays["or_vec"][1]
             return gay_berne_walsh(frame)
         else:
             return NotImplementedError()
@@ -53,10 +61,12 @@ class MetropolisCalculator:
             # add trial state to trajectory
             self.frames.append(trial_frame)
             self.energies.append(trial_energy)
+            self.decisions.append(Decision.ACCEPT)
         else:
             # add a copy of the current state to the trajectory
             self.frames.append(self.frames[-1])
             self.energies.append(self.energies[-1])
+            self.decisions.append(Decision.REJECT)
         # update object's step_count variable
         self.step_count += 1
 
@@ -66,4 +76,20 @@ class MetropolisCalculator:
             # print progress of simulation
             if self.step_count % 100 == 0:
                 print(self.step_count, " / ", num_steps)
+
+    def get_acc_rate(self, at_step=None):
+        if at_step is None:
+            at_step = self.step_count
+        num_acc = 0
+        for dec in self.decisions[1, at_step+1:]:
+            num_acc += dec.value
+        return num_acc / at_step
             
+
+def calc_free_energy(params):
+    # TODO: implement
+    # define order parameters (interparticle distance & misalignment angle)
+    # calc prob of each state
+    # calc entropy to get density of states
+    # calc partition function as -kTln(sum_{states i} p_i \Omega e^{-beta*U_i})
+    return NotImplementedError
