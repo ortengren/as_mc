@@ -1,7 +1,7 @@
 import numpy as np
 import random
 from trial_moves import simultaneous_move
-from potentials import get_rand_energy, gay_berne_walsh
+from potentials import get_rand_energy, gay_berne_walsh, quadrupole_potential
 from enum import Enum
 
 
@@ -25,7 +25,7 @@ def decide_accept(old_energy, new_energy):
 
 
 class MetropolisCalculator:
-    def __init__(self, init_frame, energy_func="GB", seed=None, pos_delt=0.02, or_delt=0.001):
+    def __init__(self, init_frame, energy_func="Walsh", seed=None, pos_delt=0.02, or_delt=0.001):
         self.init_frame = init_frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
@@ -48,6 +48,8 @@ class MetropolisCalculator:
                 return get_rand_energy(frame, self.energies[-1])
         elif self.energy_func == "GB":
             return gay_berne_walsh(frame)
+        elif self.energy_func == "Walsh":
+            return gay_berne_walsh(frame) + quadrupole_potential(frame)
         else:
             return NotImplementedError()
 

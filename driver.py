@@ -37,7 +37,7 @@ def generate_simulation_id(method="datetime"):
         return NotImplementedError
 
 
-def run_simulation(simulation_id=None):
+def run_simulation(simulation_id=None, init_frame_idx=0):
     frames = ase.io.read("xyz_files/two_benzenes.xyz", ":")
     ell_frames = ase.io.read("xyz_files/two_ells_with_axes.xyz", ":")
     print("frames length: ", len(frames))
@@ -47,7 +47,7 @@ def run_simulation(simulation_id=None):
         ell_frame.info["energy"] = frame.get_total_energy()
 
     metro = MetropolisCalculator(ell_frames[0], energy_func="GB")
-    metro.calculate_trajectory(10_000)
+    metro.calculate_trajectory(12_000)
     # save MetropolisCalculator object to file
     if simulation_id is not None:
         with open(f"simulations/{simulation_id}/MetropolisCalculator.pkl", "wb") as f:
@@ -101,20 +101,24 @@ def plot_power_spectrum(x, simulation_id):
     plt.savefig(f"simulations/{simulation_id}/power_spectrum.png")
 
 
-def calculate_all(simulation_id):
-    metro = run_simulation(simulation_id)
+def calculate_all(simulation_id, init_frame_idx=0):
+    metro = run_simulation(simulation_id, init_frame_idx)
     density_proj = analyze_trajectory(metro, simulation_id)
     X = generate_ps(density_proj, simulation_id)
     return metro, density_proj, X
 
 
 def main():
-    sim_id = generate_simulation_id()
-    metro, density_proj, X = calculate_all(sim_id)
-    pca = PCA(n_components=2)
-    X_pca = pca.fit_transform(X)
-    plt.scatter(X_pca[1000:, 0], X_pca[1000:, 1])
-    plt.savefig(f"simulations/{sim_id}/power_spectrum_pca.png")
+    sim_id_base = "walsh_potential"
+    for i in range(16):
+        os.makedirs(f"simulations/{sim_id_base}/run{i}")
+        sim_id = f"{sim_id_base}/run{i}"
+        metro, density_proj, X = calculate_all(sim_id, init_frame_idx=i)
+        pca = PCA(n_components=2)
+        X_pca = pca.fit_transform(X[1200:, :])
+        plt.scatter(X_pca[:, 0], X_pca[:, 1])
+        plt.savefig(f"simulations/{sim_id}/power_spectrum_pca.png")
+        plt.close()
 
 
 if __name__ == "__main__":

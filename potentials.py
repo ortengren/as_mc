@@ -1,7 +1,10 @@
+import ase
 import numpy as np
 import pandas as pd
 import random
 from scipy.spatial.transform import Rotation
+
+EPS_0 = 8.8541878188E-22 # F / Å
 
 def read_props(filename):
     props = {
@@ -59,12 +62,12 @@ def gay_berne_walsh(
         frame,
         sigma_0=1,
         sigma_c=3.7496,
-        eps_0=0.01036,
-        eps_x=0.01036*5.7136,
-        eps_y=0.01036*5.7136,
-        eps_z=0.01036*0.0447,
-        mu=2,
-        nu=1,
+        eps_0=1,
+        eps_x=5.7136,
+        eps_y=5.7136,
+        eps_z=0.0447,
+        mu=7.6093,
+        nu=-12.4600,
 ):
     """
     Walsh, T. R. Towards an Anisotropic Bead-Spring Model for Polymers: A Gay-Berne Parametrization for Benzene.
@@ -74,13 +77,13 @@ def gay_berne_walsh(
     :param frame:
     :param sigma_0: scaling parameter of ellipsoid axes, units of Å
     :param sigma_c: controls width of potential well
-    :param eps_0: scaling parameter, units of eV/benzene (set to 1 kJ/mol in paper)
-    :param eps_x: units of eV/benzene (units of kJ/mol in paper)
-    :param eps_y: units of eV/benzene (units of kJ/mol in paper)
-    :param eps_z: units of eV/benzene (units of kJ/mol in paper)
+    :param eps_0: scaling parameter (set to 1 kJ/mol in paper)
+    :param eps_x: (units of kJ/mol in paper)
+    :param eps_y: (units of kJ/mol in paper)
+    :param eps_z: (units of kJ/mol in paper)
     :param mu: dimensionless parameter
     :param nu: dimensionless parameter
-    :return: potential of system, units of eV/benzene (in units of kJ/mol in paper)
+    :return: potential of system (in units of kJ/mol in paper)
     """
     r_12 = frame.get_distance(0, 1, mic=True, vector=True) # units of Å
     r_12_mag = np.linalg.norm(r_12)
@@ -111,3 +114,18 @@ def gay_berne_walsh(
     return U_GB
 
 
+def quadrupole_potential(frame, Theta=9.2074):
+    assert type(frame) is ase.Atoms
+    assert len(frame) == 2
+    r_12 = frame.get_distance(0, 1, mic=True, vector=True)  # units of Å
+    r_12_mag = np.linalg.norm(r_12)
+    r_12_hat = r_12 / r_12_mag
+    n_1 = frame.arrays["c_q"][0][1:]
+    n_1_hat = n_1 / np.linalg.norm(n_1)
+    n_2 = frame.arrays["c_q"][1][1:]
+    n_2_hat = n_2 / np.linalg.norm(n_2)
+    factor = 0.75 * (35*(np.dot(n_1_hat, r_12_hat)**2)*(np.dot(n_2_hat, r_12_hat)**2)
+                     - 5*np.dot(n_1_hat, r_12_hat)**2 - 5*np.dot(n_2_hat, r_12_hat)**2 - 20*np.dot(n_1_hat, r_12_hat)**2
+                     * np.dot(n_2_hat, r_12_hat)*np.dot(n_1_hat, n_2_hat) + 2*np.dot(n_1_hat, n_2_hat)**2 + 1)
+    U_QQ = factor * Theta**2 / (4*np.pi*EPS_0 * r_12_mag**5)
+    return U_QQ
