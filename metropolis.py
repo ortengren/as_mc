@@ -25,7 +25,7 @@ def decide_accept(old_energy, new_energy):
 
 
 class MetropolisCalculator:
-    def __init__(self, init_frame, energy_func="Walsh", seed=None, pos_delt=0.02, or_delt=0.001):
+    def __init__(self, init_frame, energy_func="Walsh", seed=None, pos_delt=0.01, or_delt=0.001):
         self.init_frame = init_frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
