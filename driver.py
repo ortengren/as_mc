@@ -37,7 +37,7 @@ def generate_simulation_id(method="datetime"):
         return NotImplementedError
 
 
-def run_simulation(simulation_id=None, init_frame_idx=0):
+def run_simulation(length, simulation_id=None, init_frame_idx=0):
     frames = ase.io.read("xyz_files/two_benzenes.xyz", ":")
     ell_frames = ase.io.read("xyz_files/two_ells_with_axes.xyz", ":")
     print("frames length: ", len(frames))
@@ -47,7 +47,7 @@ def run_simulation(simulation_id=None, init_frame_idx=0):
         ell_frame.info["energy"] = frame.get_total_energy()
 
     metro = MetropolisCalculator(ell_frames[0], energy_func="GB")
-    metro.calculate_trajectory(12_000)
+    metro.calculate_trajectory(length)
     # save MetropolisCalculator object to file
     if simulation_id is not None:
         with open(f"simulations/{simulation_id}/MetropolisCalculator.pkl", "wb") as f:
@@ -101,24 +101,49 @@ def plot_power_spectrum(x, simulation_id):
     plt.savefig(f"simulations/{simulation_id}/power_spectrum.png")
 
 
-def calculate_all(simulation_id, init_frame_idx=0):
-    metro = run_simulation(simulation_id, init_frame_idx)
+def calculate_all(length, simulation_id, init_frame_idx=0):
+    metro = run_simulation(length, simulation_id, init_frame_idx)
     density_proj = analyze_trajectory(metro, simulation_id)
     X = generate_ps(density_proj, simulation_id)
     return metro, density_proj, X
 
 
 def main():
+    # create directory for simulation
     sim_id_base = "walsh_potential"
-    for i in range(16):
-        os.makedirs(f"simulations/{sim_id_base}/run{i}")
-        sim_id = f"{sim_id_base}/run{i}"
-        metro, density_proj, X = calculate_all(sim_id, init_frame_idx=i)
-        pca = PCA(n_components=2)
-        X_pca = pca.fit_transform(X[1200:, :])
-        plt.scatter(X_pca[:, 0], X_pca[:, 1])
-        plt.savefig(f"simulations/{sim_id}/power_spectrum_pca.png")
-        plt.close()
+    os.makedirs(f"simulations/{sim_id_base}/run2")
+    sim_id = f"{sim_id_base}/run2"
+    # run simulation
+    metro, density_proj, X = calculate_all(2000, sim_id)
+    # plot power spectrum PCA
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X[500:, :])
+    plt.scatter(X_pca[:, 0], X_pca[:, 1])
+    plt.savefig(f"simulations/{sim_id}/power_spectrum_pca.png")
+    plt.close()
+    # record simulation trajectory as XYZ file
+    ase.io.write(f"simulations/{sim_id}/traj.xyz", metro.frames)
+    # plot average move acceptance rate
+    block_avgs = []
+    total_avgs = []
+    final_n = -1
+    n = 1
+    decisions = [dec.value for dec in metro.decisions]
+    while n < len(decisions[1:]) / 50:
+        start = (n-1)*50 + 1
+        stop = n*50 + 1
+        avg = np.mean(decisions[start:stop])
+        block_avgs.append(avg)
+        total_avgs.append(metro.get_acc_rate(at_step=(50*n)+1))
+        final_n = n
+        n += 1
+    block_avgs.append(np.mean(decisions[final_n*50 + 1:]))
+    block_avgs = np.array(block_avgs)
+    plt.plot(block_avgs, label="block average")
+    plt.plot(total_avgs, label="total average")
+    plt.legend()
+    plt.savefig(f"simulations/{sim_id}/block_avgs.png")
+    plt.close()
 
 
 if __name__ == "__main__":
