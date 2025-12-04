@@ -120,9 +120,9 @@ def quadrupole_potential(frame, Theta=9.2074):
     r_12 = frame.get_distance(0, 1, mic=True, vector=True)  # units of Å
     r_12_mag = np.linalg.norm(r_12)
     r_12_hat = r_12 / r_12_mag
-    n_1 = frame.arrays["c_q"][0][1:]
+    n_1 = frame.arrays["or_vec"][0]
     n_1_hat = n_1 / np.linalg.norm(n_1)
-    n_2 = frame.arrays["c_q"][1][1:]
+    n_2 = frame.arrays["or_vec"][1]
     n_2_hat = n_2 / np.linalg.norm(n_2)
     factor = 0.75 * (35*(np.dot(n_1_hat, r_12_hat)**2)*(np.dot(n_2_hat, r_12_hat)**2)
                      - 5*np.dot(n_1_hat, r_12_hat)**2 - 5*np.dot(n_2_hat, r_12_hat)**2 - 20*np.dot(n_1_hat, r_12_hat)**2
