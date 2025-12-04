@@ -1,11 +1,18 @@
 import numpy as np
 import random as rand
+from scipy.spatial.transform import Rotation
 
 
 def pick_particle(frame):
     num_particles = len(frame)
     rand_idx = rand.randint(0, num_particles - 1)
     return rand_idx
+
+
+def calc_or_vec(frame, particle_idx, quat_key="c_q"):
+    R = Rotation.from_quat(np.roll(frame.arrays[quat_key][particle_idx], -1))
+    or_vec = R.as_matrix() @ [[0], [0], [1]]
+    return or_vec
 
 
 def nudge_com(frame, particle_idx, delta, copy=True):
@@ -33,6 +40,7 @@ def nudge_orientation(frame, particle_idx, delta, copy=True, quat_key="c_q"):
     new_mag = np.linalg.norm(new_orientation)
     new_orientation /= new_mag
     nframe.arrays[quat_key][particle_idx] = new_orientation
+    nframe.arrays["or_vec"][particle_idx] = calc_or_vec(nframe, particle_idx, quat_key).flatten()
     nframe.wrap()
     return nframe
 
