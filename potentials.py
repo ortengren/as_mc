@@ -58,11 +58,30 @@ def gay_berne_uniaxial(rij, ui_hat, uj_hat, kappa=3, kappa_prime=5, mu=2, nu=1):
     return 4 * eps * ((sigma_s / (rij_mag - sigma + sigma_s))**12 - (sigma_s / (rij_mag - sigma + sigma_s))**6)
 
 
+WALSH_PARAMS = {
+    "sigma_0": 1.,      # Å
+    "sigma_c": 3.7496,  # Å
+    "sigma_x": 5.8311,  # Å
+    "sigma_y": 5.8311,  # Å
+    "sigma_z": 4.9465,  # Å
+    "eps_0": 1.,        # kJ / mol
+    "eps_x": 5.7136,    # kJ / mol
+    "eps_y": 5.7136,    # kJ / mol
+    "eps_z": 0.0447,    # kJ / mol
+    "mu": 7.6093,
+    "nu": -12.46,
+    "Theta": 9.2074     # atomic units
+}
+
+
 def gay_berne_walsh(
         frame,
         sigma_0=1,
         sigma_c=3.7496,
-        eps_0=1,
+        sigma_x=5.8311,
+        sigma_y=5.8311,
+        sigma_z=4.9465,
+        eps_0=1e45,
         eps_x=5.7136,
         eps_y=5.7136,
         eps_z=0.0447,
@@ -89,7 +108,7 @@ def gay_berne_walsh(
     r_12_mag = np.linalg.norm(r_12)
     r_12_hat = r_12 / r_12_mag
     # set ellipsoid semiaxis lengths using first ellipsoid; we assume second is the same
-    sigma_x, sigma_y, sigma_z = sigma_0 * [5.8311, 5.8311, 4.9465] # values from paper, units of Å
+    sigma_x, sigma_y, sigma_z = sigma_0 * [sigma_x, sigma_y, sigma_z]
     S = np.diag([sigma_x, sigma_y, sigma_z])
     # define orientational quantities
     R_1 = Rotation.from_quat(np.roll(frame.arrays["c_q"][0], -1))
@@ -98,23 +117,21 @@ def gay_berne_walsh(
     M_2 = R_2.as_matrix()
     # calculate shape parameter sigma
     A = (M_1.T @ S @ S @ M_1) + (M_2.T @ S @ S @ M_2)
-    sigma = (2 * r_12_hat.T @ np.linalg.inv(A) @ r_12_hat)**(-1/2)
-    # 1 kJ/mol ~ 0.01036 eV/benzene
-    conv_factor = 0.01036
+    sigma = (2 * np.dot(r_12_hat, np.linalg.inv(A) @ r_12_hat))**(-1/2)
     # calculate strength parameter epsilon
-    eps = (sigma_x * sigma_y + sigma_z**2) * ((2 * sigma_x * sigma_y / np.linalg.det(A))**(-1/2))
-    E = np.diag([(eps_x/eps_0)**(1/mu), (eps_y/eps_0)**(1/mu), (eps_z/eps_0)**(1/mu)])
+    E = eps_0**(1/mu) * np.diag(((1/eps_x)**(1/mu), (1/eps_y)**(1/mu), (1/eps_z)**(1/mu)))
     B = (M_1.T @ E @ M_1) + (M_2.T @ E @ M_2)
-    eps_prime = 2 * r_12_hat.T @ np.linalg.inv(B) @ r_12_hat
-    epsilon = eps**nu * eps_prime**mu
+    nu_term = ((sigma_x*sigma_y + sigma_z**2) * np.sqrt(np.linalg.det(A)) / np.sqrt(2*sigma_x*sigma_y))**nu
+    mu_term = (2 * np.dot(r_12_hat, np.linalg.inv(B) @ r_12_hat))**mu
+    eps = nu_term * mu_term
     # calculate Gay-Berne potential
     t_1 = (sigma_c / (r_12_mag - sigma + sigma_c))**12
     t_2 = (sigma_c / (r_12_mag - sigma + sigma_c))**6
-    U_GB = 4 * eps_0 * epsilon * (t_1 - t_2)
+    U_GB = 4 * eps_0 * eps * (t_1 - t_2)
     return U_GB
 
 
-def quadrupole_potential(frame, Theta=9.2074):
+def quadrupole_potential(frame, Theta=1e-30):
     assert type(frame) is ase.Atoms
     assert len(frame) == 2
     r_12 = frame.get_distance(0, 1, mic=True, vector=True)  # units of Å

@@ -21,7 +21,11 @@ class Decision(Enum):
 
 def decide_accept(old_energy, new_energy):
     r = random.uniform(0, 1)
-    return r < np.exp(-BETA * (new_energy - old_energy))
+    dec_term = np.exp(-BETA * (new_energy - old_energy))
+    decision = r < dec_term
+    print(f"random num: {r}")
+    print(f"Boltz: {dec_term}")
+    return
 
 
 class MetropolisCalculator:
