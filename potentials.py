@@ -30,34 +30,6 @@ def read_props(filename):
     return props
 
 
-def get_rand_energy(frame, old_energy, rand=None):
-    if rand is None:
-        rand = random.Random()
-    e_dif = 0.05 * rand.uniform(-1, 1)
-    return old_energy + e_dif
-
-
-def gay_berne_uniaxial(rij, ui_hat, uj_hat, kappa=3, kappa_prime=5, mu=2, nu=1):
-    """
-    This is the uniaxial gb used by Berardi and Zannoni in their Liquid crystals paper:
-    https://pubs.rsc.org/en/content/articlelanding/1993/FT/FT9938904069
-    """
-    eps0 = 1
-    sigma_s = 1
-    sigma_e = kappa * sigma_s
-    rij_mag = np.linalg.norm(rij)
-    rij_hat = rij/rij_mag
-    chi = (kappa**2 - 1) / (kappa**2 + 1)
-    chi_prime = (kappa_prime**(1/mu) - 1) / (kappa_prime**(1/mu) + 1)
-    common = (np.dot(ui_hat, rij_hat) + np.dot(uj_hat, rij_hat))**2 / (1 + chi_prime * np.dot(ui_hat, uj_hat)) + (np.dot(ui_hat, rij_hat) - np.dot(uj_hat, rij_hat))**2 / (1 - chi_prime * np.dot(ui_hat, uj_hat))
-    eps_prime = 1 - 0.5 * chi_prime * common
-    eps = (1 - chi**2 * np.dot(ui_hat, uj_hat)**2)**-0.5
-    eps = eps0 * eps_prime**mu * eps ** nu
-    sigma = sigma_s * (1 - 0.5 * chi * common) ** -0.5
-    #TODO: Look into units to make sure they align with rest of algorithm
-    return 4 * eps * ((sigma_s / (rij_mag - sigma + sigma_s))**12 - (sigma_s / (rij_mag - sigma + sigma_s))**6)
-
-
 WALSH_PARAMS = {
     "sigma_0": 1.,      # Å
     "sigma_c": 3.7496,  # Å
@@ -74,8 +46,10 @@ WALSH_PARAMS = {
 }
 
 
-def gay_berne_walsh(
+def pairwise_gay_berne_walsh(
         frame,
+        idx_1,
+        idx_2,
         sigma_0=1,
         sigma_c=3.7496,
         sigma_x=5.8311,
@@ -104,16 +78,16 @@ def gay_berne_walsh(
     :param nu: dimensionless parameter
     :return: potential of system (in units of kJ/mol in paper)
     """
-    r_12 = frame.get_distance(0, 1, mic=True, vector=True) # units of Å
+    r_12 = frame.get_distance(idx_1, idx_2, mic=True, vector=True) # units of Å
     r_12_mag = np.linalg.norm(r_12)
     r_12_hat = r_12 / r_12_mag
     # set ellipsoid semiaxis lengths using first ellipsoid; we assume second is the same
     sigma_x, sigma_y, sigma_z = sigma_0 * [sigma_x, sigma_y, sigma_z]
     S = np.diag([sigma_x, sigma_y, sigma_z])
     # define orientational quantities
-    R_1 = Rotation.from_quat(np.roll(frame.arrays["c_q"][0], -1))
+    R_1 = Rotation.from_quat(np.roll(frame.arrays["c_q"][idx_1], -1))
     M_1 = R_1.as_matrix()
-    R_2 = Rotation.from_quat(np.roll(frame.arrays["c_q"][1], -1))
+    R_2 = Rotation.from_quat(np.roll(frame.arrays["c_q"][idx_2], -1))
     M_2 = R_2.as_matrix()
     # calculate shape parameter sigma
     A = (M_1.T @ S @ S @ M_1) + (M_2.T @ S @ S @ M_2)
@@ -131,18 +105,80 @@ def gay_berne_walsh(
     return U_GB
 
 
-def quadrupole_potential(frame, Theta=1e-30):
-    assert type(frame) is ase.Atoms
-    assert len(frame) == 2
-    r_12 = frame.get_distance(0, 1, mic=True, vector=True)  # units of Å
+def pairwise_quadrupole_potential(frame, idx_1, idx_2, Theta=1e-30):
+    r_12 = frame.get_distance(idx_1, idx_2, mic=True, vector=True)  # units of Å
     r_12_mag = np.linalg.norm(r_12)
     r_12_hat = r_12 / r_12_mag
-    n_1 = frame.arrays["or_vec"][0]
+    n_1 = frame.arrays["or_vec"][idx_1]
     n_1_hat = n_1 / np.linalg.norm(n_1)
-    n_2 = frame.arrays["or_vec"][1]
+    n_2 = frame.arrays["or_vec"][idx_2]
     n_2_hat = n_2 / np.linalg.norm(n_2)
     factor = 0.75 * (35*(np.dot(n_1_hat, r_12_hat)**2)*(np.dot(n_2_hat, r_12_hat)**2)
                      - 5*np.dot(n_1_hat, r_12_hat)**2 - 5*np.dot(n_2_hat, r_12_hat)**2 - 20*np.dot(n_1_hat, r_12_hat)**2
                      * np.dot(n_2_hat, r_12_hat)*np.dot(n_1_hat, n_2_hat) + 2*np.dot(n_1_hat, n_2_hat)**2 + 1)
     U_QQ = factor * Theta**2 / (4*np.pi*EPS_0 * r_12_mag**5)
     return U_QQ
+
+
+def gay_berne_walsh(
+        frame,
+        idx,
+        sigma_0=1,
+        sigma_c=3.7496,
+        sigma_x=5.8311,
+        sigma_y=5.8311,
+        sigma_z=4.9465,
+        eps_0=1e45,
+        eps_x=5.7136,
+        eps_y=5.7136,
+        eps_z=0.0447,
+        mu=7.6093,
+        nu=-12.4600,
+):
+    U_GB = 0
+    for i, _ in enumerate(frame):
+        if i == idx:
+            continue
+        U_GB += pairwise_gay_berne_walsh(
+            frame, idx, i, sigma_0, sigma_c, sigma_x, sigma_y, sigma_z, eps_0, eps_x, eps_y, eps_z, mu, nu)
+    return U_GB
+
+
+def quadrupole_potential(
+        frame,
+        idx_1,
+        Theta=1e-30,
+):
+    U_QQ = 0
+    for i, _ in enumerate(frame):
+        if i == idx_1:
+            continue
+        U_QQ += pairwise_quadrupole_potential(frame, idx_1, i, Theta=Theta)
+    return U_QQ
+
+
+def calc_walsh_potential(
+        frame,
+        idx,
+        sigma_0=1,
+        sigma_c=3.7496,
+        sigma_x=5.8311,
+        sigma_y=5.8311,
+        sigma_z=4.9465,
+        eps_0=1e45,
+        eps_x=5.7136,
+        eps_y=5.7136,
+        eps_z=0.0447,
+        mu=7.6093,
+        nu=-12.4600,
+        Theta=1e-30,
+):
+    U_GB = 0
+    U_QQ = 0
+    for i, _ in enumerate(frame):
+        if i == idx:
+            continue
+        U_GB += pairwise_gay_berne_walsh(
+            frame, idx, i, sigma_0, sigma_c, sigma_x, sigma_y, sigma_z, eps_0, eps_x, eps_y, eps_z, mu, nu)
+        U_QQ += pairwise_quadrupole_potential(frame, idx, i, Theta=Theta)
+    return U_QQ + U_GB

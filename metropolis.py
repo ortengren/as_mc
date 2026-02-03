@@ -1,7 +1,7 @@
 import numpy as np
 import random
 from trial_moves import simultaneous_move
-from potentials import get_rand_energy, gay_berne_walsh, quadrupole_potential
+from potentials import calc_walsh_potential
 from enum import Enum
 
 
@@ -44,16 +44,9 @@ class MetropolisCalculator:
         else:
             self.rand = None
 
-    def calc_energy(self, frame, seed=None):
-        if self.energy_func == "random":
-            if self.rand is not None:
-                return get_rand_energy(frame, self.energies[-1], self.rand)
-            else:
-                return get_rand_energy(frame, self.energies[-1])
-        elif self.energy_func == "GB":
-            return gay_berne_walsh(frame)
-        elif self.energy_func == "Walsh":
-            return gay_berne_walsh(frame) + quadrupole_potential(frame)
+    def calc_energy(self, frame, idx):
+        if self.energy_func == "Walsh":
+            return calc_walsh_potential(frame, idx)
         else:
             return NotImplementedError()
 
