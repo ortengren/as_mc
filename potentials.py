@@ -50,17 +50,17 @@ def pairwise_gay_berne_walsh(
         frame,
         idx_1,
         idx_2,
-        sigma_0=1,
-        sigma_c=3.7496,
-        sigma_x=5.8311,
-        sigma_y=5.8311,
-        sigma_z=4.9465,
-        eps_0=1e45,
-        eps_x=5.7136,
-        eps_y=5.7136,
-        eps_z=0.0447,
-        mu=7.6093,
-        nu=-12.4600,
+        sigma_0,
+        sigma_c,
+        sigma_x,
+        sigma_y,
+        sigma_z,
+        eps_0,
+        eps_x,
+        eps_y,
+        eps_z,
+        mu,
+        nu,
 ):
     """
     Walsh, T. R. Towards an Anisotropic Bead-Spring Model for Polymers: A Gay-Berne Parametrization for Benzene.
@@ -105,7 +105,7 @@ def pairwise_gay_berne_walsh(
     return U_GB
 
 
-def pairwise_quadrupole_potential(frame, idx_1, idx_2, Theta=1e-30):
+def pairwise_quadrupole_potential(frame, idx_1, idx_2, Theta):
     r_12 = frame.get_distance(idx_1, idx_2, mic=True, vector=True)  # units of Å
     r_12_mag = np.linalg.norm(r_12)
     r_12_hat = r_12 / r_12_mag
@@ -123,17 +123,17 @@ def pairwise_quadrupole_potential(frame, idx_1, idx_2, Theta=1e-30):
 def gay_berne_walsh(
         frame,
         idx,
-        sigma_0=1,
-        sigma_c=3.7496,
-        sigma_x=5.8311,
-        sigma_y=5.8311,
-        sigma_z=4.9465,
-        eps_0=1e45,
-        eps_x=5.7136,
-        eps_y=5.7136,
-        eps_z=0.0447,
-        mu=7.6093,
-        nu=-12.4600,
+        sigma_0,
+        sigma_c,
+        sigma_x,
+        sigma_y,
+        sigma_z,
+        eps_0,
+        eps_x,
+        eps_y,
+        eps_z,
+        mu,
+        nu,
 ):
     U_GB = 0
     for i, _ in enumerate(frame):
@@ -147,31 +147,31 @@ def gay_berne_walsh(
 def quadrupole_potential(
         frame,
         idx_1,
-        Theta=1e-30,
+        Theta,
 ):
     U_QQ = 0
     for i, _ in enumerate(frame):
         if i == idx_1:
             continue
-        U_QQ += pairwise_quadrupole_potential(frame, idx_1, i, Theta=Theta)
+        U_QQ += pairwise_quadrupole_potential(frame, idx_1, i, Theta)
     return U_QQ
 
 
 def calc_walsh_potential(
         frame,
         idx,
-        sigma_0=1,
-        sigma_c=3.7496,
-        sigma_x=5.8311,
-        sigma_y=5.8311,
-        sigma_z=4.9465,
-        eps_0=1e45,
-        eps_x=5.7136,
-        eps_y=5.7136,
-        eps_z=0.0447,
-        mu=7.6093,
-        nu=-12.4600,
-        Theta=1e-30,
+        sigma_0,
+        sigma_c,
+        sigma_x,
+        sigma_y,
+        sigma_z,
+        eps_0,
+        eps_x,
+        eps_y,
+        eps_z,
+        mu,
+        nu,
+        Theta,
 ):
     U_GB = 0
     U_QQ = 0
@@ -180,5 +180,5 @@ def calc_walsh_potential(
             continue
         U_GB += pairwise_gay_berne_walsh(
             frame, idx, i, sigma_0, sigma_c, sigma_x, sigma_y, sigma_z, eps_0, eps_x, eps_y, eps_z, mu, nu)
-        U_QQ += pairwise_quadrupole_potential(frame, idx, i, Theta=Theta)
+        U_QQ += pairwise_quadrupole_potential(frame, idx, i, Theta)
     return U_QQ + U_GB

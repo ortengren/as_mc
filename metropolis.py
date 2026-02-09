@@ -3,11 +3,12 @@ import random
 from trial_moves import simultaneous_move
 from potentials import calc_walsh_potential
 from enum import Enum
+import random
 
 
 BOLTZCONST = 8.617333262e-5 # eV / K
-TEMP = 300 # K
-BETA = 1 / (BOLTZCONST * TEMP)
+TEMP = 200 # K
+BETA = 1 / (BOLTZCONST * TEMP) # eV^-1
 
 
 class Decision(Enum):
@@ -23,13 +24,13 @@ def decide_accept(old_energy, new_energy):
     r = random.uniform(0, 1)
     dec_term = np.exp(-BETA * (new_energy - old_energy))
     decision = r < dec_term
-    print(f"random num: {r}")
+    print(f"old energy: {old_energy}\n new energy: {new_energy}")
     print(f"Boltz: {dec_term}")
-    return
+    return decision
 
 
 class MetropolisCalculator:
-    def __init__(self, init_frame, energy_func="Walsh", seed=None, pos_delt=0.01, or_delt=0.0005):
+    def __init__(self, init_frame, energy_func="Walsh", seed=None, pos_delt=0.1, or_delt=0.1):
         self.init_frame = init_frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
@@ -37,7 +38,6 @@ class MetropolisCalculator:
         self.energy_func = energy_func
         self.seed = seed
         self.frames = [init_frame]
-        self.energies = [self.calc_energy(init_frame)]
         self.decisions = [Decision.INIT]
         if self.seed is not None:
             self.rand = random.Random(self.seed)
@@ -51,20 +51,23 @@ class MetropolisCalculator:
             return NotImplementedError()
 
     def step(self):
+        # choose particle to update
+        num_particles = len(self.frames[-1])
+        rand_idx = random.randint(0, num_particles - 1)
+        # calculate particle's contribution to total energy
+        old_energy = self.calc_energy(self.frames[-1], rand_idx)
         # calculate a possible new state and calculate its energy
-        trial_frame = simultaneous_move(self.frames[-1], self.pos_delt, self.or_delt)
-        trial_energy = self.calc_energy(trial_frame)
+        trial_frame = simultaneous_move(self.frames[-1], rand_idx, self.pos_delt, self.or_delt)
+        trial_energy = self.calc_energy(trial_frame, rand_idx)
         # decide whether trajectory will assume the new state or retain its current state
-        keep_move = decide_accept(self.energies[-1], trial_energy)
+        keep_move = decide_accept(old_energy, trial_energy)
         if keep_move:
             # add trial state to trajectory
             self.frames.append(trial_frame)
-            self.energies.append(trial_energy)
             self.decisions.append(Decision.ACCEPT)
         else:
             # add a copy of the current state to the trajectory
             self.frames.append(self.frames[-1])
-            self.energies.append(self.energies[-1])
             self.decisions.append(Decision.REJECT)
         # update object's step_count variable
         self.step_count += 1

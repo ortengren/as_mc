@@ -3,12 +3,6 @@ import random as rand
 from scipy.spatial.transform import Rotation
 
 
-def pick_particle(frame):
-    num_particles = len(frame)
-    rand_idx = rand.randint(0, num_particles - 1)
-    return rand_idx
-
-
 def calc_or_vec(frame, particle_idx, quat_key="c_q"):
     R = Rotation.from_quat(np.roll(frame.arrays[quat_key][particle_idx], -1))
     or_vec = R.as_matrix() @ [[0], [0], [1]]
@@ -68,9 +62,8 @@ def get_rand_unit_quat():
     return np.array(quat)
 
 
-def simultaneous_move(frame, pos_delt, or_delt):
-    rand_idx = pick_particle(frame)
-    nframe = nudge_com(frame, rand_idx, pos_delt, copy=True)
-    nframe = nudge_orientation(nframe, rand_idx, or_delt, copy=False)
+def simultaneous_move(frame, idx, pos_delt, or_delt):
+    nframe = nudge_com(frame, idx, pos_delt, copy=True)
+    nframe = nudge_orientation(nframe, idx, or_delt, copy=False)
     return nframe
 
