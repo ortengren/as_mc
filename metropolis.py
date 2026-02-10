@@ -30,19 +30,14 @@ def decide_accept(old_energy, new_energy):
 
 
 class MetropolisCalculator:
-    def __init__(self, init_frame, energy_func="Walsh", seed=None, pos_delt=0.1, or_delt=0.1):
+    def __init__(self, init_frame, energy_func="Walsh", pos_delt=0.1, or_delt=0.1):
         self.init_frame = init_frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
         self.step_count = 0
         self.energy_func = energy_func
-        self.seed = seed
         self.frames = [init_frame]
         self.decisions = [Decision.INIT]
-        if self.seed is not None:
-            self.rand = random.Random(self.seed)
-        else:
-            self.rand = None
 
     def calc_energy(self, frame, idx):
         if self.energy_func == "Walsh":

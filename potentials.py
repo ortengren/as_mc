@@ -1,5 +1,6 @@
 import ase
 import numpy as np
+from numpy.linalg import norm
 import pandas as pd
 import random
 from scipy.spatial.transform import Rotation
@@ -182,3 +183,58 @@ def calc_walsh_potential(
             frame, idx, i, sigma_0, sigma_c, sigma_x, sigma_y, sigma_z, eps_0, eps_x, eps_y, eps_z, mu, nu)
         U_QQ += pairwise_quadrupole_potential(frame, idx, i, Theta)
     return U_QQ + U_GB
+
+
+def gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa):
+    chi = gb_shape_anisotropy(kappa)
+    term1 = (np.dot(uhat1, rhat) + np.dot(uhat2, rhat))**2 / (1 + chi*np.dot(uhat1, uhat2))
+    term2 = (np.dot(uhat1, rhat) - np.dot(uhat2, rhat))**2 / (1 - chi*np.dot(uhat1, uhat2))
+    sigma = sigma0 / np.sqrt(1 - (chi / 2)*(term1 + term2))
+    return sigma
+
+
+def gb_shape_anisotropy(kappa):
+    return (kappa**2 - 1)/(kappa**2 + 1)
+
+
+def gb_axial_energy(uhat1, uhat2, kappa):
+    chi = gb_shape_anisotropy(kappa)
+    return 1 / np.sqrt(1 - (chi*np.dot(uhat1, uhat2))**2)
+
+
+def gb_directional_energy(uhat1, uhat2, rhat, kappa_prime, mu):
+
+    chi_prime = gb_energy_anisotropy(kappa_prime, mu)
+    term1 = (np.dot(uhat1, rhat) + np.dot(uhat2, rhat))**2 / (1 + chi_prime*np.dot(uhat1, uhat2))
+    term2 = (np.dot(uhat1, rhat) - np.dot(uhat2, rhat))**2 / (1 - chi_prime*np.dot(uhat1, uhat2))
+    return 1 - chi_prime*(term1 + term2) / 2
+
+
+def gb_energy_anisotropy(kappa_prime, mu):
+    return (kappa_prime**(1/mu) - 1) / (kappa_prime**(1/mu) + 1)
+
+
+def gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu):
+    eps1 = gb_axial_energy(uhat1, uhat2, kappa)
+    eps2 = gb_directional_energy(uhat1, uhat2, rhat, kappa_prime, mu)
+    return eps0 * eps1**nu * eps2**mu
+
+
+def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu):
+    rhat = r / norm(r)
+    eps = gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu)
+    sigma = gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa)
+    term = sigma0 / (norm(r) - sigma + sigma0)
+    return 4 * eps * (term**12 - term**6)
+
+
+PARAMS = {
+    "sigma0": 5.3, # A
+    "eps0": 0.8, # kcal / mol
+    "kappa": 0.5,
+    "kappa_prime": 0.2,
+    "mu": 2.,
+    "nu": 1.,
+}
+
+
