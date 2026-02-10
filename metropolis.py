@@ -11,15 +11,6 @@ TEMP = 200 # K
 BETA = 1 / (BOLTZCONST * TEMP)
 
 
-class Decision(Enum):
-    """
-    Enum for tracking whether a trial move is accepted or rejected.
-    """
-    ACCEPT = 1
-    REJECT = 0
-    INIT = -1
-
-
 def decide_accept(old_energy, new_energy):
     r = random.uniform(0, 1)
     dec_term = np.exp(-BETA * (new_energy - old_energy))
@@ -35,7 +26,7 @@ class MetropolisCalculator:
         self.step_count = 0
         self.energy_func = energy_func
         self.frames = [init_frame]
-        self.decisions = [Decision.INIT]
+        self.decisions = [-1]
 
     def calc_energy(self, frame, idx):
         if self.energy_func == "Walsh":
@@ -69,11 +60,11 @@ class MetropolisCalculator:
         if keep_move:
             # add trial state to trajectory
             self.frames.append(trial_frame)
-            self.decisions.append(Decision.ACCEPT)
+            self.decisions.append(1)
         else:
             # add a copy of the current state to the trajectory
             self.frames.append(self.frames[-1])
-            self.decisions.append(Decision.REJECT)
+            self.decisions.append(0)
         # update object's step_count variable
         self.step_count += 1
 
@@ -84,14 +75,18 @@ class MetropolisCalculator:
             # TODO: use tqdm instead of printing
             if self.step_count % 100 == 0:
                 print(self.step_count, " / ", num_steps)
-
-    def get_acc_rate(self, at_step=None):
-        if at_step is None:
-            at_step = self.step_count
-        num_acc = 0
-        for dec in self.decisions[1 : at_step+1:]:
-            num_acc += dec.value
-        return num_acc / at_step
+                acc_rate = np.mean(self.decisions[self.step_count-99:self.step_count+1])
+                print(f"acc_rate: {acc_rate}")
+                if acc_rate > 0.30:
+                    self.or_delt += 0.1
+                    self.pos_delt += 0.1
+                    print(f"or_delt: {self.or_delt-0.1} -> {self.or_delt}")
+                    print(f"pos_delt: {self.pos_delt-0.1} -> {self.pos_delt}")
+                if acc_rate < 0.30:
+                    self.or_delt -= 0.05
+                    self.pos_delt -= 0.05
+                    print(f"or_delt: {self.or_delt+0.05} -> {self.or_delt}")
+                    print(f"pos_delt: {self.pos_delt+0.05} -> {self.pos_delt}")
             
 
 def calc_free_energy(params):
