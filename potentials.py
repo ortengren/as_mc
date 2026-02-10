@@ -221,6 +221,7 @@ def gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu):
 
 
 def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu):
+    # TODO: implement cutoff radius
     rhat = r / norm(r)
     eps = gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu)
     sigma = gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa)
@@ -228,11 +229,11 @@ def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu):
     return 4 * eps * (term**12 - term**6)
 
 
-PARAMS = {
-    "sigma0": 5.3, # A
-    "eps0": 0.8, # kcal / mol
-    "kappa": 0.5,
-    "kappa_prime": 0.2,
+GB_PARAMS = {
+    "sigma0": 5.6908734316048575,
+    "eps0": 0.5274639566548358,
+    "kappa": 0.5105882064300075,
+    "kappa_prime": 0.7730283946074973,
     "mu": 2.,
     "nu": 1.,
 }

@@ -1,14 +1,14 @@
 import numpy as np
 import random
 from trial_moves import simultaneous_move
-from potentials import calc_walsh_potential
+from potentials import calc_walsh_potential, gb, GB_PARAMS
 from enum import Enum
 import random
 
 
-BOLTZCONST = 8.617333262e-5 # eV / K
+BOLTZCONST = 1.9872041e-3 # kcal / mol*K
 TEMP = 200 # K
-BETA = 1 / (BOLTZCONST * TEMP) # eV^-1
+BETA = 1 / (BOLTZCONST * TEMP)
 
 
 class Decision(Enum):
@@ -24,13 +24,11 @@ def decide_accept(old_energy, new_energy):
     r = random.uniform(0, 1)
     dec_term = np.exp(-BETA * (new_energy - old_energy))
     decision = r < dec_term
-    print(f"old energy: {old_energy}\n new energy: {new_energy}")
-    print(f"Boltz: {dec_term}")
     return decision
 
 
 class MetropolisCalculator:
-    def __init__(self, init_frame, energy_func="Walsh", pos_delt=0.1, or_delt=0.1):
+    def __init__(self, init_frame, energy_func="GB", pos_delt=0.2, or_delt=0.2):
         self.init_frame = init_frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
@@ -42,6 +40,18 @@ class MetropolisCalculator:
     def calc_energy(self, frame, idx):
         if self.energy_func == "Walsh":
             return calc_walsh_potential(frame, idx)
+        elif self.energy_func == "GB":
+            U_GB = 0
+            uhat1 = frame.arrays["or_vec"][idx]
+            for i in range(len(frame)):
+                if i == idx:
+                    continue
+                r = frame.get_distance(idx, i, mic=True, vector=True)
+                if np.linalg.norm(r) > 20:
+                    continue
+                uhat2 = frame.arrays["or_vec"][i]
+                U_GB += gb(uhat1, uhat2, r, *GB_PARAMS.values())
+            return U_GB
         else:
             return NotImplementedError()
 
