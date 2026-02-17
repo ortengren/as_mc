@@ -221,12 +221,15 @@ def gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu):
 
 
 def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu):
-    # TODO: implement cutoff radius
     rhat = r / norm(r)
     eps = gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu)
     sigma = gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa)
     term = sigma0 / (norm(r) - sigma + sigma0)
     return 4 * eps * (term**12 - term**6)
+
+
+def quadrupole(uhat1, uhat2, r, Theta):
+    return NotImplementedError
 
 
 GB_PARAMS = {
