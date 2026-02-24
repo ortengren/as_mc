@@ -82,8 +82,15 @@ def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu):
     return 4 * eps * (term**12 - term**6)
 
 
-def quadrupole(uhat1, uhat2, r, Theta):
-    return NotImplementedError
+def quadrupole(uhat1, uhat2, r, Q):
+    rmag = np.expand_dims(la.norm(r, axis=-1), axis=-1)
+    rhat = r / rmag
+    a1 = np.vecdot(uhat1, rhat)
+    a2 = np.vecdot(uhat2, rhat)
+    b12 = np.vecdot(uhat1, uhat2)
+    prefactor = 0.75 * Q**2 / rmag**5
+    s = 1 + 2*b12**2 - 5*(a1**2 + a2**2) - 20*a1*a2*b12 + 35*(a1**2)*(a2**2)
+    return prefactor * s
 
 
 GB_PARAMS = {

@@ -6,7 +6,7 @@ from enum import Enum
 import random
 
 
-BOLTZCONST = 1.9872041e-3 # kcal / mol*K
+BOLTZCONST = 8.617E-5 # eV / K
 TEMP = 200 # K
 BETA = 1 / (BOLTZCONST * TEMP)
 
