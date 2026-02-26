@@ -89,15 +89,29 @@ def quadrupole(uhat1, uhat2, r, Q):
     a2 = np.vecdot(uhat2, rhat)
     b12 = np.vecdot(uhat1, uhat2)
     prefactor = 0.75 * Q**2 / rmag**5
+    prefactor = np.squeeze(prefactor)
     s = 1 + 2*b12**2 - 5*(a1**2 + a2**2) - 20*a1*a2*b12 + 35*(a1**2)*(a2**2)
     return prefactor * s
 
 
+def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, Q):
+    # M should have shape (N, 1431, 3, 3) where N is the number of frames
+    E_GB = gb(M[:, :, 0, :], M[:, :, 1, :], M[:, :, 2, :], sigma0, eps0, kappa, kappa_prime, mu, nu)
+    E_QQ = quadrupole(M[:, :, 0, :], M[:, :, 1, :], M[:, :, 2, :], Q)
+    E_QQ = np.squeeze(E_QQ)
+    pw_energies = E_GB + E_QQ
+    # pw_energies should have shape (N, 1431)
+    energies = np.sum(pw_energies, axis=-1)
+    return energies
+
+
 GB_PARAMS = {
-    "sigma0": 5.6908734316048575,
-    "eps0": 0.5274639566548358,
-    "kappa": 0.5105882064300075,
-    "kappa_prime": 0.7730283946074973,
-    "mu": 2.,
-    "nu": 1.,
+    "sigma0": 6.16753952,
+    "eps0": 0.08,
+    "kappa": 0.53134663,
+    "kappa_prime": 0.68032599,
+    "mu": -0.39313992,
+    "nu": 4.37606907,
 }
+
+QQ = -3.83795985

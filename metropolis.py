@@ -7,7 +7,7 @@ import random
 
 
 BOLTZCONST = 8.617E-5 # eV / K
-TEMP = 200 # K
+TEMP = 100 # K
 BETA = 1 / (BOLTZCONST * TEMP)
 
 
@@ -29,9 +29,7 @@ class MetropolisCalculator:
         self.decisions = [-1]
 
     def calc_energy(self, frame, idx):
-        if self.energy_func == "Walsh":
-            return calc_walsh_potential(frame, idx)
-        elif self.energy_func == "GB":
+        if self.energy_func == "GB":
             U_GB = 0
             uhat1 = frame.arrays["or_vec"][idx]
             for i in range(len(frame)):
