@@ -1,14 +1,28 @@
 import numpy as np
 import random
 from trial_moves import simultaneous_move
-from potentials import calc_walsh_potential, gb, GB_PARAMS
+from potentials import gb, GB_PARAMS
 from enum import Enum
 import random
+from ase.neighborlist import NeighborList
+from ase.io import Trajectory
+import datetime
+import os
 
 
 BOLTZCONST = 8.617E-5 # eV / K
 TEMP = 100 # K
 BETA = 1 / (BOLTZCONST * TEMP)
+
+
+def generate_simulation_id(method="datetime"):
+    if method == "datetime":
+        dt = datetime.datetime.today().isoformat(timespec="minutes")
+        if not os.path.exists(f"simulations/{dt}"):
+            os.makedirs(f"simulations/{dt}")
+        return dt
+    else:
+        return NotImplementedError
 
 
 def decide_accept(old_energy, new_energy):
@@ -19,17 +33,40 @@ def decide_accept(old_energy, new_energy):
 
 
 class MetropolisCalculator:
-    def __init__(self, init_frame, energy_func="GB", pos_delt=0.2, or_delt=0.2):
-        self.init_frame = init_frame
+    def __init__(
+            self,
+            init_frame,
+            energy_func="GB",
+            pos_delt=0.2,
+            or_delt=0.2,
+            nl_radius=15,
+            nl_skin=0.3,
+            traj_file=None,
+    ):
+        self.current_frame = init_frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
         self.step_count = 0
         self.energy_func = energy_func
-        self.frames = [init_frame]
         self.decisions = [-1]
+        # auto generate traj file name if needed
+        if traj_file is None:
+            self.traj_file = generate_simulation_id()
+        # initialize Trajectory object
+        self.traj = Trajectory(self.traj_file, "w", self.current_frame)
+        cutoffs = [nl_radius / 2] * len(self.current_frame)
+        self.nl = NeighborList(
+            cutoffs,
+            skin=nl_skin,
+            sorted=False,
+            self_interaction=False,
+            bothways=True,
+        )
+        self.nl.update(self.current_frame)
 
     def calc_energy(self, frame, idx):
         if self.energy_func == "GB":
+
             U_GB = 0
             uhat1 = frame.arrays["or_vec"][idx]
             for i in range(len(frame)):
@@ -46,10 +83,10 @@ class MetropolisCalculator:
 
     def step(self):
         # choose particle to update
-        num_particles = len(self.frames[-1])
+        num_particles = len(self.current_frame)
         rand_idx = random.randint(0, num_particles - 1)
         # calculate particle's contribution to total energy
-        old_energy = self.calc_energy(self.frames[-1], rand_idx)
+        old_energy = self.calc_energy(self.current_frame, rand_idx)
         # calculate a possible new state and calculate its energy
         trial_frame = simultaneous_move(self.frames[-1], rand_idx, self.pos_delt, self.or_delt)
         trial_energy = self.calc_energy(trial_frame, rand_idx)
