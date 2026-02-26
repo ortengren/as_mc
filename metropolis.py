@@ -36,8 +36,8 @@ class MetropolisCalculator:
             self,
             init_frame,
             energy_func="GB",
-            pos_delt=0.2,
-            or_delt=0.2,
+            pos_delt=0.15,
+            or_delt=0.05,
             nl_radius=15,
             nl_skin=0.3,
             traj_file=None,
@@ -48,11 +48,14 @@ class MetropolisCalculator:
         self.step_count = 0
         self.energy_func = energy_func
         self.decisions = [-1]
+        self.current_frame.info["acc_rate"] = -1
+        self.current_frame.info["or_delta"] = -1
+        self.current_frame.info["pos_delta"] = -1
         # auto generate traj file name if needed
         if traj_file is None:
-            self.traj_file = generate_simulation_id()
+            self.traj_file = "simulations/" + generate_simulation_id() + "/simulation.traj"
         # initialize Trajectory object
-        self.traj = Trajectory(self.traj_file, "w", self.current_frame)
+        self.traj = Trajectory(traj_file, "w", self.current_frame)
         cutoffs = [nl_radius / 2] * len(self.current_frame)
         self.nl = NeighborList(
             cutoffs,
@@ -92,7 +95,7 @@ class MetropolisCalculator:
         else:
             return NotImplementedError()
 
-    def step(self):
+    def step(self, pbar=None):
         # choose particle to update
         num_particles = len(self.current_frame)
         rand_idx = random.randint(0, num_particles - 1)
@@ -100,12 +103,13 @@ class MetropolisCalculator:
         old_energy = self.calc_energy(rand_idx)
         # store original position and orientation
         old_pos = self.current_frame.positions[rand_idx].copy()
-        old_quat = self.current_frame.arrays["or_vec"][rand_idx].copy()
+        old_quat = self.current_frame.arrays["c_q"][rand_idx].copy()
         old_or_vec = self.current_frame.arrays["or_vec"][rand_idx].copy()
         # get trial move
         new_pos = calculate_com_move(self.current_frame.positions[rand_idx], self.pos_delt)
         new_quat = calculate_quat_move(self.current_frame.arrays["c_q"][rand_idx], self.or_delt)
         new_or_vec = calc_or_vec(new_quat)
+        new_or_vec = np.squeeze(new_or_vec)
         # apply trial move
         self.current_frame.positions[rand_idx] = new_pos
         self.current_frame.arrays["c_q"][rand_idx] = new_quat
@@ -130,31 +134,34 @@ class MetropolisCalculator:
     def calculate_trajectory(self, num_steps, block_size=100, dynamic_delta=False):
         with tqdm(total=num_steps, initial=self.step_count, desc="Simulating") as pbar:
             while self.step_count < num_steps:
-                self.step()
+                self.step(pbar)
                 pbar.update(1)
                 if self.step_count % block_size == 0:
                     self.traj.write(self.current_frame)
                     # record acceptance rate for most recent block
                     acc_rate = np.mean(self.decisions[self.step_count-(block_size-1):self.step_count+1])
-                    print(f"acc_rate: {acc_rate}")
+                    self.current_frame.info["acc_rate"] = acc_rate
+                    self.current_frame.info["step"] = self.step_count
+                    self.current_frame.info["or_delta"] = self.or_delt
+                    self.current_frame.info["pos_delta"] = self.pos_delt
                     # update trial move magnitude if enabled
                     if dynamic_delta:
                         if acc_rate > 0.35:
-                            old_or_d, old_pos_d = self.or_delt, self.pos_delt
-                            self.or_delt += 0.1
-                            self.pos_delt += 0.1
-                            or_msg = f"or_delt: {old_or_d:.2f} -> {self.or_delt:.2f}"
-                            pos_msg = f"pos_delt: {old_pos_d:.2f} -> {self.pos_delt:.2f}"
-                            pbar.write(or_msg + " | " + pos_msg)
+                            # old_or_d, old_pos_d = self.or_delt, self.pos_delt
+                            self.or_delt *= 1.05
+                            self.pos_delt *= 1.05
+                            # or_msg = f"or_delt: {old_or_d:.2f} -> {self.or_delt:.2f}"
+                            # pos_msg = f"pos_delt: {old_pos_d:.2f} -> {self.pos_delt:.2f}"
+                            # pbar.write(or_msg + " | " + pos_msg)
                         elif acc_rate < 0.25:
-                            old_or_d, old_pos_d = self.or_delt, self.pos_delt
-                            self.or_delt -= 0.05
-                            self.pos_delt -= 0.05
-                            or_msg = f"or_delt: {old_or_d:.2f} -> {self.or_delt:.2f}"
-                            pos_msg = f"pos_delt: {old_pos_d:.2f} -> {self.pos_delt:.2f}"
-                            pbar.write(or_msg + " | " + pos_msg)
-                        else:
-                            pbar.write(f"retained: or_delt={self.or_delt:.2f}, pos_delt={self.pos_delt:.2f}")
+                            # old_or_d, old_pos_d = self.or_delt, self.pos_delt
+                            self.or_delt *= 0.95
+                            self.pos_delt *= 0.95
+                            # or_msg = f"or_delt: {old_or_d:.2f} -> {self.or_delt:.2f}"
+                            # pos_msg = f"pos_delt: {old_pos_d:.2f} -> {self.pos_delt:.2f}"
+                            # pbar.write(or_msg + " | " + pos_msg)
+                        # else:
+                            # pbar.write(f"retained: or_delt={self.or_delt:.2f}, pos_delt={self.pos_delt:.2f}")
         # close trajectory file
         self.traj.close()
             
