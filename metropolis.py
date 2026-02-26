@@ -1,11 +1,7 @@
 import numpy as np
-import random
-
-from pygments.lexers import oldmod
-
+from tqdm.auto import tqdm
 from trial_moves import calc_or_vec, calculate_com_move, calculate_quat_move
 from potentials import gb, quadrupole, GB_PARAMS, QQ
-from enum import Enum
 import random
 from ase.neighborlist import NeighborList
 from ase.io import Trajectory
@@ -14,7 +10,7 @@ import os
 
 
 BOLTZCONST = 8.617E-5 # eV / K
-TEMP = 100 # K
+TEMP = 50 # K
 BETA = 1 / (BOLTZCONST * TEMP)
 
 
@@ -131,26 +127,34 @@ class MetropolisCalculator:
             self.decisions.append(0)
         self.step_count += 1
 
-    def calculate_trajectory(self, num_steps):
-        while self.step_count < num_steps:
-            self.step()
-            # print progress of simulation
-            # TODO: use tqdm instead of printing
-            if self.step_count % 100 == 0:
-                self.traj.write(self.current_frame)
-                print(self.step_count, " / ", num_steps)
-                acc_rate = np.mean(self.decisions[self.step_count-99:self.step_count+1])
-                print(f"acc_rate: {acc_rate}")
-                if acc_rate > 0.30:
-                    self.or_delt += 0.1
-                    self.pos_delt += 0.1
-                    print(f"or_delt: {self.or_delt-0.1} -> {self.or_delt}")
-                    print(f"pos_delt: {self.pos_delt-0.1} -> {self.pos_delt}")
-                if acc_rate < 0.30:
-                    self.or_delt -= 0.05
-                    self.pos_delt -= 0.05
-                    print(f"or_delt: {self.or_delt+0.05} -> {self.or_delt}")
-                    print(f"pos_delt: {self.pos_delt+0.05} -> {self.pos_delt}")
+    def calculate_trajectory(self, num_steps, block_size=100, dynamic_delta=False):
+        with tqdm(total=num_steps, initial=self.step_count, desc="Simulating") as pbar:
+            while self.step_count < num_steps:
+                self.step()
+                pbar.update(1)
+                if self.step_count % block_size == 0:
+                    self.traj.write(self.current_frame)
+                    # record acceptance rate for most recent block
+                    acc_rate = np.mean(self.decisions[self.step_count-(block_size-1):self.step_count+1])
+                    print(f"acc_rate: {acc_rate}")
+                    # update trial move magnitude if enabled
+                    if dynamic_delta:
+                        if acc_rate > 0.35:
+                            old_or_d, old_pos_d = self.or_delt, self.pos_delt
+                            self.or_delt += 0.1
+                            self.pos_delt += 0.1
+                            or_msg = f"or_delt: {old_or_d:.2f} -> {self.or_delt:.2f}"
+                            pos_msg = f"pos_delt: {old_pos_d:.2f} -> {self.pos_delt:.2f}"
+                            pbar.write(or_msg + " | " + pos_msg)
+                        elif acc_rate < 0.25:
+                            old_or_d, old_pos_d = self.or_delt, self.pos_delt
+                            self.or_delt -= 0.05
+                            self.pos_delt -= 0.05
+                            or_msg = f"or_delt: {old_or_d:.2f} -> {self.or_delt:.2f}"
+                            pos_msg = f"pos_delt: {old_pos_d:.2f} -> {self.pos_delt:.2f}"
+                            pbar.write(or_msg + " | " + pos_msg)
+                        else:
+                            pbar.write(f"retained: or_delt={self.or_delt:.2f}, pos_delt={self.pos_delt:.2f}")
         # close trajectory file
         self.traj.close()
             
