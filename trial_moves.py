@@ -3,8 +3,8 @@ import random as rand
 from scipy.spatial.transform import Rotation
 
 
-def calc_or_vec(frame, particle_idx, quat_key="c_q"):
-    R = Rotation.from_quat(np.roll(frame.arrays[quat_key][particle_idx], -1))
+def calc_or_vec(quat):
+    R = Rotation.from_quat(np.roll(quat, -1))
     or_vec = R.as_matrix() @ [[0], [0], [1]]
     return or_vec
 
@@ -22,6 +22,12 @@ def nudge_com(frame, particle_idx, delta, copy=True):
     return nframe
 
 
+def calculate_com_move(r, delta):
+    # generate random displacement (x_1, x_2, x_3) such that |x_i| <= delta / 2
+    displacement = [rand.uniform(-delta / 2, delta / 2) for _ in range(3)]
+    return r + displacement
+
+
 def nudge_orientation(frame, particle_idx, delta, copy=True, quat_key="c_q"):
     if copy:
         nframe = frame.copy()
@@ -37,6 +43,16 @@ def nudge_orientation(frame, particle_idx, delta, copy=True, quat_key="c_q"):
     nframe.arrays["or_vec"][particle_idx] = calc_or_vec(nframe, particle_idx, quat_key).flatten()
     nframe.wrap()
     return nframe
+
+
+def calculate_quat_move(quat, delta):
+    # generate random orientational displacement
+    displacement = get_rand_unit_quat()
+    # add displacement to particle orientation and normalize the result
+    new_orientation = quat + (displacement * delta)
+    new_mag = np.linalg.norm(new_orientation)
+    new_orientation /= new_mag
+    return new_orientation
 
 
 def get_rand_unit_quat():
