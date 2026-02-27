@@ -47,8 +47,10 @@ class MetropolisCalculator:
         self.or_delt = or_delt
         self.step_count = 0
         self.energy_func = energy_func
-        self.decisions = [-1]
-        self.current_frame.info["acc_rate"] = -1
+        self.pos_decisions = [-1]
+        self.or_decisions = [-1]
+        self.current_frame.info["pos_acc_rate"] = -1
+        self.current_frame.info["or_dec_rate"] = -1
         self.current_frame.info["or_delta"] = -1
         self.current_frame.info["pos_delta"] = -1
         # auto generate traj file name if needed
@@ -101,67 +103,85 @@ class MetropolisCalculator:
         rand_idx = random.randint(0, num_particles - 1)
         # calculate particle's contribution to total energy
         old_energy = self.calc_energy(rand_idx)
-        # store original position and orientation
-        old_pos = self.current_frame.positions[rand_idx].copy()
-        old_quat = self.current_frame.arrays["c_q"][rand_idx].copy()
-        old_or_vec = self.current_frame.arrays["or_vec"][rand_idx].copy()
-        # get trial move
-        new_pos = calculate_com_move(self.current_frame.positions[rand_idx], self.pos_delt)
-        new_quat = calculate_quat_move(self.current_frame.arrays["c_q"][rand_idx], self.or_delt)
-        new_or_vec = calc_or_vec(new_quat)
-        new_or_vec = np.squeeze(new_or_vec)
-        # apply trial move
-        self.current_frame.positions[rand_idx] = new_pos
-        self.current_frame.arrays["c_q"][rand_idx] = new_quat
-        self.current_frame.arrays["or_vec"][rand_idx] = new_or_vec
-        self.nl.update(self.current_frame)
-        # calculate new energy
-        new_energy = self.calc_energy(rand_idx)
-        # decide whether simulation will accept trial move
-        keep_move = decide_accept(old_energy, new_energy)
-        if keep_move:
-            # retain current state
-            self.decisions.append(1)
-        else:
-            # revert to previous state and update neighborlist
-            self.current_frame.positions[rand_idx] = old_pos
-            self.current_frame.arrays["c_q"][rand_idx] = old_quat
-            self.current_frame.arrays["or_vec"][rand_idx] = old_or_vec
+
+        # determine whether to perturb position or orientation
+        move_type = random.randint(0, 1)
+        if move_type == 0:
+            # perturb position
+            old_pos = self.current_frame.positions[rand_idx].copy()
+            # get trial move
+            new_pos = calculate_com_move(self.current_frame.positions[rand_idx], self.pos_delt)
+            # apply trial move
+            self.current_frame.positions[rand_idx] = new_pos
             self.nl.update(self.current_frame)
-            self.decisions.append(0)
+            # calculate new energy
+            new_energy = self.calc_energy(rand_idx)
+            # decide whether simulation will accept trial move
+            keep_move = decide_accept(old_energy, new_energy)
+            if keep_move:
+                self.pos_decisions.append(1)
+            else:
+                self.pos_decisions.append(0)
+                self.current_frame.positions[rand_idx] = old_pos
+                self.nl.update(self.current_frame)
+        else:
+            # perturb orientation
+            old_quat = self.current_frame.arrays["c_q"][rand_idx].copy()
+            old_or_vec = self.current_frame.arrays["or_vec"][rand_idx].copy()
+            # get trial move
+            new_quat = calculate_quat_move(self.current_frame.arrays["c_q"][rand_idx], self.or_delt)
+            new_or_vec = np.squeeze(calc_or_vec(new_quat))
+            # apply trial move
+            self.current_frame.arrays["c_q"][rand_idx] = new_quat
+            self.current_frame.arrays["or_vec"][rand_idx] = new_or_vec
+            # calculate new energy
+            new_energy = self.calc_energy(rand_idx)
+            # decide whether simulation will accept trial move
+            keep_move = decide_accept(old_energy, new_energy)
+            if keep_move:
+                self.or_decisions.append(1)
+            else:
+                self.or_decisions.append(0)
+                self.current_frame.arrays["c_q"][rand_idx] = old_quat
+                self.current_frame.arrays["or_vec"][rand_idx] = old_or_vec
         self.step_count += 1
 
     def calculate_trajectory(self, num_steps, block_size=100, dynamic_delta=False):
+        window = block_size // 2
         with tqdm(total=num_steps, initial=self.step_count, desc="Simulating") as pbar:
             while self.step_count < num_steps:
                 self.step(pbar)
                 pbar.update(1)
                 if self.step_count % block_size == 0:
-                    self.traj.write(self.current_frame)
-                    # record acceptance rate for most recent block
-                    acc_rate = np.mean(self.decisions[self.step_count-(block_size-1):self.step_count+1])
-                    self.current_frame.info["acc_rate"] = acc_rate
+                    # record acceptance rates for most recent block
+                    if len(self.pos_decisions) < window:
+                        pos_acc_rate = np.mean(self.pos_decisions[1:])
+                    else:
+                        pos_acc_rate = np.mean(self.pos_decisions[-window:])
+                    if len(self.or_decisions) < window:
+                        or_acc_rate = np.mean(self.or_decisions[1:])
+                    else:
+                        or_acc_rate = np.mean(self.or_decisions[-window:])
+                    # update frame info
+                    self.current_frame.info["pos_acc_rate"] = pos_acc_rate
+                    self.current_frame.info["or_acc_rate"] = or_acc_rate
                     self.current_frame.info["step"] = self.step_count
-                    self.current_frame.info["or_delta"] = self.or_delt
                     self.current_frame.info["pos_delta"] = self.pos_delt
+                    self.current_frame.info["or_delta"] = self.or_delt
+                    # write trajectory file
+                    self.traj.write(self.current_frame)
                     # update trial move magnitude if enabled
                     if dynamic_delta:
-                        if acc_rate > 0.35:
-                            # old_or_d, old_pos_d = self.or_delt, self.pos_delt
-                            self.or_delt *= 1.05
+                        # update position delta
+                        if pos_acc_rate > 0.35:
                             self.pos_delt *= 1.05
-                            # or_msg = f"or_delt: {old_or_d:.2f} -> {self.or_delt:.2f}"
-                            # pos_msg = f"pos_delt: {old_pos_d:.2f} -> {self.pos_delt:.2f}"
-                            # pbar.write(or_msg + " | " + pos_msg)
-                        elif acc_rate < 0.25:
-                            # old_or_d, old_pos_d = self.or_delt, self.pos_delt
-                            self.or_delt *= 0.95
+                        elif pos_acc_rate < 0.20:
                             self.pos_delt *= 0.95
-                            # or_msg = f"or_delt: {old_or_d:.2f} -> {self.or_delt:.2f}"
-                            # pos_msg = f"pos_delt: {old_pos_d:.2f} -> {self.pos_delt:.2f}"
-                            # pbar.write(or_msg + " | " + pos_msg)
-                        # else:
-                            # pbar.write(f"retained: or_delt={self.or_delt:.2f}, pos_delt={self.pos_delt:.2f}")
+                        # update orientation delta
+                        if or_acc_rate > 0.30:
+                            self.or_delt *= 1.05
+                        elif or_acc_rate < 0.20:
+                            self.or_delt *= 0.95
         # close trajectory file
         self.traj.close()
             
