@@ -8,6 +8,7 @@ from ase.neighborlist import NeighborList
 from ase.io import Trajectory
 import datetime
 import os
+from ase.db import connect
 
 
 BOLTZCONST = 8.617E-5 # eV / K
@@ -160,7 +161,7 @@ class MetropolisCalculator:
                 self.current_frame.arrays["or_vec"][rand_idx] = old_or_vec
         self.step_count += 1
 
-    def block_update(self, window, traj, dynamic_delta):
+    def block_update(self, window, buffer, db_file, dynamic_delta=True, buffer_size=100):
         # record acceptance rates for most recent block
         if len(self.pos_decisions) < window:
             pos_acc_rate = np.mean(self.pos_decisions[1:])
@@ -171,13 +172,26 @@ class MetropolisCalculator:
         else:
             or_acc_rate = np.mean(self.or_decisions[-window:])
         # update frame info
-        self.current_frame.info["pos_acc_rate"] = pos_acc_rate
-        self.current_frame.info["or_acc_rate"] = or_acc_rate
-        self.current_frame.info["step"] = self.step_count
-        self.current_frame.info["pos_delta"] = self.pos_delt
-        self.current_frame.info["or_delta"] = self.or_delt
-        # write trajectory file
-        traj.write(self.current_frame)
+        scalar_data = {
+            "pos_acc_rate": pos_acc_rate,
+            "or_acc_rate": or_acc_rate,
+            "step": self.step_count,
+            "pos_delta": self.pos_delt,
+            "or_delta": self.or_delt,
+        }
+        array_data = {
+            "c_q": self.current_frame.arrays["c_q"].copy(),
+            "or_vec": self.current_frame.arrays["or_vec"].copy(),
+        }
+        # add data to buffer
+        buffer.append((self.current_frame.copy(), scalar_data, array_data))
+        if len(buffer) >= buffer_size:
+            # write to database
+            with connect(db_file) as db:
+                for triplet in buffer:
+                    db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
+            # clear buffer
+            buffer.clear()
         # update trial move magnitude if enabled
         if dynamic_delta:
             # update position delta
@@ -194,39 +208,62 @@ class MetropolisCalculator:
             elif or_acc_rate < 0.20:
                 scale_amt = max((0.9, or_acc_rate / TARGET_ACC_RATE))
                 self.or_delt *= scale_amt
+        return buffer
 
-    def equilibrate(self, num_steps, block_size, dynamic_delta=True):
-        # initialize Trajectory object
-        traj = Trajectory(self.output_dir + "/equilibration.traj", "w", self.current_frame)
+    def equilibrate(self, num_steps, block_size, dynamic_delta=True, buffer_size=100):
         window = block_size // 2
+        # initialize buffer
+        buffer = []
+        db_file = self.output_dir + "/equilibration.db"
+        # run simulation
         with tqdm(total=num_steps, initial=self.step_count, desc="Equilibrating") as pbar:
             while self.step_count < num_steps:
-                self.step(pbar)
+                self.step()
                 pbar.update(1)
                 if self.step_count % block_size == 0:
-                    self.block_update(window, traj, dynamic_delta)
-        # close trajectory file
-        traj.close()
+                    buffer = self.block_update(
+                        window,
+                        buffer,
+                        db_file,
+                        dynamic_delta=dynamic_delta,
+                        buffer_size=buffer_size,
+                    )
         # update state
         self.equilibrated = True
         self.step_count = 0
         self.current_frame.info["step"] = 0
+        # write any frames left in buffer
+        if len(buffer) > 0:
+            with connect(db_file) as db:
+                for triplet in buffer:
+                    db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
 
-    def calculate_trajectory(self, num_steps, block_size=100, num_eq_steps=5000):
+    def calculate_trajectory(self, num_steps, block_size=100, num_eq_steps=5000, buffer_size=100):
         # equilibrate
         if num_eq_steps is not None:
             self.equilibrate(num_eq_steps, block_size)
-        # initialize Trajectory object
-        traj = Trajectory(self.output_dir + "/simulation.traj", "w", self.current_frame)
         window = block_size // 2
+        # initialize buffer
+        buffer = []
+        # initialize database
+        db_file = self.output_dir + "/simulation.db"
         with tqdm(total=num_steps, initial=self.step_count, desc="Simulating") as pbar:
             while self.step_count < num_steps:
-                self.step(pbar)
+                self.step()
                 pbar.update(1)
                 if self.step_count % block_size == 0:
-                    self.block_update(window, traj, dynamic_delta=False)
-        # close trajectory file
-        traj.close()
+                    buffer = self.block_update(
+                        window,
+                        buffer,
+                        db_file,
+                        dynamic_delta=False,
+                        buffer_size=buffer_size,
+                    )
+            # write any frames left in buffer
+            if len(buffer) > 0:
+                with connect(db_file) as db:
+                    for triplet in buffer:
+                        db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
             
 
 def calc_free_energy(params):
