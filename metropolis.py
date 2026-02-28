@@ -3,6 +3,7 @@ from tqdm.auto import tqdm
 from trial_moves import calc_or_vec, calculate_com_move, calculate_quat_move
 from potentials import gb, quadrupole, GB_PARAMS, QQ
 import random
+import ase
 from ase.neighborlist import NeighborList
 from ase.io import Trajectory
 import datetime
@@ -12,6 +13,8 @@ import os
 BOLTZCONST = 8.617E-5 # eV / K
 TEMP = 50 # K
 BETA = 1 / (BOLTZCONST * TEMP)
+
+TARGET_ACC_RATE = 0.275
 
 
 def generate_simulation_id(method="datetime"):
@@ -40,9 +43,18 @@ class MetropolisCalculator:
             or_delt=0.05,
             nl_radius=15,
             nl_skin=0.3,
-            traj_file=None,
+            output_dir=None,
     ):
-        self.current_frame = init_frame
+        # create new frame so .traj file correctly records array data
+        frame = ase.Atoms(
+            positions=init_frame.positions,
+            cell=init_frame.cell,
+            pbc=True,
+            info=init_frame.info,
+        )
+        frame.new_array("c_q", init_frame.arrays["c_q"])
+        frame.new_array("or_vec", init_frame.arrays["or_vec"])
+        self.current_frame = frame
         self.pos_delt = pos_delt
         self.or_delt = or_delt
         self.step_count = 0
@@ -53,11 +65,13 @@ class MetropolisCalculator:
         self.current_frame.info["or_dec_rate"] = -1
         self.current_frame.info["or_delta"] = -1
         self.current_frame.info["pos_delta"] = -1
+        self.equilibrated = False
         # auto generate traj file name if needed
-        if traj_file is None:
-            self.traj_file = "simulations/" + generate_simulation_id() + "/simulation.traj"
-        # initialize Trajectory object
-        self.traj = Trajectory(traj_file, "w", self.current_frame)
+        if output_dir is None:
+            self.output_dir = "simulations/" + generate_simulation_id()
+        else:
+            self.output_dir = output_dir
+        # set up neighborlist
         cutoffs = [nl_radius / 2] * len(self.current_frame)
         self.nl = NeighborList(
             cutoffs,
@@ -97,7 +111,7 @@ class MetropolisCalculator:
         else:
             return NotImplementedError()
 
-    def step(self, pbar=None):
+    def step(self):
         # choose particle to update
         num_particles = len(self.current_frame)
         rand_idx = random.randint(0, num_particles - 1)
@@ -106,8 +120,8 @@ class MetropolisCalculator:
 
         # determine whether to perturb position or orientation
         move_type = random.randint(0, 1)
-        if move_type == 0:
-            # perturb position
+        if move_type == 0:    # perturb position
+            # record original position
             old_pos = self.current_frame.positions[rand_idx].copy()
             # get trial move
             new_pos = calculate_com_move(self.current_frame.positions[rand_idx], self.pos_delt)
@@ -116,7 +130,7 @@ class MetropolisCalculator:
             self.nl.update(self.current_frame)
             # calculate new energy
             new_energy = self.calc_energy(rand_idx)
-            # decide whether simulation will accept trial move
+            # decide whether to accept trial move
             keep_move = decide_accept(old_energy, new_energy)
             if keep_move:
                 self.pos_decisions.append(1)
@@ -124,8 +138,8 @@ class MetropolisCalculator:
                 self.pos_decisions.append(0)
                 self.current_frame.positions[rand_idx] = old_pos
                 self.nl.update(self.current_frame)
-        else:
-            # perturb orientation
+        else:                 # perturb orientation
+            # record original orientation
             old_quat = self.current_frame.arrays["c_q"][rand_idx].copy()
             old_or_vec = self.current_frame.arrays["or_vec"][rand_idx].copy()
             # get trial move
@@ -136,7 +150,7 @@ class MetropolisCalculator:
             self.current_frame.arrays["or_vec"][rand_idx] = new_or_vec
             # calculate new energy
             new_energy = self.calc_energy(rand_idx)
-            # decide whether simulation will accept trial move
+            # decide whether to accept trial move
             keep_move = decide_accept(old_energy, new_energy)
             if keep_move:
                 self.or_decisions.append(1)
@@ -146,44 +160,73 @@ class MetropolisCalculator:
                 self.current_frame.arrays["or_vec"][rand_idx] = old_or_vec
         self.step_count += 1
 
-    def calculate_trajectory(self, num_steps, block_size=100, dynamic_delta=False):
+    def block_update(self, window, traj, dynamic_delta):
+        # record acceptance rates for most recent block
+        if len(self.pos_decisions) < window:
+            pos_acc_rate = np.mean(self.pos_decisions[1:])
+        else:
+            pos_acc_rate = np.mean(self.pos_decisions[-window:])
+        if len(self.or_decisions) < window:
+            or_acc_rate = np.mean(self.or_decisions[1:])
+        else:
+            or_acc_rate = np.mean(self.or_decisions[-window:])
+        # update frame info
+        self.current_frame.info["pos_acc_rate"] = pos_acc_rate
+        self.current_frame.info["or_acc_rate"] = or_acc_rate
+        self.current_frame.info["step"] = self.step_count
+        self.current_frame.info["pos_delta"] = self.pos_delt
+        self.current_frame.info["or_delta"] = self.or_delt
+        # write trajectory file
+        traj.write(self.current_frame)
+        # update trial move magnitude if enabled
+        if dynamic_delta:
+            # update position delta
+            if pos_acc_rate > 0.35:
+                scale_amt = min((1.1, pos_acc_rate / TARGET_ACC_RATE))
+                self.pos_delt *= scale_amt
+            elif pos_acc_rate < 0.20:
+                scale_amt = max((0.9, pos_acc_rate / TARGET_ACC_RATE))
+                self.pos_delt *= scale_amt
+            # update orientation delta
+            if or_acc_rate > 0.35:
+                scale_amt = min((1.1, or_acc_rate / TARGET_ACC_RATE))
+                self.or_delt *= scale_amt
+            elif or_acc_rate < 0.20:
+                scale_amt = max((0.9, or_acc_rate / TARGET_ACC_RATE))
+                self.or_delt *= scale_amt
+
+    def equilibrate(self, num_steps, block_size, dynamic_delta=True):
+        # initialize Trajectory object
+        traj = Trajectory(self.output_dir + "/equilibration.traj", "w", self.current_frame)
+        window = block_size // 2
+        with tqdm(total=num_steps, initial=self.step_count, desc="Equilibrating") as pbar:
+            while self.step_count < num_steps:
+                self.step(pbar)
+                pbar.update(1)
+                if self.step_count % block_size == 0:
+                    self.block_update(window, traj, dynamic_delta)
+        # close trajectory file
+        traj.close()
+        # update state
+        self.equilibrated = True
+        self.step_count = 0
+        self.current_frame.info["step"] = 0
+
+    def calculate_trajectory(self, num_steps, block_size=100, num_eq_steps=5000):
+        # equilibrate
+        if num_eq_steps is not None:
+            self.equilibrate(num_eq_steps, block_size)
+        # initialize Trajectory object
+        traj = Trajectory(self.output_dir + "/simulation.traj", "w", self.current_frame)
         window = block_size // 2
         with tqdm(total=num_steps, initial=self.step_count, desc="Simulating") as pbar:
             while self.step_count < num_steps:
                 self.step(pbar)
                 pbar.update(1)
                 if self.step_count % block_size == 0:
-                    # record acceptance rates for most recent block
-                    if len(self.pos_decisions) < window:
-                        pos_acc_rate = np.mean(self.pos_decisions[1:])
-                    else:
-                        pos_acc_rate = np.mean(self.pos_decisions[-window:])
-                    if len(self.or_decisions) < window:
-                        or_acc_rate = np.mean(self.or_decisions[1:])
-                    else:
-                        or_acc_rate = np.mean(self.or_decisions[-window:])
-                    # update frame info
-                    self.current_frame.info["pos_acc_rate"] = pos_acc_rate
-                    self.current_frame.info["or_acc_rate"] = or_acc_rate
-                    self.current_frame.info["step"] = self.step_count
-                    self.current_frame.info["pos_delta"] = self.pos_delt
-                    self.current_frame.info["or_delta"] = self.or_delt
-                    # write trajectory file
-                    self.traj.write(self.current_frame)
-                    # update trial move magnitude if enabled
-                    if dynamic_delta:
-                        # update position delta
-                        if pos_acc_rate > 0.35:
-                            self.pos_delt *= 1.05
-                        elif pos_acc_rate < 0.20:
-                            self.pos_delt *= 0.95
-                        # update orientation delta
-                        if or_acc_rate > 0.30:
-                            self.or_delt *= 1.05
-                        elif or_acc_rate < 0.20:
-                            self.or_delt *= 0.95
+                    self.block_update(window, traj, dynamic_delta=False)
         # close trajectory file
-        self.traj.close()
+        traj.close()
             
 
 def calc_free_energy(params):
