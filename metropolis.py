@@ -1,7 +1,7 @@
 import numpy as np
 from tqdm.auto import tqdm
 from trial_moves import calc_or_vec, calculate_com_move, calculate_quat_move
-from potentials import gb, quadrupole, GB_PARAMS, QQ
+from potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
 import random
 import ase
 from ase.neighborlist import NeighborList
@@ -12,8 +12,6 @@ from ase.db import connect
 
 
 BOLTZCONST = 8.617E-5 # eV / K
-TEMP = 50 # K
-BETA = 1 / (BOLTZCONST * TEMP)
 
 TARGET_ACC_RATE = 0.275
 
@@ -28,9 +26,9 @@ def generate_simulation_id(method="datetime"):
         return NotImplementedError
 
 
-def decide_accept(old_energy, new_energy):
+def decide_accept(old_energy, new_energy, beta):
     r = random.uniform(0, 1)
-    dec_term = np.exp(-BETA * (new_energy - old_energy))
+    dec_term = np.exp(-beta * (new_energy - old_energy))
     decision = r < dec_term
     return decision
 
@@ -46,7 +44,6 @@ class MetropolisCalculator:
             nl_skin=0.3,
             output_dir=None,
     ):
-        # create new frame so .traj file correctly records array data
         frame = ase.Atoms(
             positions=init_frame.positions,
             cell=init_frame.cell,
@@ -82,6 +79,8 @@ class MetropolisCalculator:
             bothways=True,
         )
         self.nl.update(self.current_frame)
+        self.current_energy = calc_total_energy(self.current_frame, cutoffs, energy_func)
+        self.current_frame.info["total_energy"] = self.current_energy
 
     def calc_energy(self, center_idx):
         if self.energy_func == "GB":
@@ -112,7 +111,7 @@ class MetropolisCalculator:
         else:
             return NotImplementedError()
 
-    def step(self):
+    def step(self, beta):
         # choose particle to update
         num_particles = len(self.current_frame)
         rand_idx = random.randint(0, num_particles - 1)
@@ -132,7 +131,7 @@ class MetropolisCalculator:
             # calculate new energy
             new_energy = self.calc_energy(rand_idx)
             # decide whether to accept trial move
-            keep_move = decide_accept(old_energy, new_energy)
+            keep_move = decide_accept(old_energy, new_energy, beta)
             if keep_move:
                 self.pos_decisions.append(1)
             else:
@@ -152,7 +151,7 @@ class MetropolisCalculator:
             # calculate new energy
             new_energy = self.calc_energy(rand_idx)
             # decide whether to accept trial move
-            keep_move = decide_accept(old_energy, new_energy)
+            keep_move = decide_accept(old_energy, new_energy, beta)
             if keep_move:
                 self.or_decisions.append(1)
             else:
@@ -210,15 +209,16 @@ class MetropolisCalculator:
                 self.or_delt *= scale_amt
         return buffer
 
-    def equilibrate(self, num_steps, block_size, dynamic_delta=True, buffer_size=100):
+    def equilibrate(self, num_steps, block_size, temp, dynamic_delta=True, buffer_size=100):
         window = block_size // 2
+        beta = 1/ (BOLTZCONST * temp)
         # initialize buffer
         buffer = []
         db_file = self.output_dir + "/equilibration.db"
         # run simulation
         with tqdm(total=num_steps, initial=self.step_count, desc="Equilibrating") as pbar:
             while self.step_count < num_steps:
-                self.step()
+                self.step(beta)
                 pbar.update(1)
                 if self.step_count % block_size == 0:
                     buffer = self.block_update(
@@ -238,10 +238,11 @@ class MetropolisCalculator:
                 for triplet in buffer:
                     db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
 
-    def calculate_trajectory(self, num_steps, block_size=100, num_eq_steps=5000, buffer_size=100):
+    def calculate_trajectory(self, num_steps, temp, block_size=100, num_eq_steps=5000, buffer_size=100):
+        beta = 1/ (BOLTZCONST * temp)
         # equilibrate
         if num_eq_steps is not None:
-            self.equilibrate(num_eq_steps, block_size)
+            self.equilibrate(num_eq_steps, block_size, temp, buffer_size=buffer_size)
         window = block_size // 2
         # initialize buffer
         buffer = []
@@ -249,7 +250,7 @@ class MetropolisCalculator:
         db_file = self.output_dir + "/simulation.db"
         with tqdm(total=num_steps, initial=self.step_count, desc="Simulating") as pbar:
             while self.step_count < num_steps:
-                self.step()
+                self.step(beta)
                 pbar.update(1)
                 if self.step_count % block_size == 0:
                     buffer = self.block_update(
@@ -264,7 +265,7 @@ class MetropolisCalculator:
                 with connect(db_file) as db:
                     for triplet in buffer:
                         db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
-            
+
 
 def calc_free_energy(params):
     # TODO: implement

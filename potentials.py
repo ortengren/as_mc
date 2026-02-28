@@ -1,5 +1,6 @@
 import ase
 import numpy as np
+from ase.neighborlist import neighbor_list
 from numpy import linalg as la
 import pandas as pd
 import random
@@ -103,6 +104,36 @@ def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, Q):
     # pw_energies should have shape (N, 1431)
     energies = np.sum(pw_energies, axis=-1)
     return energies
+
+
+def calc_total_energy(frame, nl_cutoff, method="GB"):
+    if method == "GB":
+        # get all interacting pairs (i, j) and their shift vectors
+        i, j, s = neighbor_list("ijs", frame, nl_cutoff)
+
+        # filter for i < j to avoid double counting
+        unique_pairs_mask = i < j
+        i = i[unique_pairs_mask]
+        j = j[unique_pairs_mask]
+        s = s[unique_pairs_mask]
+
+        # calculate displacements
+        cell = frame.get_cell()
+        shift_vecs = np.dot(s, cell)
+        displacements = frame.positions[j] + shift_vecs - frame.positions[i]
+
+        # calculate orientations
+        uhat1 = frame.arrays["or_vec"][i]
+        uhat2 = frame.arrays["or_vec"][j]
+
+        # calculate pairwise energies
+        gb_e = gb(uhat1, uhat2, displacements, *GB_PARAMS.values())
+        qq_e = np.squeeze(quadrupole(uhat1, uhat2, displacements, QQ))
+        pw_energies = gb_e + qq_e
+
+        return np.sum(pw_energies)
+    else:
+        return NotImplementedError()
 
 
 GB_PARAMS = {
