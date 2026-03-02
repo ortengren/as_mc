@@ -109,7 +109,7 @@ def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, Q):
 def calc_total_energy(frame, nl_cutoff, method="GB"):
     if method == "GB":
         # get all interacting pairs (i, j) and their shift vectors
-        i, j, s = neighbor_list("ijs", frame, nl_cutoff)
+        i, j, s = neighbor_list("ijS", frame, nl_cutoff)
 
         # filter for i < j to avoid double counting
         unique_pairs_mask = i < j

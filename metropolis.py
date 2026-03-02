@@ -136,7 +136,7 @@ class MetropolisCalculator:
                 self.pos_decisions.append(1)
                 energy_change = new_energy - old_energy
                 self.current_energy += energy_change
-                self.current_frame.info["energy"] = self.current_energy
+                self.current_frame.info["total_energy"] = self.current_energy
             else:
                 self.pos_decisions.append(0)
                 self.current_frame.positions[rand_idx] = old_pos
@@ -159,7 +159,7 @@ class MetropolisCalculator:
                 self.or_decisions.append(1)
                 energy_change = new_energy - old_energy
                 self.current_energy += energy_change
-                self.current_frame.info["energy"] = self.current_energy
+                self.current_frame.info["total_energy"] = self.current_energy
             else:
                 self.or_decisions.append(0)
                 self.current_frame.arrays["c_q"][rand_idx] = old_quat
@@ -183,7 +183,7 @@ class MetropolisCalculator:
             "step": self.step_count,
             "pos_delta": self.pos_delt,
             "or_delta": self.or_delt,
-            "energy": self.current_energy,
+            "total_energy": self.current_energy,
         }
         array_data = {
             "c_q": self.current_frame.arrays["c_q"].copy(),
