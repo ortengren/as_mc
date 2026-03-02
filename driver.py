@@ -13,6 +13,10 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
 
+BOLTZCONST = 8.617E-5 # eV / K
+
+TARGET_ACC_RATE = 0.275
+
 DEFAULT_HPARAMS = {
     "max_angular": 9,
     "max_radial": 6,
@@ -35,44 +39,6 @@ def generate_simulation_id(method="datetime"):
         return dt
     else:
         return NotImplementedError
-
-
-def run_simulation(length, simulation_id=None, init_frame_idx=0):
-    frames = ase.io.read("xyz_files/two_benzenes.xyz", ":")
-    ell_frames = ase.io.read("xyz_files/two_ells_with_axes.xyz", ":")
-    print("frames length: ", len(frames))
-    print("ell_frames length: ", len(ell_frames))
-
-    for ell_frame, frame in zip(ell_frames, frames):
-        ell_frame.info["energy"] = frame.get_total_energy()
-
-    metro = MetropolisCalculator(ell_frames[0], energy_func="GB")
-    metro.calculate_trajectory(length)
-    # save MetropolisCalculator object to file
-    if simulation_id is not None:
-        with open(f"simulations/{simulation_id}/MetropolisCalculator.pkl", "wb") as f:
-            # noinspection PyTypeChecker
-            pickle.dump(metro, f)
-    print("Simulation Completed")
-    return metro
-
-
-def analyze_trajectory(metro, simulation_id=None):
-    for frame in metro.frames:
-        axes = np.array(frame.arrays["axes"])
-        frame.arrays[r"c_diameter[1]"] = axes[:, 0]
-        frame.arrays[r"c_diameter[2]"] = axes[:, 1]
-        frame.arrays[r"c_diameter[3]"] = axes[:, 2]
-
-    calculator = EllipsoidalDensityProjection(**DEFAULT_HPARAMS)
-    print("calculator initiated")
-    print("calculating rep_raw...")
-    rep_raw = calculator.transform(metro.frames, show_progress=True)
-    print("calculated rep_raw")
-
-    if simulation_id is not None:
-        metatensor.save(f"simulations/{simulation_id}/feature_tm.npz", rep_raw)
-    return rep_raw
 
 
 def generate_ps(features, simulation_id=None):
@@ -101,49 +67,24 @@ def plot_power_spectrum(x, simulation_id):
     plt.savefig(f"simulations/{simulation_id}/power_spectrum.png")
 
 
-def calculate_all(length, simulation_id, init_frame_idx=0):
-    metro = run_simulation(length, simulation_id, init_frame_idx)
-    density_proj = analyze_trajectory(metro, simulation_id)
-    X = generate_ps(density_proj, simulation_id)
-    return metro, density_proj, X
-
-
 def main():
     # create directory for simulation
-    sim_id_base = "walsh_potential"
-    os.makedirs(f"simulations/{sim_id_base}/run2")
-    sim_id = f"{sim_id_base}/run2"
-    # run simulation
-    metro, density_proj, X = calculate_all(2000, sim_id)
-    # plot power spectrum PCA
-    pca = PCA(n_components=2)
-    X_pca = pca.fit_transform(X[500:, :])
-    plt.scatter(X_pca[:, 0], X_pca[:, 1])
-    plt.savefig(f"simulations/{sim_id}/power_spectrum_pca.png")
-    plt.close()
-    # record simulation trajectory as XYZ file
-    ase.io.write(f"simulations/{sim_id}/traj.xyz", metro.frames)
-    # plot average move acceptance rate
-    block_avgs = []
-    total_avgs = []
-    final_n = -1
-    n = 1
-    decisions = [dec.value for dec in metro.decisions]
-    while n < len(decisions[1:]) / 50:
-        start = (n-1)*50 + 1
-        stop = n*50 + 1
-        avg = np.mean(decisions[start:stop])
-        block_avgs.append(avg)
-        total_avgs.append(metro.get_acc_rate(at_step=(50*n)+1))
-        final_n = n
-        n += 1
-    block_avgs.append(np.mean(decisions[final_n*50 + 1:]))
-    block_avgs = np.array(block_avgs)
-    plt.plot(block_avgs, label="block average")
-    plt.plot(total_avgs, label="total average")
-    plt.legend()
-    plt.savefig(f"simulations/{sim_id}/block_avgs.png")
-    plt.close()
+    sim_id_base = "multi_temp_trial"
+    temps = [50., 100., 150., 200.]
+    frame = ase.io.read("xyz_files/duped_ellipsoids_with_axes.xyz")
+    for temp in temps:
+        metro = MetropolisCalculator(
+            frame,
+            energy_func="GB",
+            output_dir=f"{sim_id_base}/{temp}"
+        )
+        metro.calculate_trajectory(
+            100_000,
+            temp,
+            block_size=400,
+            num_eq_steps=100_000,
+            buffer_size=50
+        )
 
 
 if __name__ == "__main__":

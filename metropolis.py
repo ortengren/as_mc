@@ -57,8 +57,8 @@ class MetropolisCalculator:
         self.or_delt = or_delt
         self.step_count = 0
         self.energy_func = energy_func
-        self.pos_decisions = [-1]
-        self.or_decisions = [-1]
+        self.pos_decisions = []
+        self.or_decisions = []
         self.current_frame.info["pos_acc_rate"] = -1
         self.current_frame.info["or_dec_rate"] = -1
         self.current_frame.info["or_delta"] = -1
@@ -81,6 +81,9 @@ class MetropolisCalculator:
         self.nl.update(self.current_frame)
         self.current_energy = calc_total_energy(self.current_frame, cutoffs, energy_func)
         self.current_frame.info["total_energy"] = self.current_energy
+
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
 
     def calc_energy(self, center_idx):
         if self.energy_func == "GB":
@@ -167,6 +170,8 @@ class MetropolisCalculator:
         self.step_count += 1
 
     def block_update(self, window, buffer, db_file, dynamic_delta=True, buffer_size=100):
+        # wrap particles to simulation box
+        self.current_frame.wrap()
         # record acceptance rates for most recent block
         if len(self.pos_decisions) < window:
             pos_acc_rate = np.mean(self.pos_decisions[1:])
