@@ -69,19 +69,21 @@ def plot_power_spectrum(x, simulation_id):
 
 def main():
     # create directory for simulation
-    sim_id_base = "multi_temp_trial"
-    temps = [50., 100., 150., 200.]
-    frame = ase.io.read("xyz_files/duped_ellipsoids_with_axes.xyz")
+    sim_id_base = "simulations/multi_temp_trial_2"
+    temps = [400., 450.]
+    frames = ase.io.read("xyz_files/duped_ellipsoids_with_axes.xyz", ":")
+    frame = frames[17]
     for temp in temps:
         metro = MetropolisCalculator(
             frame,
             energy_func="GB",
-            output_dir=f"{sim_id_base}/{temp}"
+            output_dir=f"{sim_id_base}/{temp}",
+            nl_skin=0.6
         )
         metro.calculate_trajectory(
             100_000,
             temp,
-            block_size=400,
+            block_size=800,
             num_eq_steps=100_000,
             buffer_size=50
         )
