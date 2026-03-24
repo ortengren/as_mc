@@ -1,6 +1,6 @@
 import numpy as np
 from tqdm.auto import tqdm
-from trial_moves import calc_or_vec, calculate_com_move, calculate_quat_move
+from trial_moves import calc_or_vec, calculate_com_move, calculate_quat_move, calculate_vol_move
 from potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
 import random
 import ase
@@ -26,9 +26,10 @@ def generate_simulation_id(method="datetime"):
         return NotImplementedError
 
 
-def decide_accept(old_energy, new_energy, beta):
+def decide_accept(old_en, new_en, old_vol, new_vol, beta, pressure, num_part):
     r = random.uniform(0, 1)
-    dec_term = np.exp(-beta * (new_energy - old_energy))
+    arg = (-beta * (new_en - old_en + pressure * (new_vol - old_vol) - (num_part + 1)*np.log(new_vol/old_vol)/beta))
+    dec_term = np.exp(arg)
     decision = r < dec_term
     return decision
 
@@ -37,28 +38,36 @@ class MetropolisCalculator:
     def __init__(
             self,
             init_frame,
+            temp,
+            pressure,
             energy_func="GB",
             pos_delt=0.15,
             or_delt=0.05,
+            vol_delt=0.05,
             nl_radius=15,
             nl_skin=0.3,
             output_dir=None,
     ):
         frame = ase.Atoms(
-            positions=init_frame.positions,
-            cell=init_frame.cell,
+            positions=init_frame.positions.copy(),
+            cell=init_frame.cell.copy(),
             pbc=True,
-            info=init_frame.info,
+            info=init_frame.info.copy(),
         )
-        frame.new_array("c_q", init_frame.arrays["c_q"])
-        frame.new_array("or_vec", init_frame.arrays["or_vec"])
+        frame.new_array("c_q", init_frame.arrays["c_q"].copy())
+        frame.new_array("or_vec", init_frame.arrays["or_vec"].copy())
         self.current_frame = frame
+        self.beta = 1 / (temp * BOLTZCONST)
+        self.pressure = pressure
+        self.current_vol = np.linalg.det(frame.cell)
         self.pos_delt = pos_delt
         self.or_delt = or_delt
+        self.vol_delt = vol_delt
         self.step_count = 0
         self.energy_func = energy_func
         self.pos_decisions = []
         self.or_decisions = []
+        self.vol_decisions = []
         self.current_frame.info["pos_acc_rate"] = -1
         self.current_frame.info["or_dec_rate"] = -1
         self.current_frame.info["or_delta"] = -1
@@ -70,16 +79,17 @@ class MetropolisCalculator:
         else:
             self.output_dir = output_dir
         # set up neighborlist
-        cutoffs = [nl_radius / 2] * len(self.current_frame)
+        self.nl_cutoffs = [nl_radius] * len(self.current_frame)
+        self.nl_skin = nl_skin
         self.nl = NeighborList(
-            cutoffs,
-            skin=nl_skin,
+            self.nl_cutoffs,
+            skin=self.nl_skin,
             sorted=False,
             self_interaction=False,
             bothways=True,
         )
         self.nl.update(self.current_frame)
-        self.current_energy = calc_total_energy(self.current_frame, cutoffs, energy_func)
+        self.current_energy = calc_total_energy(self.current_frame, self.nl_cutoffs, energy_func)
         self.current_frame.info["total_energy"] = self.current_energy
 
         if not os.path.exists(self.output_dir):
@@ -114,16 +124,54 @@ class MetropolisCalculator:
         else:
             return NotImplementedError()
 
-    def step(self, beta):
-        # choose particle to update
+    def step(self):
         num_particles = len(self.current_frame)
-        rand_idx = random.randint(0, num_particles - 1)
-        # calculate particle's contribution to total energy
-        old_energy = self.calc_energy(rand_idx)
 
-        # determine whether to perturb position or orientation
-        move_type = random.randint(0, 1)
-        if move_type == 0:    # perturb position
+        # determine whether to perturb volume, position, or orientation
+        r = random.uniform(0, num_particles)
+        if r < (num_particles - 1) / 2:
+            move_type = "position"
+        elif r < num_particles - 1:
+            move_type = "orientation"
+        else:
+            move_type = "volume"
+
+        # perform trial move
+        if move_type == "volume":
+            # record original values
+            old_cell = self.current_frame.get_cell().copy()
+            old_vol = self.current_vol.copy()
+            old_total_energy = self.current_energy.copy()
+            # calculate new values
+            new_cell, new_vol = calculate_vol_move(old_cell, old_vol, self.vol_delt)
+            # apply new values
+            self.current_frame.set_cell(new_cell, scale_atoms=True)
+            # update neighborlist
+            self.nl.update(self.current_frame)
+            # calculate new energy
+            new_total_energy = calc_total_energy(self.current_frame, self.nl_cutoffs, self.energy_func)
+            # decide whether to accept trial move
+            keep_move = decide_accept(
+                old_total_energy,
+                new_total_energy,
+                old_vol,
+                new_vol,
+                self.beta,
+                self.pressure,
+                num_particles
+            )
+            if keep_move:
+                self.vol_decisions.append(1)
+                self.current_energy = new_total_energy
+                self.current_frame.info["total_energy"] = self.current_energy
+            else:
+                self.vol_decisions.append(0)
+                self.current_frame.set_cell(old_cell, scale_atoms=True)
+        elif move_type == "position":
+            # choose particle to update
+            rand_idx = random.randint(0, num_particles - 1)
+            # calculate particle's contribution to total energy
+            old_energy = self.calc_energy(rand_idx)
             # record original position
             old_pos = self.current_frame.positions[rand_idx].copy()
             # get trial move
@@ -134,7 +182,15 @@ class MetropolisCalculator:
             # calculate new energy
             new_energy = self.calc_energy(rand_idx)
             # decide whether to accept trial move
-            keep_move = decide_accept(old_energy, new_energy, beta)
+            keep_move = decide_accept(
+                old_energy,
+                new_energy,
+                self.current_vol,
+                self.current_vol,
+                self.beta,
+                self.pressure,
+                num_particles
+            )
             if keep_move:
                 self.pos_decisions.append(1)
                 energy_change = new_energy - old_energy
@@ -144,7 +200,11 @@ class MetropolisCalculator:
                 self.pos_decisions.append(0)
                 self.current_frame.positions[rand_idx] = old_pos
                 self.nl.update(self.current_frame)
-        else:                 # perturb orientation
+        elif move_type == "orientation":
+            # choose particle to update
+            rand_idx = random.randint(0, num_particles - 1)
+            # calculate particle's contribution to total energy
+            old_energy = self.calc_energy(rand_idx)
             # record original orientation
             old_quat = self.current_frame.arrays["c_q"][rand_idx].copy()
             old_or_vec = self.current_frame.arrays["or_vec"][rand_idx].copy()
@@ -157,7 +217,15 @@ class MetropolisCalculator:
             # calculate new energy
             new_energy = self.calc_energy(rand_idx)
             # decide whether to accept trial move
-            keep_move = decide_accept(old_energy, new_energy, beta)
+            keep_move = decide_accept(
+                old_energy,
+                new_energy,
+                self.current_vol,
+                self.current_vol,
+                self.beta,
+                self.pressure,
+                num_particles
+            )
             if keep_move:
                 self.or_decisions.append(1)
                 energy_change = new_energy - old_energy
@@ -167,6 +235,7 @@ class MetropolisCalculator:
                 self.or_decisions.append(0)
                 self.current_frame.arrays["c_q"][rand_idx] = old_quat
                 self.current_frame.arrays["or_vec"][rand_idx] = old_or_vec
+
         self.step_count += 1
 
     def block_update(self, window, buffer, db_file, dynamic_delta=True, buffer_size=100):
@@ -189,6 +258,8 @@ class MetropolisCalculator:
             "pos_delta": self.pos_delt,
             "or_delta": self.or_delt,
             "total_energy": self.current_energy,
+            "num_particles": len(self.current_frame),
+            "vol": self.current_vol,
         }
         array_data = {
             "c_q": self.current_frame.arrays["c_q"].copy(),
