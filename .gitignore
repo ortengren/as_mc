@@ -11,11 +11,11 @@ __pycache__/
 
 # Simulation outputs (regenerable)
 simulations/*
-scan_results/_scratch/
+scan_results/
 
 # Bulk / generated data (kept on disk, not in VCS)
 xyz_files/duped_benzenes.xyz
 xyz_files/duped_ellipsoids_with_axes.xyz
 xyz_files/ellipsoids_with_axes.xyz
 xyz_files/two_ells_with_axes.xyz
-new_data/*.zip
+new_data/
