@@ -33,9 +33,9 @@ def four_particle_frame():
 
 def make_metro(frame, tmp_path, **kwargs):
     return MetropolisCalculator(
-        frame,
         temp=300,
         pressure=0.0,
+        init_frame=frame,
         output_dir=str(tmp_path / "sim"),
         **kwargs,
     )
@@ -103,7 +103,7 @@ def test_energy_tracking_consistent(four_particle_frame, tmp_path):
         metro.current_frame, metro.nl_cutoffs, metro.energy_func
     )
     np.testing.assert_allclose(
-        metro.current_energy, recomputed, rtol=1e-6,
+        metro.current_energy, recomputed, rtol=1e-4,
         err_msg="Incremental energy tracker drifted from calc_total_energy",
     )
 

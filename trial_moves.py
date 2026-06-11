@@ -55,6 +55,7 @@ def calculate_quat_move(quat, delta):
 def calculate_vol_move(cell, curr_vol, delta):
     # calculate random volume scaling factor uniformly in [1 - delta, 1 + delta]
     s_v = 1 + rand.uniform(-delta, delta)
+    s_v = max(s_v, 1e-8)  # prevent complex cube root if vol_delt exceeds 1
     # calculate amount to scale cell axes by
     s_l = s_v**(1/3)
     new_cell = s_l * cell

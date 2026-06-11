@@ -1,5 +1,6 @@
 import numpy as np
 from tqdm.auto import tqdm
+from initialize import generate_random_config
 from trial_moves import calc_or_vec, calculate_com_move, calculate_quat_move, calculate_vol_move
 from potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
 import random
@@ -27,35 +28,42 @@ def generate_simulation_id(method="datetime"):
 
 
 def decide_accept(old_en, new_en, old_vol, new_vol, beta, pressure, num_part):
+    if new_vol <= 0:
+        return False
     r = random.uniform(0, 1)
     arg = (-beta * (new_en - old_en + pressure * (new_vol - old_vol) - (num_part + 1)*np.log(new_vol/old_vol)/beta))
-    dec_term = np.exp(arg)
-    decision = r < dec_term
-    return decision
+    if arg >= 0:
+        return True  # always accept; avoids exp overflow for favorable moves
+    return r < np.exp(arg)
 
 
 class MetropolisCalculator:
     def __init__(
             self,
-            init_frame,
             temp,
             pressure,
+            init_frame=None,
             energy_func="GB",
             pos_delt=0.15,
             or_delt=0.05,
             vol_delt=0.05,
             nl_radius=15,
-            nl_skin=0.3,
+            nl_skin=1.0,
             output_dir=None,
+            volume_moves=True,
     ):
-        frame = ase.Atoms(
-            positions=init_frame.positions.copy(),
-            cell=init_frame.cell.copy(),
-            pbc=True,
-            info=init_frame.info.copy(),
-        )
-        frame.new_array("c_q", init_frame.arrays["c_q"].copy())
-        frame.new_array("or_vec", init_frame.arrays["or_vec"].copy())
+        if init_frame is None:
+            frame = generate_random_config()
+        else:
+            frame = ase.Atoms(
+                positions=init_frame.positions.copy(),
+                cell=init_frame.cell.copy(),
+                pbc=True,
+                info=init_frame.info.copy(),
+            )
+            frame.new_array("c_q", init_frame.arrays["c_q"].copy())
+            frame.new_array("or_vec", init_frame.arrays["or_vec"].copy())
+        self.init_frame = frame
         self.current_frame = frame
         self.beta = 1 / (temp * BOLTZCONST)
         self.pressure = pressure
@@ -73,6 +81,8 @@ class MetropolisCalculator:
         self.current_frame.info["or_delta"] = -1
         self.current_frame.info["pos_delta"] = -1
         self.equilibrated = False
+        # whether to attempt volume moves (NPT); set False for NVT (fixed box)
+        self.volume_moves = volume_moves
         # auto generate traj file name if needed
         if output_dir is None:
             self.output_dir = "simulations/" + generate_simulation_id()
@@ -111,7 +121,7 @@ class MetropolisCalculator:
             # find neighbor orientations
             center_ell_orientation = self.current_frame.arrays["or_vec"][center_idx].copy()
             uhat2 = self.current_frame.arrays["or_vec"][indices].copy()
-            uhat1 = np.array([center_ell_orientation for _ in range(len(indices))])
+            uhat1 = np.broadcast_to(center_ell_orientation, (len(indices), 3))
             assert np.shape(uhat1) == np.shape(uhat2), \
                 f"uhat1 and uhat2 are different shapes \n{np.shape(uhat1)} != {np.shape(uhat2)}"
             # calculate pairwise interaction energies of center particle w/ each neighbor
@@ -128,13 +138,17 @@ class MetropolisCalculator:
         num_particles = len(self.current_frame)
 
         # determine whether to perturb volume, position, or orientation
-        r = random.uniform(0, num_particles)
-        if r < (num_particles - 1) / 2:
-            move_type = "position"
-        elif r < num_particles - 1:
-            move_type = "orientation"
+        if self.volume_moves:
+            r = random.uniform(0, num_particles)
+            if r < (num_particles - 1) / 2:
+                move_type = "position"
+            elif r < num_particles - 1:
+                move_type = "orientation"
+            else:
+                move_type = "volume"
         else:
-            move_type = "volume"
+            # NVT: fixed box, so attempt only translations and rotations
+            move_type = "position" if random.random() < 0.5 else "orientation"
 
         # perform trial move
         if move_type == "volume":
@@ -163,6 +177,7 @@ class MetropolisCalculator:
             if keep_move:
                 self.vol_decisions.append(1)
                 self.current_energy = new_total_energy
+                self.current_vol = new_vol
                 self.current_frame.info["total_energy"] = self.current_energy
             else:
                 self.vol_decisions.append(0)
@@ -199,7 +214,7 @@ class MetropolisCalculator:
             else:
                 self.pos_decisions.append(0)
                 self.current_frame.positions[rand_idx] = old_pos
-                self.nl.update(self.current_frame)
+                self.nl.update(self.current_frame)  # restore NL reference to old_pos
         elif move_type == "orientation":
             # choose particle to update
             rand_idx = random.randint(0, num_particles - 1)
@@ -238,7 +253,9 @@ class MetropolisCalculator:
 
         self.step_count += 1
 
-    def block_update(self, window, buffer, db_file, dynamic_delta=True, buffer_size=100):
+    def block_update(self, window, buffer, db_file, dynamic_delta=True, buffer_size=100,
+                     max_scale=1.1, min_scale=0.9):
+    # TODO: implement measurement of (analytic or numerical) virial
         # wrap particles to simulation box
         self.current_frame.wrap()
         # record acceptance rates for most recent block
@@ -250,13 +267,21 @@ class MetropolisCalculator:
             or_acc_rate = np.mean(self.or_decisions[1:])
         else:
             or_acc_rate = np.mean(self.or_decisions[-window:])
+        if not self.volume_moves:
+            vol_acc_rate = float("nan")  # no volume moves attempted in NVT
+        elif len(self.vol_decisions) < window:
+            vol_acc_rate = np.mean(self.vol_decisions[1:])
+        else:
+            vol_acc_rate = np.mean(self.vol_decisions[-window:])
         # update frame info
         scalar_data = {
             "pos_acc_rate": pos_acc_rate,
             "or_acc_rate": or_acc_rate,
+            "vol_acc_rate": vol_acc_rate,
             "step": self.step_count,
             "pos_delta": self.pos_delt,
             "or_delta": self.or_delt,
+            "vol_delta": self.vol_delt,
             "total_energy": self.current_energy,
             "num_particles": len(self.current_frame),
             "vol": self.current_vol,
@@ -264,6 +289,7 @@ class MetropolisCalculator:
         array_data = {
             "c_q": self.current_frame.arrays["c_q"].copy(),
             "or_vec": self.current_frame.arrays["or_vec"].copy(),
+            "cell": self.current_frame.get_cell().copy(),
         }
         # add data to buffer
         buffer.append((self.current_frame.copy(), scalar_data, array_data))
@@ -278,30 +304,40 @@ class MetropolisCalculator:
         if dynamic_delta:
             # update position delta
             if pos_acc_rate > 0.35:
-                scale_amt = min((1.1, pos_acc_rate / TARGET_ACC_RATE))
+                scale_amt = min((max_scale, pos_acc_rate / TARGET_ACC_RATE))
                 self.pos_delt *= scale_amt
             elif pos_acc_rate < 0.20:
-                scale_amt = max((0.9, pos_acc_rate / TARGET_ACC_RATE))
+                scale_amt = max((min_scale, pos_acc_rate / TARGET_ACC_RATE))
                 self.pos_delt *= scale_amt
+            self.pos_delt = min(self.pos_delt, 2.0)  # cap to prevent unbounded growth
             # update orientation delta
             if or_acc_rate > 0.35:
-                scale_amt = min((1.1, or_acc_rate / TARGET_ACC_RATE))
+                scale_amt = min((max_scale, or_acc_rate / TARGET_ACC_RATE))
                 self.or_delt *= scale_amt
             elif or_acc_rate < 0.20:
-                scale_amt = max((0.9, or_acc_rate / TARGET_ACC_RATE))
+                scale_amt = max((min_scale, or_acc_rate / TARGET_ACC_RATE))
                 self.or_delt *= scale_amt
+            # update volume delta (NPT only)
+            if self.volume_moves:
+                if vol_acc_rate > 0.35:
+                    scale_amt = min((max_scale, vol_acc_rate / TARGET_ACC_RATE))
+                    self.vol_delt *= scale_amt
+                elif vol_acc_rate < 0.20:
+                    scale_amt = max((min_scale, vol_acc_rate / TARGET_ACC_RATE))
+                    self.vol_delt *= scale_amt
+                self.vol_delt = min(self.vol_delt, 0.5)  # cap to keep s_v positive
         return buffer
 
-    def equilibrate(self, num_steps, block_size, temp, dynamic_delta=True, buffer_size=100):
+    def equilibrate(self, num_steps, block_size, dynamic_delta=True, buffer_size=100, progress=True,
+                    max_scale=1.1, min_scale=0.9):
         window = block_size // 2
-        beta = 1/ (BOLTZCONST * temp)
         # initialize buffer
         buffer = []
         db_file = self.output_dir + "/equilibration.db"
         # run simulation
-        with tqdm(total=num_steps, initial=self.step_count, desc="Equilibrating") as pbar:
+        with tqdm(total=num_steps, initial=self.step_count, desc="Equilibrating", disable=not progress) as pbar:
             while self.step_count < num_steps:
-                self.step(beta)
+                self.step()
                 pbar.update(1)
                 if self.step_count % block_size == 0:
                     buffer = self.block_update(
@@ -310,6 +346,8 @@ class MetropolisCalculator:
                         db_file,
                         dynamic_delta=dynamic_delta,
                         buffer_size=buffer_size,
+                        max_scale=max_scale,
+                        min_scale=min_scale,
                     )
         # update state
         self.equilibrated = True
@@ -321,11 +359,10 @@ class MetropolisCalculator:
                 for triplet in buffer:
                     db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
 
-    def calculate_trajectory(self, num_steps, temp, block_size=100, num_eq_steps=5000, buffer_size=100):
-        beta = 1/ (BOLTZCONST * temp)
+    def calculate_trajectory(self, num_steps, block_size=100, num_eq_steps=10_000, buffer_size=100):
         # equilibrate
         if num_eq_steps is not None:
-            self.equilibrate(num_eq_steps, block_size, temp, buffer_size=buffer_size)
+            self.equilibrate(num_eq_steps, block_size, buffer_size=buffer_size)
         window = block_size // 2
         # initialize buffer
         buffer = []
@@ -333,7 +370,7 @@ class MetropolisCalculator:
         db_file = self.output_dir + "/simulation.db"
         with tqdm(total=num_steps, initial=self.step_count, desc="Simulating") as pbar:
             while self.step_count < num_steps:
-                self.step(beta)
+                self.step()
                 pbar.update(1)
                 if self.step_count % block_size == 0:
                     buffer = self.block_update(
@@ -348,12 +385,3 @@ class MetropolisCalculator:
                 with connect(db_file) as db:
                     for triplet in buffer:
                         db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
-
-
-def calc_free_energy(params):
-    # TODO: implement
-    # define order parameters (interparticle distance & misalignment angle)
-    # calc prob of each state
-    # calc entropy to get density of states
-    # calc partition function as -kTln(sum_{states i} p_i \Omega e^{-beta*U_i})
-    return NotImplementedError

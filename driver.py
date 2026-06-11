@@ -67,26 +67,38 @@ def plot_power_spectrum(x, simulation_id):
     plt.savefig(f"simulations/{simulation_id}/power_spectrum.png")
 
 
-def main():
-    # create directory for simulation
-    sim_id_base = "simulations/multi_temp_trial_2"
-    temps = [400., 450.]
-    frames = ase.io.read("xyz_files/duped_ellipsoids_with_axes.xyz", ":")
-    frame = frames[17]
+def run_multi_temp_trial(
+    temps,
+    press,
+    sim_id_base="simulations/npt_test",
+    n_steps=10_000,
+    block_size=250,
+    num_eq_steps=20_000,
+    buffer_size=4,
+    energy_func="GB",
+    nl_skin=1.0,
+):
+    print("Beginning simulation loop")
     for temp in temps:
+        print("Initializing simulation object...")
         metro = MetropolisCalculator(
-            frame,
-            energy_func="GB",
-            output_dir=f"{sim_id_base}/{temp}",
-            nl_skin=0.6
-        )
-        metro.calculate_trajectory(
-            100_000,
             temp,
-            block_size=800,
-            num_eq_steps=100_000,
-            buffer_size=50
+            press,
+            energy_func=energy_func,
+            output_dir=f"{sim_id_base}/{temp}",
+            nl_skin=nl_skin,
         )
+        print("Done")
+        metro.calculate_trajectory(
+            n_steps,
+            block_size=block_size,
+            num_eq_steps=num_eq_steps,
+            buffer_size=buffer_size,
+        )
+
+
+def main():
+    run_multi_temp_trial(temps=[100., 200., 300., 400.], press=1E-6)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,20 @@
+import random
+
 import numpy as np
 import ase
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _seed_rng():
+    """Make stochastic tests deterministic.
+
+    The MC sampler draws from the global ``random`` and ``numpy.random``
+    streams; without seeding these are initialised from OS entropy, which
+    makes energy-tracking and acceptance-rate assertions intermittently flaky.
+    """
+    random.seed(0)
+    np.random.seed(0)
 
 
 @pytest.fixture
