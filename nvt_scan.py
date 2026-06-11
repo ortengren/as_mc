@@ -31,14 +31,16 @@ import random
 import numpy as np
 from tqdm.auto import tqdm
 import matplotlib
+
 matplotlib.use("Agg")  # batch run: write figures to file, never open a window
 import matplotlib.pyplot as plt
 
 from initialize import generate_random_config
 from metropolis import MetropolisCalculator, BOLTZCONST
-from potentials import calc_total_energy, GB_PARAMS
+from potentials import GB_PARAMS
+from measurements import TrajectoryAnalyzer, AverageEnergy, NematicOrderParameter
 
-EPS0 = GB_PARAMS["eps0"]      # eV  — energy scale, sets T* = kT/eps0
+EPS0 = GB_PARAMS["eps0"]  # eV  — energy scale, sets T* = kT/eps0
 SIGMA0 = GB_PARAMS["sigma0"]  # Å   — length scale, sets rho* = N sigma0^3 / V
 
 
@@ -50,98 +52,117 @@ def tstar_to_kelvin(t_star):
     return t_star * EPS0 / BOLTZCONST
 
 
-def nematic_order_parameter(or_vecs):
-    """Discotic/nematic order parameter S for a set of unit orientation axes.
+def to_reduced(mean_e, var_e, t_star, n_particles):
+    """Convert the mean/variance of the (eV) energy to reduced observables.
 
-    Builds the symmetric, traceless Q-tensor
-        Q_ab = (1/N) sum_i (3 u_ia u_ib - delta_ab) / 2
-    and returns its largest eigenvalue. S ~ 0 for random orientations
-    (isotropic), S -> 1 when all axes align (orientationally ordered).
+        E*/N  = <E> / (N eps0)
+        Cv/kB = Var(E) / ((kB T)^2 N),   with kB T = T* eps0
+
+    Pure arithmetic on quantities AverageEnergy already produces, so the
+    reduced-unit knowledge stays here in the scan rather than leaking into the
+    (unit-agnostic) measurement framework.
     """
-    u = np.asarray(or_vecs)
-    n = len(u)
-    Q = (3.0 * np.einsum("ia,ib->ab", u, u) - n * np.eye(3)) / (2.0 * n)
-    return np.linalg.eigvalsh(Q)[-1]  # eigvalsh returns ascending eigenvalues
+    kT = t_star * EPS0  # = kB * T, in eV
+    return {
+        "E_star_per_N": mean_e / (n_particles * EPS0),
+        "Cv_over_kB": var_e / (kT**2 * n_particles),
+    }
 
 
-def run_state_point(t_star, rho_star, n_particles, n_equil_sweeps,
-                    n_prod_sweeps, sample_every, seed, scratch_dir,
-                    tune_every_sweeps=5, tune_max_scale=2.0):
-    """Equilibrate and sample one (T*, rho*) NVT state point.
+def equilibration_steps(
+    t_star, rho_star, base=10_000, t_ref=1.0, rho_ref=0.35, max_steps=60_000
+):
+    """Heuristic equilibration budget for one (T*, rho*) point.
 
-    Returns a dict of reduced observables. One "sweep" = n_particles trial
-    moves, so the box sees each particle ~once per sweep on average.
+    Relaxation slows toward the cold, dense corner -- trial moves shrink and are
+    rarely accepted, and the box is more jammed -- so those points need more
+    equilibration than warm, dilute ones. We scale a trusted baseline by 1/T*
+    and linearly in density, then clamp to ``[base, max_steps]``: easy points
+    sit at the ``base`` floor (no wasted effort) while the hardest corner is
+    allowed up to ``max_steps``. ``t_ref``/``rho_ref`` set where each factor
+    crosses unity. This is a cheap stand-in for true convergence detection;
+    tune the constants once you see whether the cold points actually settle.
     """
-    # 1. Build a fixed-volume starting config at the target reduced density.
-    frame = generate_random_config(
-        n_particles=n_particles, density=rho_star, seed=seed
-    )
+    factor = (t_ref / t_star) * (rho_star / rho_ref)
+    return int(np.clip(round(base * factor), base, max_steps))
 
-    # 2. NVT sampler: the same tested engine, with volume moves switched off so
-    #    the box (and therefore rho*) is held fixed. pressure is unused in NVT.
+
+def run_state_point(
+    t_star,
+    rho_star,
+    n_particles,
+    num_steps,
+    num_eq_steps,
+    block_size,
+    seed,
+    scratch_dir,
+    buffer_size=100,
+):
+    """Run one (T*, rho*) NVT state point and return reduced observables.
+
+    A fresh fixed-volume config is built at the target reduced density, then a
+    single `calculate_trajectory` call equilibrates it (with adaptive trial-move
+    tuning) and records a production trajectory to `simulation.db`. The step
+    counts are raw trial-move counts forwarded straight to the sampler — as a
+    rule of thumb ~`n_particles` moves touch every particle once. The stored
+    frames are then reduced to E*/N, Cv/kB and the nematic order S via the
+    measurement framework.
+    """
+    # Build a fixed-volume starting config at the target reduced density.
+    frame = generate_random_config(n_particles=n_particles, density=rho_star, seed=seed)
+
     metro = MetropolisCalculator(
         temp=tstar_to_kelvin(t_star),
         pressure=0.0,
         init_frame=frame,
-        volume_moves=False,
+        npt_ensemble=False,
         output_dir=scratch_dir,
     )
 
-    n_steps_prod = n_prod_sweeps * n_particles
-    sample_stride = sample_every * n_particles
-
-    # 3. Equilibrate with the sampler's own routine. With volume_moves=False
-    #    this is NVT; dynamic_delta=True adapts the trial-move sizes toward
-    #    ~27.5% acceptance (every tune_every_sweeps sweeps) so the chain
-    #    decorrelates instead of crawling at ~98% acceptance. buffer_size is
-    #    large so the scratch db is flushed only once per state point.
-    metro.equilibrate(
-        n_equil_sweeps * n_particles,
-        block_size=tune_every_sweeps * n_particles,
-        dynamic_delta=True,
-        buffer_size=10_000,
+    # One call: equilibrate (adaptive delta) then sample production to the db.
+    metro.calculate_trajectory(
+        num_steps=num_steps,
+        block_size=block_size,
+        num_eq_steps=num_eq_steps,
+        buffer_size=buffer_size,
         progress=False,
-        max_scale=tune_max_scale,
-        min_scale=1.0 / tune_max_scale,
     )
 
-    # Reset the acceptance bookkeeping so the reported rates are production-only.
-    metro.pos_decisions.clear()
-    metro.or_decisions.clear()
+    analyzer = TrajectoryAnalyzer(os.path.join(scratch_dir, "simulation.db"))
+    analyzer.add_measurement(
+        "energy",
+        AverageEnergy(
+            recompute=True,
+            nl_radius=metro.nl_cutoffs[0],
+            energy_func=metro.energy_func,
+        ),
+    )
+    analyzer.add_measurement("nematic", NematicOrderParameter())
+    results = analyzer.run_analysis(progress=False)
 
-    # 4. Production: keep sampling energy and orientational order. We recompute
-    #    the full energy at each sample (cheap, and avoids any drift in the
-    #    incremental tracker over a long run).
-    energies, s_values = [], []
-    for i in range(n_steps_prod):
-        metro.step()
-        if (i + 1) % sample_stride == 0:
-            energies.append(
-                calc_total_energy(metro.current_frame, metro.nl_cutoffs,
-                                  metro.energy_func)
-            )
-            s_values.append(
-                nematic_order_parameter(metro.current_frame.arrays["or_vec"])
-            )
-
-    energies = np.asarray(energies)
-    kT = BOLTZCONST * tstar_to_kelvin(t_star)  # == T* * eps0, in eV
+    mean_e, var_e = results["energy"]
+    reduced = to_reduced(mean_e, var_e, t_star, n_particles)
 
     return {
         "T_star": t_star,
         "rho_star": rho_star,
-        "E_star_per_N": np.mean(energies) / (n_particles * EPS0),
-        "Cv_over_kB": np.var(energies) / (kT ** 2 * n_particles),
-        "S": float(np.mean(s_values)),
-        "pos_acc": float(np.mean(metro.pos_decisions)) if metro.pos_decisions else np.nan,
+        "E_star_per_N": reduced["E_star_per_N"],
+        "Cv_over_kB": reduced["Cv_over_kB"],
+        "S": results["nematic"]["S"],
+        # Production-only acceptance: calculate_trajectory clears the decision
+        # lists after equilibration, so these are the tuned-move accept rates.
+        "pos_acc": (
+            float(np.mean(metro.pos_decisions)) if metro.pos_decisions else np.nan
+        ),
         "or_acc": float(np.mean(metro.or_decisions)) if metro.or_decisions else np.nan,
-        "pos_delt": metro.pos_delt,   # tuned COM step size (Å)
-        "or_delt": metro.or_delt,     # tuned rotation step size (rad)
+        "pos_delt": metro.pos_delt,  # tuned COM step size (Å)
+        "or_delt": metro.or_delt,  # tuned rotation step size (rad)
     }
 
 
 def plot_scan(rows, t_star_grid, rho_star_grid, out_dir):
     """Plot S, E*/N and Cv/kB versus T*, one curve per density."""
+
     def series(rho, key):
         pts = sorted((r["T_star"], r[key]) for r in rows if r["rho_star"] == rho)
         return [p[0] for p in pts], [p[1] for p in pts]
@@ -169,33 +190,57 @@ def plot_scan(rows, t_star_grid, rho_star_grid, out_dir):
 
 def main():
     # ---- scan settings: coarse + fast first look; raise for production ----
-    n_particles = 125                                 # 5^3, fills the SC lattice exactly
+    n_particles = 125  # 5^3, fills the SC lattice exactly
     t_star_grid = [0.2, 0.4, 0.6, 0.8, 1.0, 1.3, 1.6]
-    rho_star_grid = [0.15, 0.25, 0.35, 0.45, 0.55]    # kept < ~0.95 so the SC start is buildable
-    n_equil_sweeps = 30
-    n_prod_sweeps = 40
-    sample_every = 1                                  # sweeps between samples
+    rho_star_grid = [
+        0.15,
+        0.25,
+        0.35,
+        0.45,
+        0.55,
+    ]  # kept < ~0.95 so the SC start is buildable
+
+    # Step budgets handed straight to calculate_trajectory (raw trial-move
+    # counts). For intuition, ~n_particles moves touch every particle once.
+    # Equilibration is sized per point (see equilibration_steps): a fixed floor
+    # for easy points, more for the cold/dense corner. Production is fixed so
+    # every point contributes the same number of samples.
+    eq_base = 10_000  # equilibration floor for easy (warm/dilute) points
+    eq_max = 60_000  # cap for the hardest (cold/dense) corner
+    num_steps = 5_000  # production
+    block_size = n_particles  # one frame per ~pass -> num_steps // block_size frames
+    buffer_size = 100
     seed0 = 12345
 
     random.seed(seed0)
     np.random.seed(seed0)
 
     out_dir = "scan_results"
-    scratch_dir = os.path.join(out_dir, "_scratch")
+    scratch_root = os.path.join(out_dir, "_scratch")
     os.makedirs(out_dir, exist_ok=True)
-    shutil.rmtree(scratch_dir, ignore_errors=True)  # fresh equilibration scratch
+    shutil.rmtree(scratch_root, ignore_errors=True)  # fresh scratch for this run
 
-    # iterate density-outer / temperature-inner so each CSV block is one isochore
+    # density-outer / temperature-inner so each CSV block is one isochore
     grid = [(t, r) for r in rho_star_grid for t in t_star_grid]
     rows = []
-    for k, (t_star, rho_star) in enumerate(
-        tqdm(grid, desc="Scanning (T*, rho*)")
-    ):
+    for k, (t_star, rho_star) in enumerate(tqdm(grid, desc="Scanning (T*, rho*)")):
+        # Each point writes to its own scratch dir; ASE db.write appends, so a
+        # shared dir would accumulate every point's frames into one db.
+        point_dir = os.path.join(scratch_root, f"point_{k:03d}")
+        num_eq_steps = equilibration_steps(
+            t_star, rho_star, base=eq_base, max_steps=eq_max
+        )
         rows.append(
             run_state_point(
-                t_star, rho_star, n_particles,
-                n_equil_sweeps, n_prod_sweeps, sample_every,
-                seed=seed0 + k, scratch_dir=scratch_dir,
+                t_star,
+                rho_star,
+                n_particles,
+                num_steps=num_steps,
+                num_eq_steps=num_eq_steps,
+                block_size=block_size,
+                seed=seed0 + k,
+                scratch_dir=point_dir,
+                buffer_size=buffer_size,
             )
         )
 

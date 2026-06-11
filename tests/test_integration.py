@@ -58,6 +58,26 @@ def test_simulation_runs_to_completion(four_particle_frame, tmp_path):
     assert metro.step_count == num_steps
 
 
+def test_calculate_trajectory_clears_equilibration_decisions(four_particle_frame, tmp_path):
+    """Acceptance decisions after a run cover production only, not equilibration."""
+    metro = make_metro(four_particle_frame, tmp_path)
+    num_steps = 200
+    metro.calculate_trajectory(
+        num_steps=num_steps,
+        block_size=50,
+        num_eq_steps=100,
+        buffer_size=50,
+    )
+    # step() appends exactly one decision per step; equilibration's were dropped,
+    # so the three lists together hold exactly the production steps.
+    total = (
+        len(metro.pos_decisions)
+        + len(metro.or_decisions)
+        + len(metro.vol_decisions)
+    )
+    assert total == num_steps
+
+
 def test_simulation_db_created(four_particle_frame, tmp_path):
     """simulation.db is created and contains one row per block."""
     block_size = 50

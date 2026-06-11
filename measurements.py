@@ -5,11 +5,25 @@ from abc import ABC, abstractmethod
 from tqdm.auto import tqdm
 from potentials import calc_total_energy
 
+BOLTZCONST = 8.617e-5  # eV / K
 
-BOLTZCONST = 8.617E-5 # eV / K
+
+def nematic_q_tensor(or_vecs):
+    """Symmetric, traceless ordering (Q) tensor for a set of unit axes.
+
+        Q_ab = (1/N) sum_i (3 u_ia u_ib - delta_ab) / 2
+
+    Its largest eigenvalue is the nematic/discotic order parameter S:
+    ~0 for random orientations (isotropic), -> 1 when all axes align.
+    """
+    u = np.asarray(or_vecs)
+    n = len(u)
+    return (3.0 * np.einsum("ia,ib->ab", u, u) - n * np.eye(3)) / (2.0 * n)
 
 
 class Measurement(ABC):
+    """Base class for all measurements."""
+
     def __init__(self):
         self.results = []
 
@@ -25,12 +39,38 @@ class Measurement(ABC):
 
 
 class AverageEnergy(Measurement):
-    def __init__(self):
+    """Mean and variance of the system energy over a trajectory.
+
+    By default reads the energy tracked in ``scalar_data["total_energy"]`` (the
+    sampler's incrementally maintained value). Pass ``recompute=True`` to
+    instead recompute each frame's energy from scratch with
+    ``calc_total_energy`` which avoids any drift in the incremental tracker
+    over a long run, at the cost of a full O(N*neighbors) evaluation per stored
+    frame. ``nl_radius`` (the per-particle neighbour-list radius the run used)
+    is required when recomputing.
+    """
+
+    def __init__(self, recompute=False, nl_radius=None, energy_func="GB"):
         super().__init__()
         self.energies = []
+        self.recompute = recompute
+        self.nl_radius = nl_radius
+        self.energy_func = energy_func
+        if recompute and nl_radius is None:
+            raise ValueError("recompute=True requires nl_radius")
 
     def compute(self, frame, scalar_data, array_data):
-        energy = scalar_data["total_energy"]
+        if self.recompute:
+            # A frame read back from a db (row.toatoms()) keeps positions/cell/
+            # pbc but drops custom arrays such as or_vec, which calc_total_energy
+            # needs -- restore it from array_data when present.
+            if array_data is not None and "or_vec" in array_data:
+                frame = frame.copy()
+                frame.set_array("or_vec", np.asarray(array_data["or_vec"]))
+            cutoffs = [self.nl_radius] * len(frame)
+            energy = calc_total_energy(frame, cutoffs, self.energy_func)
+        else:
+            energy = scalar_data["total_energy"]
         self.energies.append(energy)
 
     def finalize(self):
@@ -46,11 +86,11 @@ class RadialDistributionFunction(Measurement):
         self.num_bins = num_bins
 
         self.bin_edges = np.linspace(0, r_max, num_bins + 1)
-        self.bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2.
+        self.bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2.0
 
         self.hist_counts = np.zeros(num_bins)
         self.num_frames = 0
-        self.total_volume = 0.
+        self.total_volume = 0.0
         self.total_particles = 0
 
     def compute(self, frame, scalar_data, array_data):
@@ -76,10 +116,10 @@ class RadialDistributionFunction(Measurement):
         # get volumes of each spherical shell
         r_inner = self.bin_edges[:-1]
         r_outer = self.bin_edges[1:]
-        shell_vols = (4. / 3.) * np.pi * (r_outer**3 - r_inner**3)
+        shell_vols = (4.0 / 3.0) * np.pi * (r_outer**3 - r_inner**3)
 
         # calculate expected counts for ideal gas
-        ideal_counts = (avg_particles / 2.) * self.num_frames * density * shell_vols
+        ideal_counts = (avg_particles / 2.0) * self.num_frames * density * shell_vols
 
         # normalize
         g_r = np.zeros_like(self.hist_counts)
@@ -97,7 +137,7 @@ class OrientationalCorrelationFunction(Measurement):
         self.r_max = r_max
         self.num_bins = num_bins
         self.bin_edges = np.linspace(0, r_max, num_bins + 1)
-        self.bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2.
+        self.bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2.0
 
         self.hist_counts = np.zeros(num_bins)
         self.sum_p2 = np.zeros(num_bins)
@@ -118,7 +158,7 @@ class OrientationalCorrelationFunction(Measurement):
         cos_thetas = dot_matrix[i, j]
 
         # calculate P2 (second Legendre polynomial) for all pairs
-        p2_vals = 0.5 * (3. * cos_thetas**2 - 1.)
+        p2_vals = 0.5 * (3.0 * cos_thetas**2 - 1.0)
 
         # build histogram for distances
         counts, _ = np.histogram(dists, bins=self.bin_edges)
@@ -131,11 +171,55 @@ class OrientationalCorrelationFunction(Measurement):
     def finalize(self):
         # calculate average P2 value for each distance bin
         avg_p2 = np.zeros_like(self.sum_p2)
-        np.divide(self.sum_p2, self.hist_counts, out=avg_p2, where=(self.hist_counts > 0))
+        np.divide(
+            self.sum_p2, self.hist_counts, out=avg_p2, where=(self.hist_counts > 0)
+        )
 
         return {
             "r": self.bin_centers,
             "s2_r": avg_p2,
+        }
+
+
+class NematicOrderParameter(Measurement):
+    """Nematic order parameter S, averaged over a trajectory.
+
+    Each frame's Q-tensor is diagonalised and its largest eigenvalue (the
+    instantaneous S) is taken *before* averaging. That tracks the director
+    even as it diffuses; diagonalising the frame-averaged <Q> instead would
+    cancel director fluctuations and under-report order in an un-pinned box.
+    The running <Q> is still accumulated and returned for a fixed-lab-frame
+    cross-check and the mean director.
+
+    finalize() returns a dict:
+        S        mean per-frame order parameter (the primary estimator)
+        S_std    its standard deviation across frames
+        Q_mean   the frame-averaged Q-tensor (3x3)
+        director eigenvector of Q_mean's largest eigenvalue
+        S_lab    largest eigenvalue of Q_mean (order vs the fixed director)
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.s_values = []
+        self.q_sum = np.zeros((3, 3))
+        self.num_frames = 0
+
+    def compute(self, frame, scalar_data, array_data):
+        q = nematic_q_tensor(array_data["or_vec"])
+        self.s_values.append(np.linalg.eigvalsh(q)[-1])
+        self.q_sum += q
+        self.num_frames += 1
+
+    def finalize(self):
+        q_mean = self.q_sum / self.num_frames
+        eigvals, eigvecs = np.linalg.eigh(q_mean)
+        return {
+            "S": float(np.mean(self.s_values)),
+            "S_std": float(np.std(self.s_values)),
+            "Q_mean": q_mean,
+            "director": eigvecs[:, -1],
+            "S_lab": float(eigvals[-1]),
         }
 
 
@@ -164,11 +248,12 @@ class TrajectoryAnalyzer:
     def add_measurement(self, name, measurement_obj):
         self.measurements[name] = measurement_obj
 
-    def run_analysis(self):
+    def run_analysis(self, progress=True):
         with connect(self.db_path) as db:
             total_frames = db.count()
 
-            with tqdm(total=total_frames, desc="Analyzing Trajectory") as pbar:
+            with tqdm(total=total_frames, desc="Analyzing Trajectory",
+                      disable=not progress) as pbar:
                 for row in db.select():
                     frame = row.toatoms()
                     scalar_data = row.key_value_pairs
