@@ -39,6 +39,9 @@ def npt_decide_accept(old_en, new_en, old_vol, new_vol, beta, pressure, num_part
         p = exp(-beta * (new_en - old_en + P * (new_vol - old_vol)) - (N + 1) * log(new_vol / old_vol))
 
     This function is suitable for the NPT ensemble.
+
+    Pressure: eV/Å^3
+    Volume: Å^3
     """
     if new_vol <= 0:
         return False
@@ -176,8 +179,9 @@ class MetropolisCalculator:
             raise NotImplementedError()
 
     def step(self):
-        """Performs a single step of the simulation, including performing trial moves, determining acceptance, and updating the state."""
-
+        """Performs a single step of the simulation, including performing trial
+        moves, determining acceptance, and updating the state.
+        """
         num_particles = len(self.current_frame)
 
         # determine whether to perturb volume, position, or orientation
@@ -328,7 +332,8 @@ class MetropolisCalculator:
     ):
         """Perform a block update of the simulation.
 
-        This involves wrapping particles, calculating acceptance rates, recording data, and writing to the database.
+        This involves wrapping particles, calculating acceptance rates,
+        recording data, and writing to the database.
         """
         # TODO: implement measurement of (analytic or numerical) virial
         # wrap particles to simulation box
@@ -477,9 +482,6 @@ class MetropolisCalculator:
                 min_scale=min_scale,
                 progress=progress,
             )
-            # Equilibration acceptances are tuning artifacts; drop them so the
-            # production blocks (and any post-run acceptance diagnostics) reflect
-            # only production moves. Mirrors the step_count reset in equilibrate.
             self.pos_decisions = []
             self.or_decisions = []
             self.vol_decisions = []
