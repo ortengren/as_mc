@@ -226,10 +226,10 @@ def _evaluate_point(k, t_star, rho_star, cfg):
 
 
 def main(
-    t_star_grid=(0.2, 0.4, 0.6, 0.8, 1.0, 1.3, 1.6),
-    rho_star_grid=(0.15, 0.25, 0.35, 0.45, 0.55),
+    t_star_grid=(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.3, 1.6),
+    rho_star_grid=(0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55),
     n_particles=125,
-    num_steps=5_000,
+    num_steps=8_000,
     eq_base=10_000,
     eq_max=60_000,
     seed0=12345,
