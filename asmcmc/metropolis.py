@@ -1,13 +1,13 @@
 import numpy as np
 from tqdm.auto import tqdm
-from initialize import generate_random_config
-from trial_moves import (
+from asmcmc.initialize import generate_random_config
+from asmcmc.trial_moves import (
     calc_or_vec,
     calculate_com_move,
     calculate_quat_move,
     calculate_vol_move,
 )
-from potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
+from asmcmc.potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
 import random
 import ase
 from ase.neighborlist import NeighborList

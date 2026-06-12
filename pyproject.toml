@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asmcmc"
+version = "0.1.0"
+description = "AniSOAP Markov Chain Monte Carlo: NPT/NVT ensemble MC for ellipsoidal coarse-grained molecules (Gay-Berne + quadrupole), built on ASE"
+requires-python = ">=3.11"
+dependencies = [
+    "ase",
+    "numpy>=2.0",   # np.vecdot
+    "scipy",
+    "pandas",
+    "tqdm",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+# AniSOAP feature generation (asmcmc.driver, asmcmc.generate_cg_reps)
+anisoap = [
+    "anisoap",
+    "metatensor",
+    "scikit-matter",
+    "scikit-learn",
+    "networkx",
+]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["asmcmc"]

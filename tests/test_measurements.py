@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 import ase
 import pytest
-from measurements import (
+from asmcmc.measurements import (
     AverageEnergy,
     RadialDistributionFunction,
     OrientationalCorrelationFunction,
@@ -14,8 +14,8 @@ from measurements import (
     HeatCapacity,
     BOLTZCONST,
 )
-from metropolis import npt_decide_accept
-from potentials import calc_total_energy
+from asmcmc.metropolis import npt_decide_accept
+from asmcmc.potentials import calc_total_energy
 
 # --- AverageEnergy ---
 

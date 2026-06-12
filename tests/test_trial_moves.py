@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
 import pytest
-from trial_moves import (
+from asmcmc.trial_moves import (
     calc_or_vec,
     calculate_com_move,
     calculate_quat_move,

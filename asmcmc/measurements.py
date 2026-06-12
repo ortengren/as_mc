@@ -3,7 +3,7 @@ from ase.db import connect
 import numpy as np
 from abc import ABC, abstractmethod
 from tqdm.auto import tqdm
-from potentials import calc_total_energy
+from asmcmc.potentials import calc_total_energy
 
 BOLTZCONST = 8.617e-5  # eV / K
 

@@ -1,8 +1,8 @@
 import numpy as np
 import ase
 from scipy.spatial.transform import Rotation
-from potentials import GB_PARAMS
-from trial_moves import calc_or_vec
+from asmcmc.potentials import GB_PARAMS
+from asmcmc.trial_moves import calc_or_vec
 
 SIGMA0 = GB_PARAMS["sigma0"]
 

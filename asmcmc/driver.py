@@ -1,6 +1,6 @@
 import numpy as np
 import ase.io
-from metropolis import MetropolisCalculator
+from asmcmc.metropolis import MetropolisCalculator
 import ase
 import pickle
 import datetime

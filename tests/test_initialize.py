@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
 import pytest
-from initialize import generate_random_config, SIGMA0
+from asmcmc.initialize import generate_random_config, SIGMA0
 
 
 # --- helpers ---

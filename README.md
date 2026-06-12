@@ -9,29 +9,41 @@ This project serves as a real-world benchmark of AniSOAP, designed to compare
 its effectiveness with other approaches (especially analytic potentials, i.e.
 the Gay-Berne potential).
 
-The bulk of the simulation logic lives in `metropolis.py`.  The
+The bulk of the simulation logic lives in `asmcmc/metropolis.py`.  The
 `MetropolisCalculator` class contains methods for performing full simulation
 runs, including equilibration.  Simulations can be read and evaluated using
-tools from `measurements.py`.  In particular, the `TrajectoryAnalyzer` class
-offers an efficient way to determine quantities of interest, such as heat
-capacity and orientational correlation.  
+tools from `asmcmc/measurements.py`.  In particular, the `TrajectoryAnalyzer`
+class offers an efficient way to determine quantities of interest, such as heat
+capacity and orientational correlation.
 
 The codebase is designed with modularity in mind so that new measurements can
 be made (by defining subclasses of `Measurement`) or new energy calculation
 methods can be used.
 
+## Installation
+
+Editable install into an environment that already has the scientific stack
+(conda or otherwise):
+
+```bash
+pip install -e . --no-deps   # --no-deps if conda manages your dependencies
+```
+
+Core dependencies: ASE, NumPy (≥2), SciPy, pandas, `tqdm`, `matplotlib`.
+The AniSOAP feature-generation modules additionally need `anisoap`,
+`metatensor`, `scikit-matter`, `scikit-learn` (`pip install -e ".[anisoap]"`).
+Tests need `pytest`.
+
 ## Usage
 
-There is no packaged install yet. You'll need a Python environment with the
-dependencies below available:
-ASE, NumPy, SciPy, `anisoap`, `metatensor`, `scikit-matter`, `tqdm`,
-`matplotlib`, and `pytest`. Run the commands and snippets below from the
-repository root.
+Run the commands and snippets below from the repository root (output paths are
+relative to the working directory).
 
 ### Map the model's phase behaviour (NVT scan)
 
 ```bash
-python nvt_scan.py      # writes scan_results/nvt_scan.csv and nvt_scan.png
+python -m asmcmc.nvt_scan                # writes scan_results/nvt_scan.csv + figures
+python -m asmcmc.nvt_scan --plot-only    # re-render figures from the existing CSV
 ```
 
 Sweeps a grid of reduced temperatures and densities (T\*, ρ\*), running
@@ -44,7 +56,7 @@ involved.
 ### Multi-temperature NPT runs
 
 ```python
-from driver import run_multi_temp_trial
+from asmcmc.driver import run_multi_temp_trial
 
 run_multi_temp_trial(temps=[200, 300, 400], press=0.0)
 # → simulations/npt_test/{temp}/{equilibration,simulation}.db
@@ -53,7 +65,7 @@ run_multi_temp_trial(temps=[200, 300, 400], press=0.0)
 ### Drive the sampler directly
 
 ```python
-from metropolis import MetropolisCalculator
+from asmcmc.metropolis import MetropolisCalculator
 
 # NPT by default; pass npt_ensemble=False for fixed-volume NVT.
 # init_frame=None auto-generates a starting configuration.
@@ -65,7 +77,7 @@ metro.calculate_trajectory(num_steps=200_000, num_eq_steps=100_000)
 ### Analyse a trajectory
 
 ```python
-from measurements import TrajectoryAnalyzer, HeatCapacity, RadialDistributionFunction
+from asmcmc.measurements import TrajectoryAnalyzer, HeatCapacity, RadialDistributionFunction
 
 analyzer = TrajectoryAnalyzer("simulations/demo/simulation.db")
 analyzer.add_measurement("Cv", HeatCapacity(temperature=300, num_particles=125))
@@ -78,15 +90,21 @@ Add your own observable by subclassing `Measurement` (implement `compute` and
 
 ## Project structure
 
-| File | Role |
+| Path | Role |
 | ---- | ---- |
-| `metropolis.py` | `MetropolisCalculator` — the Metropolis-Hastings sampler (NPT default, NVT optional) and full simulation runs |
-| `potentials.py` | Gay-Berne + quadrupole pair potential (Walsh benzene parameters) |
-| `trial_moves.py` | Trial moves: translation, quaternion rotation, isotropic volume scaling |
-| `initialize.py` | `generate_random_config` — randomized starting configuration at a target density |
-| `measurements.py` | Observable framework: `Measurement` base, `TrajectoryAnalyzer`, and ready-made measurements (energy, heat capacity, RDF, orientational correlation, nematic order) |
-| `driver.py` | Multi-temperature NPT runs plus AniSOAP feature generation |
-| `nvt_scan.py` | Reduced-units (T\*, ρ\*) phase scan |
+| `asmcmc/` | The installable package — everything importable lives here |
+| `asmcmc/metropolis.py` | `MetropolisCalculator` — the Metropolis-Hastings sampler (NPT default, NVT optional) and full simulation runs |
+| `asmcmc/potentials.py` | Gay-Berne + quadrupole pair potential (Walsh benzene parameters) |
+| `asmcmc/trial_moves.py` | Trial moves: translation, quaternion rotation, isotropic volume scaling |
+| `asmcmc/initialize.py` | `generate_random_config` — randomized starting configuration at a target density |
+| `asmcmc/measurements.py` | Observable framework: `Measurement` base, `TrajectoryAnalyzer`, and ready-made measurements (energy, heat capacity, RDF, orientational correlation, nematic order) |
+| `asmcmc/driver.py` | Multi-temperature NPT runs plus AniSOAP feature generation (`python -m asmcmc.driver`) |
+| `asmcmc/nvt_scan.py` | Reduced-units (T\*, ρ\*) phase scan (`python -m asmcmc.nvt_scan`) |
+| `asmcmc/generate_cg_reps.py` | AniSOAP coarse-grained representation generation |
+| `tests/` | pytest suite |
+| `data/` | Input datasets (`data/xyz_files/` crystal structures; bulk files kept on disk, not in VCS) |
+| `notebooks/` | Exploratory analysis notebooks (not load-bearing) |
+| `simulations/`, `scan_results/` | Regenerable simulation outputs (gitignored) |
 
 Trajectories are stored as ASE `.db` files.
 
