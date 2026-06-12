@@ -2,6 +2,7 @@ import sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import csv
 import random
 
 import numpy as np
@@ -17,6 +18,9 @@ from nvt_scan import (
     run_state_point,
     _evaluate_point,
     main,
+    plot_heatmaps,
+    load_rows,
+    replot,
 )
 from metropolis import MetropolisCalculator, BOLTZCONST
 from potentials import GB_PARAMS
@@ -288,8 +292,6 @@ def test_scan_runs_through_process_pool(tmp_path):
 def test_main_writes_csv_and_plot(tmp_path):
     """main() runs the grid through the real ProcessPoolExecutor and writes a
     well-formed nvt_scan.csv (one row per grid point) plus nvt_scan.png."""
-    import csv as _csv
-
     out_dir = str(tmp_path / "scan")
     main(
         t_star_grid=(0.6, 1.0),
@@ -303,14 +305,88 @@ def test_main_writes_csv_and_plot(tmp_path):
 
     csv_path = os.path.join(out_dir, "nvt_scan.csv")
     png_path = os.path.join(out_dir, "nvt_scan.png")
+    heatmap_path = os.path.join(out_dir, "nvt_scan_heatmap.png")
     assert os.path.exists(csv_path), "nvt_scan.csv was not written"
     assert os.path.exists(png_path), "nvt_scan.png was not written"
+    assert os.path.exists(heatmap_path), "nvt_scan_heatmap.png was not written"
 
     with open(csv_path) as f:
-        rows = list(_csv.DictReader(f))
+        rows = list(csv.DictReader(f))
     # one row per grid point: 2 T* x 1 rho*
     assert len(rows) == 2
     assert {"T_star", "rho_star", "E_star_per_N", "Cv_over_kB", "S"} <= set(rows[0])
     for r in rows:
         assert np.isfinite(float(r["E_star_per_N"]))
         assert 0.0 <= float(r["S"]) <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Heatmaps + re-plot from CSV
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_rows(t_vals, rho_vals):
+    """A full Cartesian grid of rows with arbitrary-but-finite observables."""
+    return [
+        {
+            "T_star": t,
+            "rho_star": r,
+            "E_star_per_N": -1.0 / t - r,
+            "Cv_over_kB": 1.0 / t,
+            "S": max(0.0, 1.0 - t),
+            "pos_acc": 0.3,
+            "or_acc": 0.3,
+            "pos_delt": 1.0,
+            "or_delt": 1.0,
+        }
+        for r in rho_vals
+        for t in t_vals
+    ]
+
+
+def test_plot_heatmaps_writes_png(tmp_path):
+    """plot_heatmaps renders a phase-diagram PNG on a non-uniform T* grid."""
+    out_dir = str(tmp_path / "h")
+    os.makedirs(out_dir)
+    # deliberately uneven T* spacing (0.1 steps then a jump) to exercise _cell_edges
+    t_vals = [0.2, 0.3, 0.4, 1.0, 1.6]
+    rho_vals = [0.15, 0.35, 0.55]
+    plot_heatmaps(_synthetic_rows(t_vals, rho_vals), t_vals, rho_vals, out_dir)
+    assert os.path.exists(os.path.join(out_dir, "nvt_scan_heatmap.png"))
+
+
+def test_plot_heatmaps_tolerates_missing_points(tmp_path):
+    """A grid with a hole (a failed point) still renders -- the cell goes blank."""
+    out_dir = str(tmp_path / "h")
+    os.makedirs(out_dir)
+    t_vals = [0.2, 0.4, 0.6]
+    rho_vals = [0.2, 0.4]
+    rows = _synthetic_rows(t_vals, rho_vals)
+    rows.pop()  # drop one grid point
+    plot_heatmaps(rows, t_vals, rho_vals, out_dir)
+    assert os.path.exists(os.path.join(out_dir, "nvt_scan_heatmap.png"))
+
+
+def test_replot_regenerates_both_figures_from_csv(tmp_path):
+    """replot() reads an existing CSV and rebuilds line plots + heatmap, with no
+    grids passed in -- they are recovered from the CSV's unique T*/rho* values."""
+    out_dir = str(tmp_path / "r")
+    os.makedirs(out_dir)
+    t_vals = [0.2, 0.4, 1.0]
+    rho_vals = [0.15, 0.45]
+    rows = _synthetic_rows(t_vals, rho_vals)
+
+    csv_path = os.path.join(out_dir, "nvt_scan.csv")
+    with open(csv_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+
+    # load_rows round-trips the numeric columns back to floats
+    loaded = load_rows(csv_path)
+    assert len(loaded) == len(rows)
+    assert loaded[0]["T_star"] == rows[0]["T_star"]
+
+    replot(out_dir)
+    assert os.path.exists(os.path.join(out_dir, "nvt_scan.png"))
+    assert os.path.exists(os.path.join(out_dir, "nvt_scan_heatmap.png"))
