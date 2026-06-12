@@ -1,6 +1,6 @@
 import numpy as np
 import ase.io
-from metropolis import MetropolisCalculator
+from asmcmc.metropolis import MetropolisCalculator
 import ase
 import pickle
 import datetime
@@ -34,8 +34,8 @@ DEFAULT_HPARAMS = {
 def generate_simulation_id(method="datetime"):
     if method == "datetime":
         dt = datetime.datetime.today().isoformat(timespec="minutes")
-        if not os.path.exists(f"simulations/{dt}"):
-            os.makedirs(f"simulations/{dt}")
+        if not os.path.exists(f"results/simulations/{dt}"):
+            os.makedirs(f"results/simulations/{dt}")
         return dt
     else:
         return NotImplementedError
@@ -58,19 +58,19 @@ def generate_ps(features, simulation_id=None):
     x_scaler = StandardFlexibleScaler(column_wise=False).fit(x_raw)
     x = x_scaler.transform(x_raw)
     if simulation_id is not None:
-        np.save(f"simulations/{simulation_id}/power_spectrum.npy", x)
+        np.save(f"results/simulations/{simulation_id}/power_spectrum.npy", x)
     return x
 
 
 def plot_power_spectrum(x, simulation_id):
     plt.plot(x)
-    plt.savefig(f"simulations/{simulation_id}/power_spectrum.png")
+    plt.savefig(f"results/simulations/{simulation_id}/power_spectrum.png")
 
 
 def run_multi_temp_trial(
     temps,
     press,
-    sim_id_base="simulations/npt_test",
+    sim_id_base="results/simulations/npt_test",
     n_steps=10_000,
     block_size=250,
     num_eq_steps=20_000,

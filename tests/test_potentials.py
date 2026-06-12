@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
 import pytest
-from potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
+from asmcmc.potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
 
 
 # Helpers: unit-vector pairs and a displacement array shaped (1, 3)

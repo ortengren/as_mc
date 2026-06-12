@@ -11,7 +11,7 @@ import pytest
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import get_context
 
-from nvt_scan import (
+from asmcmc.nvt_scan import (
     tstar_to_kelvin,
     to_reduced,
     equilibration_steps,
@@ -22,9 +22,9 @@ from nvt_scan import (
     load_rows,
     replot,
 )
-from metropolis import MetropolisCalculator, BOLTZCONST
-from potentials import GB_PARAMS
-from initialize import generate_random_config
+from asmcmc.metropolis import MetropolisCalculator, BOLTZCONST
+from asmcmc.potentials import GB_PARAMS
+from asmcmc.initialize import generate_random_config
 
 # ---------------------------------------------------------------------------
 # Reduced-unit conversion

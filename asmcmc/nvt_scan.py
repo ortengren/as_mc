@@ -19,10 +19,10 @@ A boundary shows up as a step in E*/N, a peak in Cv, and/or a rise in S as T*
 drops. Everything is dimensionless, so the result is independent of the eps0
 calibration we were questioning.
 
-Run:  ~/.local/share/mamba/envs/asmcmc/bin/python nvt_scan.py
-Outputs: scan_results/nvt_scan.csv, nvt_scan.png (line plots vs T*) and
+Run:  python -m asmcmc.nvt_scan
+Outputs: results/scan_results/nvt_scan.csv, nvt_scan.png (line plots vs T*) and
          nvt_scan_heatmap.png ((T*, rho*) phase-diagram heatmaps).
-Re-plot only (no re-run):  python nvt_scan.py --plot-only
+Re-plot only (no re-run):  python -m asmcmc.nvt_scan --plot-only
 """
 
 import os
@@ -52,10 +52,10 @@ import matplotlib
 matplotlib.use("Agg")  # batch run: write figures to file, never open a window
 import matplotlib.pyplot as plt
 
-from initialize import generate_random_config
-from metropolis import MetropolisCalculator, BOLTZCONST
-from potentials import GB_PARAMS
-from measurements import TrajectoryAnalyzer, AverageEnergy, NematicOrderParameter
+from asmcmc.initialize import generate_random_config
+from asmcmc.metropolis import MetropolisCalculator, BOLTZCONST
+from asmcmc.potentials import GB_PARAMS
+from asmcmc.measurements import TrajectoryAnalyzer, AverageEnergy, NematicOrderParameter
 
 EPS0 = GB_PARAMS["eps0"]  # eV  — energy scale, sets T* = kT/eps0
 SIGMA0 = GB_PARAMS["sigma0"]  # Å   — length scale, sets rho* = N sigma0^3 / V
@@ -319,7 +319,7 @@ def main(
     eq_base=10_000,
     eq_max=60_000,
     seed0=12345,
-    out_dir="scan_results",
+    out_dir="results/scan_results",
 ):
     """Run the (T*, rho*) NVT scan and write nvt_scan.csv + nvt_scan.png.
 
@@ -415,6 +415,6 @@ def main(
 
 if __name__ == "__main__":
     if "--plot-only" in sys.argv:
-        replot("scan_results")  # regenerate figures from the existing CSV
+        replot("results/scan_results")  # regenerate figures from the existing CSV
     else:
         main()

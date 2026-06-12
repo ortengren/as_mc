@@ -6,9 +6,9 @@ import ase
 import pytest
 from ase.db import connect
 
-from metropolis import MetropolisCalculator
-from potentials import calc_total_energy
-from measurements import TrajectoryAnalyzer, AverageEnergy
+from asmcmc.metropolis import MetropolisCalculator
+from asmcmc.potentials import calc_total_energy
+from asmcmc.measurements import TrajectoryAnalyzer, AverageEnergy
 
 
 # ---------------------------------------------------------------------------
