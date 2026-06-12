@@ -22,12 +22,14 @@ def quaternion_multiply(q1, q2):
     """
     w1, x1, y1, z1 = q1
     w2, x2, y2, z2 = q2
-    return np.array([
-        w1*w2 - x1*x2 - y1*y2 - z1*z2,
-        w1*x2 + x1*w2 + y1*z2 - z1*y2,
-        w1*y2 - x1*z2 + y1*w2 + z1*x2,
-        w1*z2 + x1*y2 - y1*x2 + z1*w2
-    ])
+    return np.array(
+        [
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        ]
+    )
 
 
 def calculate_quat_move(quat, delta):
@@ -39,12 +41,14 @@ def calculate_quat_move(quat, delta):
     axis = np.random.randn(3)
     axis /= np.linalg.norm(axis)
     # construct the perturbation quaternion
-    dq = np.array([
-        np.cos(half_theta),
-        axis[0] * sin_half_theta,
-        axis[1] * sin_half_theta,
-        axis[2] * sin_half_theta
-    ])
+    dq = np.array(
+        [
+            np.cos(half_theta),
+            axis[0] * sin_half_theta,
+            axis[1] * sin_half_theta,
+            axis[2] * sin_half_theta,
+        ]
+    )
     # apply the rotation via quaternion multiplication
     new_quat = quaternion_multiply(dq, quat)
     # re-normalize to prevent floating-point drift
@@ -52,12 +56,13 @@ def calculate_quat_move(quat, delta):
     return new_quat
 
 
+# TODO: Test that new_vol matches determinant of new cell axes
 def calculate_vol_move(cell, curr_vol, delta):
     # calculate random volume scaling factor uniformly in [1 - delta, 1 + delta]
     s_v = 1 + rand.uniform(-delta, delta)
     s_v = max(s_v, 1e-8)  # prevent complex cube root if vol_delt exceeds 1
     # calculate amount to scale cell axes by
-    s_l = s_v**(1/3)
+    s_l = s_v ** (1 / 3)
     new_cell = s_l * cell
     new_vol = curr_vol * s_v
     return new_cell, new_vol

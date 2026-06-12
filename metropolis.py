@@ -477,9 +477,6 @@ class MetropolisCalculator:
                 min_scale=min_scale,
                 progress=progress,
             )
-            # Equilibration acceptances are tuning artifacts; drop them so the
-            # production blocks (and any post-run acceptance diagnostics) reflect
-            # only production moves. Mirrors the step_count reset in equilibrate.
             self.pos_decisions = []
             self.or_decisions = []
             self.vol_decisions = []
