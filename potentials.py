@@ -6,7 +6,8 @@ import pandas as pd
 import random
 from scipy.spatial.transform import Rotation
 
-EPS_0 = 8.8541878188E-22 # F / Å
+EPS_0 = 8.8541878188e-22  # F / Å
+
 
 def read_props(filename):
     props = {
@@ -33,39 +34,47 @@ def read_props(filename):
 
 
 WALSH_PARAMS = {
-    "sigma_0": 1.,      # Å
+    "sigma_0": 1.0,  # Å
     "sigma_c": 3.7496,  # Å
     "sigma_x": 5.8311,  # Å
     "sigma_y": 5.8311,  # Å
     "sigma_z": 4.9465,  # Å
-    "eps_0": 1.,        # kJ / mol
-    "eps_x": 5.7136,    # kJ / mol
-    "eps_y": 5.7136,    # kJ / mol
-    "eps_z": 0.0447,    # kJ / mol
+    "eps_0": 1.0,  # kJ / mol
+    "eps_x": 5.7136,  # kJ / mol
+    "eps_y": 5.7136,  # kJ / mol
+    "eps_z": 0.0447,  # kJ / mol
     "mu": 7.6093,
     "nu": -12.46,
-    "Theta": 9.2074     # atomic units
+    "Theta": 9.2074,  # atomic units
 }
 
 
 def gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa):
-    chi = (kappa**2 - 1)/(kappa**2 + 1)
-    term1 = (np.vecdot(uhat1, rhat) + np.vecdot(uhat2, rhat))**2 / (1 + chi*np.vecdot(uhat1, uhat2))
-    term2 = (np.vecdot(uhat1, rhat) - np.vecdot(uhat2, rhat))**2 / (1 - chi*np.vecdot(uhat1, uhat2))
-    sigma = sigma0 / np.sqrt(1 - (chi / 2)*(term1 + term2))
+    chi = (kappa**2 - 1) / (kappa**2 + 1)
+    term1 = (np.vecdot(uhat1, rhat) + np.vecdot(uhat2, rhat)) ** 2 / (
+        1 + chi * np.vecdot(uhat1, uhat2)
+    )
+    term2 = (np.vecdot(uhat1, rhat) - np.vecdot(uhat2, rhat)) ** 2 / (
+        1 - chi * np.vecdot(uhat1, uhat2)
+    )
+    sigma = sigma0 / np.sqrt(1 - (chi / 2) * (term1 + term2))
     return sigma
 
 
 def gb_axial_energy(uhat1, uhat2, kappa):
-    chi = (kappa**2 - 1)/(kappa**2 + 1)
-    return 1 / np.sqrt(1 - (chi*np.vecdot(uhat1, uhat2))**2)
+    chi = (kappa**2 - 1) / (kappa**2 + 1)
+    return 1 / np.sqrt(1 - (chi * np.vecdot(uhat1, uhat2)) ** 2)
 
 
 def gb_directional_energy(uhat1, uhat2, rhat, kappa_prime, mu):
-    chi_prime = (kappa_prime**(1/mu) - 1) / (kappa_prime**(1/mu) + 1)
-    term1 = (np.vecdot(uhat1, rhat) + np.vecdot(uhat2, rhat))**2 / (1 + chi_prime*np.vecdot(uhat1, uhat2))
-    term2 = (np.vecdot(uhat1, rhat) - np.vecdot(uhat2, rhat))**2 / (1 - chi_prime*np.vecdot(uhat1, uhat2))
-    return 1 - chi_prime*(term1 + term2) / 2
+    chi_prime = (kappa_prime ** (1 / mu) - 1) / (kappa_prime ** (1 / mu) + 1)
+    term1 = (np.vecdot(uhat1, rhat) + np.vecdot(uhat2, rhat)) ** 2 / (
+        1 + chi_prime * np.vecdot(uhat1, uhat2)
+    )
+    term2 = (np.vecdot(uhat1, rhat) - np.vecdot(uhat2, rhat)) ** 2 / (
+        1 - chi_prime * np.vecdot(uhat1, uhat2)
+    )
+    return 1 - chi_prime * (term1 + term2) / 2
 
 
 def gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu):
@@ -91,13 +100,29 @@ def quadrupole(uhat1, uhat2, r, Q):
     b12 = np.vecdot(uhat1, uhat2)
     prefactor = 0.75 * Q**2 / rmag**5
     prefactor = np.squeeze(prefactor)
-    s = 1 + 2*b12**2 - 5*(a1**2 + a2**2) - 20*a1*a2*b12 + 35*(a1**2)*(a2**2)
+    s = (
+        1
+        + 2 * b12**2
+        - 5 * (a1**2 + a2**2)
+        - 20 * a1 * a2 * b12
+        + 35 * (a1**2) * (a2**2)
+    )
     return prefactor * s
 
 
 def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, Q):
     # M should have shape (N, 1431, 3, 3) where N is the number of frames
-    E_GB = gb(M[:, :, 0, :], M[:, :, 1, :], M[:, :, 2, :], sigma0, eps0, kappa, kappa_prime, mu, nu)
+    E_GB = gb(
+        M[:, :, 0, :],
+        M[:, :, 1, :],
+        M[:, :, 2, :],
+        sigma0,
+        eps0,
+        kappa,
+        kappa_prime,
+        mu,
+        nu,
+    )
     E_QQ = quadrupole(M[:, :, 0, :], M[:, :, 1, :], M[:, :, 2, :], Q)
     E_QQ = np.squeeze(E_QQ)
     pw_energies = E_GB + E_QQ
