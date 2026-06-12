@@ -42,7 +42,7 @@ relative to the working directory).
 ### Map the model's phase behaviour (NVT scan)
 
 ```bash
-python -m asmcmc.nvt_scan                # writes scan_results/nvt_scan.csv + figures
+python -m asmcmc.nvt_scan                # writes results/scan_results/nvt_scan.csv + figures
 python -m asmcmc.nvt_scan --plot-only    # re-render figures from the existing CSV
 ```
 
@@ -59,7 +59,7 @@ involved.
 from asmcmc.driver import run_multi_temp_trial
 
 run_multi_temp_trial(temps=[200, 300, 400], press=0.0)
-# → simulations/npt_test/{temp}/{equilibration,simulation}.db
+# → results/simulations/npt_test/{temp}/{equilibration,simulation}.db
 ```
 
 ### Drive the sampler directly
@@ -69,9 +69,9 @@ from asmcmc.metropolis import MetropolisCalculator
 
 # NPT by default; pass npt_ensemble=False for fixed-volume NVT.
 # init_frame=None auto-generates a starting configuration.
-metro = MetropolisCalculator(temp=300, pressure=0.0, output_dir="simulations/demo")
+metro = MetropolisCalculator(temp=300, pressure=0.0, output_dir="results/simulations/demo")
 metro.calculate_trajectory(num_steps=200_000, num_eq_steps=100_000)
-# → simulations/demo/{equilibration,simulation}.db
+# → results/simulations/demo/{equilibration,simulation}.db
 ```
 
 ### Analyse a trajectory
@@ -79,7 +79,7 @@ metro.calculate_trajectory(num_steps=200_000, num_eq_steps=100_000)
 ```python
 from asmcmc.measurements import TrajectoryAnalyzer, HeatCapacity, RadialDistributionFunction
 
-analyzer = TrajectoryAnalyzer("simulations/demo/simulation.db")
+analyzer = TrajectoryAnalyzer("results/simulations/demo/simulation.db")
 analyzer.add_measurement("Cv", HeatCapacity(temperature=300, num_particles=125))
 analyzer.add_measurement("rdf", RadialDistributionFunction(r_max=20.0, num_bins=50))
 results = analyzer.run_analysis()
@@ -104,7 +104,7 @@ Add your own observable by subclassing `Measurement` (implement `compute` and
 | `tests/` | pytest suite |
 | `data/` | Input datasets (`data/xyz_files/` crystal structures; bulk files kept on disk, not in VCS) |
 | `notebooks/` | Exploratory analysis notebooks (not load-bearing) |
-| `simulations/`, `scan_results/` | Regenerable simulation outputs (gitignored) |
+| `results/` | Regenerable outputs (gitignored): `results/simulations/` NPT runs, `results/scan_results/` NVT scans |
 
 Trajectories are stored as ASE `.db` files.
 

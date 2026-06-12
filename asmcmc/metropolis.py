@@ -26,8 +26,8 @@ def generate_simulation_id(method="datetime"):
 
     if method == "datetime":
         dt = datetime.datetime.today().isoformat(timespec="minutes")
-        if not os.path.exists(f"simulations/{dt}"):
-            os.makedirs(f"simulations/{dt}")
+        if not os.path.exists(f"results/simulations/{dt}"):
+            os.makedirs(f"results/simulations/{dt}")
         return dt
     else:
         return NotImplementedError
@@ -122,7 +122,7 @@ class MetropolisCalculator:
         self.npt_ensemble = npt_ensemble
         # auto generate traj file name if needed
         if output_dir is None:
-            self.output_dir = "simulations/" + generate_simulation_id()
+            self.output_dir = "results/simulations/" + generate_simulation_id()
         else:
             self.output_dir = output_dir
         # set up neighborlist

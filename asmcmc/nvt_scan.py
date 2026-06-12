@@ -20,7 +20,7 @@ drops. Everything is dimensionless, so the result is independent of the eps0
 calibration we were questioning.
 
 Run:  python -m asmcmc.nvt_scan
-Outputs: scan_results/nvt_scan.csv, nvt_scan.png (line plots vs T*) and
+Outputs: results/scan_results/nvt_scan.csv, nvt_scan.png (line plots vs T*) and
          nvt_scan_heatmap.png ((T*, rho*) phase-diagram heatmaps).
 Re-plot only (no re-run):  python -m asmcmc.nvt_scan --plot-only
 """
@@ -319,7 +319,7 @@ def main(
     eq_base=10_000,
     eq_max=60_000,
     seed0=12345,
-    out_dir="scan_results",
+    out_dir="results/scan_results",
 ):
     """Run the (T*, rho*) NVT scan and write nvt_scan.csv + nvt_scan.png.
 
@@ -415,6 +415,6 @@ def main(
 
 if __name__ == "__main__":
     if "--plot-only" in sys.argv:
-        replot("scan_results")  # regenerate figures from the existing CSV
+        replot("results/scan_results")  # regenerate figures from the existing CSV
     else:
         main()

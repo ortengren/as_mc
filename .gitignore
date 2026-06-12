@@ -10,8 +10,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Simulation outputs (regenerable)
-simulations/*
-scan_results/
+results/
 
 # Bulk / generated data (kept on disk, not in VCS)
 data/xyz_files/duped_benzenes.xyz
