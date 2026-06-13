@@ -9,30 +9,6 @@ from scipy.spatial.transform import Rotation
 EPS_0 = 8.8541878188e-22  # F / Å
 
 
-def read_props(filename):
-    props = {
-        "lattice_energy": [],
-        "heuristic_class": [],
-        "cluster_cutoff_3a": [],
-        "cluster_cutoff_5a": [],
-    }
-    with open(filename) as f:
-        # throw away the first line
-        _ = f.readline()
-        # iterate through lines of file and update dict
-        l = f.readline()
-        while l != "":
-            l = l.split()
-            if len(l) != 4:
-                print(l)
-            props["lattice_energy"].append(l[0])
-            props["heuristic_class"].append(l[1])
-            props["cluster_cutoff_3a"].append(l[2])
-            props["cluster_cutoff_5a"].append(l[3])
-            l = f.readline()
-    return props
-
-
 WALSH_PARAMS = {
     "sigma_0": 1.0,  # Å
     "sigma_c": 3.7496,  # Å
