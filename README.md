@@ -179,13 +179,37 @@ python -m asmcmc.fitting.run --weighting boltzmann --alpha 2.90 \
 Cross-run comparison figures are built from this tree by
 `python -m asmcmc.fitting.summary` (writes `results/fitting/summary/`).
 
-### Multi-temperature NPT runs
+### Temperature × pressure grid runs (with reporting)
 
 ```python
-from asmcmc.driver import run_multi_temp_trial
+from asmcmc.simulation.run import run_grid
 
-run_multi_temp_trial(temps=[200, 300, 400], press=0.0)
-# → results/simulations/npt_test/{temp}/{equilibration,simulation}.db
+run_grid(temps=[200, 300, 400], pressures=[1e-6, 1e-5])
+# runs every (T, P) combination →
+# results/simulations/npt_<datetime>/T{temp}_P{pressure}/
+#   {equilibration,simulation}.db
+#   run_config.json, observables.json, observables.npz, report.md
+#   energy_trace.png, acceptance_trace.png, nematic_order.png, rdf.png,
+#   orientational_correlation.png
+```
+
+Or from the command line:
+
+```bash
+python -m asmcmc.simulation.run --temps 200 300 400 --pressures 1e-6 1e-5
+```
+
+Pass `--repeat x` (or `repeat=x`) to run `x` replicas with **different initial
+configurations** at each (T, P), to quantify run-to-run uncertainty. Each
+replica lands in its own `rep{i}/` subdir and a cross-replica
+`summary.json`/`summary.md` (mean/std/sem of every scalar observable) is written
+to the point dir:
+
+```bash
+python -m asmcmc.simulation.run --temps 300 --repeat 5 --seed 0
+# results/simulations/npt_<datetime>/T300_P1e-06/
+#   rep00/ rep01/ … rep04/   (full artifact set each)
+#   summary.json, summary.md  (mean ± std over replicas)
 ```
 
 ### Drive the sampler directly
@@ -224,7 +248,7 @@ Add your own observable by subclassing `Measurement` (implement `compute` and
 | `asmcmc/trial_moves.py` | Trial moves: translation, quaternion rotation, isotropic volume scaling |
 | `asmcmc/initialize.py` | `generate_random_config` — randomized starting configuration at a target density |
 | `asmcmc/measurements.py` | Observable framework: `Measurement` base, `TrajectoryAnalyzer`, and ready-made measurements (energy, heat capacity, RDF, orientational correlation, nematic order) |
-| `asmcmc/driver.py` | Multi-temperature NPT runs plus AniSOAP feature generation (`python -m asmcmc.driver`) |
+| `asmcmc/simulation/` | MC run orchestration + reporting: (T, P) grid runs writing per-point config/observables/report/plots (`python -m asmcmc.simulation.run`) |
 | `asmcmc/nvt_scan.py` | Reduced-units (T\*, ρ\*) phase scan (`python -m asmcmc.nvt_scan`) |
 | `asmcmc/fitting/` | Fit the GB + quadrupole potential to reference energies (`python -m asmcmc.fitting.run`) |
 | `asmcmc/generate_cg_reps.py` | AniSOAP coarse-grained representation generation |
