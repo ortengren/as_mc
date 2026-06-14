@@ -9,22 +9,6 @@ from scipy.spatial.transform import Rotation
 EPS_0 = 8.8541878188e-22  # F / Å
 
 
-WALSH_PARAMS = {
-    "sigma_0": 1.0,  # Å
-    "sigma_c": 3.7496,  # Å
-    "sigma_x": 5.8311,  # Å
-    "sigma_y": 5.8311,  # Å
-    "sigma_z": 4.9465,  # Å
-    "eps_0": 1.0,  # kJ / mol
-    "eps_x": 5.7136,  # kJ / mol
-    "eps_y": 5.7136,  # kJ / mol
-    "eps_z": 0.0447,  # kJ / mol
-    "mu": 7.6093,
-    "nu": -12.46,
-    "Theta": 9.2074,  # atomic units
-}
-
-
 def gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa):
     chi = (kappa**2 - 1) / (kappa**2 + 1)
     term1 = (np.vecdot(uhat1, rhat) + np.vecdot(uhat2, rhat)) ** 2 / (

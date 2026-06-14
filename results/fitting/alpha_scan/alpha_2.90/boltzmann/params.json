@@ -1,0 +1,34 @@
+{
+  "sigma0": {
+    "value": 6.581482761497987,
+    "unit": "Angstrom"
+  },
+  "eps0": {
+    "value": 0.028864268898142992,
+    "unit": "eV"
+  },
+  "kappa": {
+    "value": 0.5843308289923174,
+    "unit": "dimensionless"
+  },
+  "kappa_prime": {
+    "value": 2.50346501907571,
+    "unit": "dimensionless"
+  },
+  "mu": {
+    "value": 0.10545330172196273,
+    "unit": "dimensionless"
+  },
+  "nu": {
+    "value": 1.0,
+    "unit": "dimensionless"
+  },
+  "Q": {
+    "value": -3.5492558734465933,
+    "unit": "(eV*Angstrom^5)^0.5"
+  },
+  "E_intra": {
+    "value": -1601.3573383379078,
+    "unit": "eV/molecule"
+  }
+}

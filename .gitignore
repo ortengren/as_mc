@@ -10,7 +10,11 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Simulation outputs (regenerable)
-results/
+results/*
+# ...but track the GBQ fit campaign artifacts (params/metrics/figures = provenance)
+!results/fitting/
+# except the large, regenerable shared dataset cache
+results/fitting/cache/
 
 # Bulk / generated data (kept on disk, not in VCS)
 data/xyz_files/duped_benzenes.xyz
