@@ -120,7 +120,7 @@ def test_energy_tracking_consistent(four_particle_frame, tmp_path):
         metro.step()
 
     recomputed = calc_total_energy(
-        metro.current_frame, metro.nl_cutoffs, metro.energy_func
+        metro.current_frame, metro.nl_cutoffs, potential=metro.potential
     )
     np.testing.assert_allclose(
         metro.current_energy, recomputed, rtol=1e-4,

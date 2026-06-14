@@ -7,7 +7,7 @@ from asmcmc.trial_moves import (
     calculate_quat_move,
     calculate_vol_move,
 )
-from asmcmc.potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
+from asmcmc.potentials import calc_total_energy, DEFAULT_POTENTIAL
 import random
 import ase
 from ase.neighborlist import NeighborList
@@ -83,7 +83,7 @@ class MetropolisCalculator:
         temp,
         pressure,
         init_frame=None,
-        energy_func="GB",
+        potential=None,
         pos_delt=0.15,
         or_delt=0.05,
         vol_delt=0.05,
@@ -112,7 +112,7 @@ class MetropolisCalculator:
         self.or_delt = or_delt
         self.vol_delt = vol_delt
         self.step_count = 0
-        self.energy_func = energy_func
+        self.potential = potential if potential is not None else DEFAULT_POTENTIAL
         self.pos_decisions = []
         self.or_decisions = []
         self.vol_decisions = []
@@ -120,6 +120,7 @@ class MetropolisCalculator:
         self.current_frame.info["or_acc_rate"] = -1
         self.current_frame.info["or_delta"] = -1
         self.current_frame.info["pos_delta"] = -1
+        self.current_frame.info["potential"] = self.potential.name
         self.equilibrated = False
         # whether to attempt volume moves (NPT); set False for NVT
         self.npt_ensemble = npt_ensemble
@@ -140,7 +141,7 @@ class MetropolisCalculator:
         )
         self.nl.update(self.current_frame)
         self.current_energy = calc_total_energy(
-            self.current_frame, self.nl_cutoffs, energy_func
+            self.current_frame, self.nl_cutoffs, potential=self.potential
         )
         self.current_frame.info["total_energy"] = self.current_energy
 
@@ -150,36 +151,28 @@ class MetropolisCalculator:
     def calc_energy(self, center_idx):
         """Calculate the energy of particle at index `center_idx`."""
 
-        if self.energy_func == "GB":
-            center_pos = self.current_frame.positions[center_idx].copy()
-            # find neighbors
-            indices, offsets = self.nl.get_neighbors(center_idx)
-            # energy is 0 if center particle has no neighbors
-            if len(indices) == 0:
-                return 0
-            # calculate neighbor positions while respecting pbc
-            cell = self.current_frame.get_cell()
-            shift_vecs = np.dot(offsets, cell)
-            neighbor_positions = self.current_frame.positions[indices] + shift_vecs
-            displacements = neighbor_positions - center_pos
-            # find neighbor orientations
-            center_ell_orientation = self.current_frame.arrays["or_vec"][
-                center_idx
-            ].copy()
-            uhat2 = self.current_frame.arrays["or_vec"][indices].copy()
-            uhat1 = np.broadcast_to(center_ell_orientation, (len(indices), 3))
-            assert np.shape(uhat1) == np.shape(
-                uhat2
-            ), f"uhat1 and uhat2 are different shapes \n{np.shape(uhat1)} != {np.shape(uhat2)}"
-            # calculate pairwise interaction energies of center particle w/ each neighbor
-            gb_e = gb(uhat1, uhat2, displacements, *GB_PARAMS.values())
-            qq_e = np.squeeze(quadrupole(uhat1, uhat2, displacements, QQ))
-            pw_energies = gb_e + qq_e
-            # total particle energy contribution is sum over pairs
-            energy = np.sum(pw_energies)
-            return energy
-        else:
-            raise NotImplementedError()
+        center_pos = self.current_frame.positions[center_idx].copy()
+        # find neighbors
+        indices, offsets = self.nl.get_neighbors(center_idx)
+        # energy is 0 if center particle has no neighbors
+        if len(indices) == 0:
+            return 0
+        # calculate neighbor positions while respecting pbc
+        cell = self.current_frame.get_cell()
+        shift_vecs = np.dot(offsets, cell)
+        neighbor_positions = self.current_frame.positions[indices] + shift_vecs
+        displacements = neighbor_positions - center_pos
+        # find neighbor orientations
+        center_ell_orientation = self.current_frame.arrays["or_vec"][center_idx].copy()
+        uhat2 = self.current_frame.arrays["or_vec"][indices].copy()
+        uhat1 = np.broadcast_to(center_ell_orientation, (len(indices), 3))
+        assert np.shape(uhat1) == np.shape(
+            uhat2
+        ), f"uhat1 and uhat2 are different shapes \n{np.shape(uhat1)} != {np.shape(uhat2)}"
+        # pairwise interaction energies of center particle w/ each neighbor;
+        # total particle energy contribution is the sum over pairs
+        pw_energies = self.potential.pair_energy(uhat1, uhat2, displacements)
+        return np.sum(pw_energies)
 
     def step(self):
         """Performs a single step of the simulation, including performing trial
@@ -214,7 +207,7 @@ class MetropolisCalculator:
             self.nl.update(self.current_frame)
             # calculate new energy
             new_total_energy = calc_total_energy(
-                self.current_frame, self.nl_cutoffs, self.energy_func
+                self.current_frame, self.nl_cutoffs, potential=self.potential
             )
             # decide whether to accept trial move
             keep_move = npt_decide_accept(
@@ -367,6 +360,7 @@ class MetropolisCalculator:
             "total_energy": self.current_energy,
             "num_particles": len(self.current_frame),
             "vol": self.current_vol,
+            "potential": self.potential.name,
         }
         array_data = {
             "c_q": self.current_frame.arrays["c_q"].copy(),

@@ -75,7 +75,7 @@ def run_multi_temp_trial(
     block_size=250,
     num_eq_steps=20_000,
     buffer_size=4,
-    energy_func="GB",
+    potential=None,
     nl_skin=1.0,
 ):
     print("Beginning simulation loop")
@@ -84,7 +84,7 @@ def run_multi_temp_trial(
         metro = MetropolisCalculator(
             temp,
             press,
-            energy_func=energy_func,
+            potential=potential,
             output_dir=f"{sim_id_base}/{temp}",
             nl_skin=nl_skin,
         )

@@ -1,9 +1,17 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import json
 import numpy as np
 import pytest
-from asmcmc.potentials import gb, quadrupole, calc_total_energy, GB_PARAMS, QQ
+from asmcmc.potentials import (
+    gb,
+    quadrupole,
+    calc_total_energy,
+    GBQPotential,
+    GB_PARAMS,
+    QQ,
+)
 
 
 # Helpers: unit-vector pairs and a displacement array shaped (1, 3)
@@ -79,7 +87,7 @@ def test_calc_total_energy_two_particles(two_particle_frame):
     frame = two_particle_frame
     nl_cutoff = [15.] * len(frame)
 
-    total = calc_total_energy(frame, nl_cutoff, method="GB")
+    total = calc_total_energy(frame, nl_cutoff)
 
     # Manual: single pair, r = 10 Å along x, both oriented along z
     u1 = np.array([[0., 0., 1.]])
@@ -88,3 +96,45 @@ def test_calc_total_energy_two_particles(two_particle_frame):
     expected = gb(u1, u2, r, **GB_PARAMS).item() + np.squeeze(quadrupole(u1, u2, r, QQ)).item()
 
     np.testing.assert_allclose(total, expected, rtol=1e-8)
+
+
+# --- GBQPotential (loading + provenance) ---
+
+def _write_params_json(path, values):
+    """Write a fit params.json in the {value, unit} schema asmcmc.fitting emits."""
+    payload = {k: {"value": v, "unit": "x"} for k, v in values.items()}
+    payload["E_intra"] = {"value": -1601.0, "unit": "eV/molecule"}  # ignored on load
+    path.write_text(json.dumps(payload))
+
+
+def test_gbqpotential_from_json_roundtrip(tmp_path):
+    """from_json reads the fit schema and derives a name from the path tail
+    below a `fitting/` directory; E_intra is not a potential parameter."""
+    values = {**GB_PARAMS, "Q": QQ}
+    fit_dir = tmp_path / "fitting" / "campaign" / "seed_0"
+    fit_dir.mkdir(parents=True)
+    _write_params_json(fit_dir / "params.json", values)
+
+    pot = GBQPotential.from_json(fit_dir / "params.json")
+
+    assert pot.name == "campaign/seed_0"
+    assert pot.gb_params_dict() == GB_PARAMS
+    assert pot.Q == QQ
+    assert pot.gb_args == tuple(GB_PARAMS.values())
+
+
+def test_gbqpotential_pair_energy_matches_gb_plus_quadrupole():
+    """pair_energy is exactly gb(...) + quadrupole(...) for the same params."""
+    pot = GBQPotential(name="test", **GB_PARAMS, Q=QQ)
+    u1, u2, r = make_pair(Z, X, [9., 0., 0.])
+    expected = gb(u1, u2, r, **GB_PARAMS) + np.squeeze(quadrupole(u1, u2, r, QQ))
+    np.testing.assert_allclose(pot.pair_energy(u1, u2, r), expected, rtol=1e-12)
+
+
+def test_calc_total_energy_uses_given_potential(two_particle_frame):
+    """An explicitly passed potential overrides the package default."""
+    other = GBQPotential(name="other", **{**GB_PARAMS, "eps0": GB_PARAMS["eps0"] * 2}, Q=QQ)
+    nl_cutoff = [15.] * len(two_particle_frame)
+    default = calc_total_energy(two_particle_frame, nl_cutoff)
+    with_other = calc_total_energy(two_particle_frame, nl_cutoff, potential=other)
+    assert not np.isclose(default, with_other)
