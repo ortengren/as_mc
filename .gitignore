@@ -19,5 +19,8 @@ data/xyz_files/ellipsoids_with_axes.xyz
 data/xyz_files/two_ells_with_axes.xyz
 data/new_data/
 
+# Scratch / exploratory notebooks (absolute paths, not reproducible)
+asmcmc/fitting/scratch/
+
 # Packaging
 *.egg-info/

@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from functools import cached_property
 
 import ase.io
 from ase.neighborlist import neighbor_list
@@ -39,37 +40,73 @@ def extract_periodic_pairs(frame, orientation_key, cutoff):
     return np.stack([r_mag, a_i, a_j, b_ij], axis=1)
 
 
-def precompute_dots_gb_shape_func(a_i, a_j, b_ij, sigma0, kappa):
+# The optional sum_sq/diff_sq/b_sq args are the geometry-only squares
+# (a_i+a_j)^2, (a_i-a_j)^2, b_ij^2. They depend only on the pair geometry, not
+# on any fitted parameter, so the fit precomputes them once (FitData.gb_geom)
+# and threads them through to skip rebuilding them on every evaluation. Default
+# None recomputes them, keeping every caller (e.g. gbq) backward-compatible.
+def precompute_dots_gb_shape_func(a_i, a_j, b_ij, sigma0, kappa, sum_sq=None, diff_sq=None):
     chi = (kappa**2 - 1) / (kappa**2 + 1)
-    term1 = ((a_i + a_j) ** 2) / (1 + chi * b_ij)
-    term2 = ((a_i - a_j) ** 2) / (1 - chi * b_ij)
+    if sum_sq is None:
+        sum_sq = (a_i + a_j) ** 2
+    if diff_sq is None:
+        diff_sq = (a_i - a_j) ** 2
+    term1 = sum_sq / (1 + chi * b_ij)
+    term2 = diff_sq / (1 - chi * b_ij)
     sigma = sigma0 / np.sqrt(1 - (chi / 2) * (term1 + term2))
     return sigma
 
 
-def precompute_dots_gb_axial_energy(b_ij, kappa):
+def precompute_dots_gb_axial_energy(b_ij, kappa, b_sq=None):
     chi = (kappa**2 - 1) / (kappa**2 + 1)
-    return 1 / np.sqrt(1 - (chi * b_ij) ** 2)
+    if b_sq is None:
+        b_sq = b_ij**2
+    # (chi * b_ij)**2 == chi**2 * b_sq
+    return 1 / np.sqrt(1 - (chi**2) * b_sq)
 
 
-def precompute_dots_gb_directional_energy(a_i, a_j, b_ij, kappa_prime, mu):
+def precompute_dots_gb_directional_energy(a_i, a_j, b_ij, kappa_prime, mu, sum_sq=None, diff_sq=None):
     chi_prime = (kappa_prime ** (1 / mu) - 1) / (kappa_prime ** (1 / mu) + 1)
-    term1 = ((a_i + a_j) ** 2) / (1 + chi_prime * b_ij)
-    term2 = ((a_i - a_j) ** 2) / (1 - chi_prime * b_ij)
+    if sum_sq is None:
+        sum_sq = (a_i + a_j) ** 2
+    if diff_sq is None:
+        diff_sq = (a_i - a_j) ** 2
+    term1 = sum_sq / (1 + chi_prime * b_ij)
+    term2 = diff_sq / (1 - chi_prime * b_ij)
     return 1 - (chi_prime / 2) * (term1 + term2)
 
 
-def precompute_dots_gb_en_func(a_i, a_j, b_ij, eps0, kappa, kappa_prime, mu, nu):
-    eps1 = precompute_dots_gb_axial_energy(b_ij, kappa)
-    eps2 = precompute_dots_gb_directional_energy(a_i, a_j, b_ij, kappa_prime, mu)
+def precompute_dots_gb_en_func(
+    a_i, a_j, b_ij, eps0, kappa, kappa_prime, mu, nu, sum_sq=None, diff_sq=None, b_sq=None
+):
+    eps1 = precompute_dots_gb_axial_energy(b_ij, kappa, b_sq=b_sq)
+    eps2 = precompute_dots_gb_directional_energy(
+        a_i, a_j, b_ij, kappa_prime, mu, sum_sq=sum_sq, diff_sq=diff_sq
+    )
     return eps0 * (eps1**nu) * (eps2**mu)
 
 
-def precompute_dots_gb(r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu):
-    eps = precompute_dots_gb_en_func(a_i, a_j, b_ij, eps0, kappa, kappa_prime, mu, nu)
-    sigma = precompute_dots_gb_shape_func(a_i, a_j, b_ij, sigma0, kappa)
+def precompute_dots_gb(
+    r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu,
+    sum_sq=None, diff_sq=None, b_sq=None,
+):
+    if sum_sq is None:
+        sum_sq = (a_i + a_j) ** 2
+    if diff_sq is None:
+        diff_sq = (a_i - a_j) ** 2
+    if b_sq is None:
+        b_sq = b_ij**2
+    eps = precompute_dots_gb_en_func(
+        a_i, a_j, b_ij, eps0, kappa, kappa_prime, mu, nu,
+        sum_sq=sum_sq, diff_sq=diff_sq, b_sq=b_sq,
+    )
+    sigma = precompute_dots_gb_shape_func(
+        a_i, a_j, b_ij, sigma0, kappa, sum_sq=sum_sq, diff_sq=diff_sq
+    )
     term = sigma0 / (r_mag - sigma + sigma0)
-    return 4 * eps * (term**12 - term**6)
+    # term**12 - term**6 == t6*(t6 - 1); one expensive array pow instead of two.
+    t6 = term**6
+    return 4 * eps * t6 * (t6 - 1)
 
 
 def precompute_dots_quadrupole(r_mag, a_i, a_j, b_ij, Q):
@@ -118,6 +155,50 @@ class FitData:
     @property
     def n_frames(self):
         return int(self.target_per_mol.shape[0])
+
+    @cached_property
+    def quad_geom_per_frame(self):
+        """Per-frame, geometry-only quadrupole factor; quad energy = ``Q**2 *`` it.
+
+        The quadrupole pair energy is ``Q**2`` times a purely geometric factor
+        (``0.75 * s / r^5``; see :func:`precompute_dots_quadrupole`), so a
+        frame's quadrupole lattice energy factorises as
+        ``Q**2 * quad_geom_per_frame``. ``Q`` is the only quadrupole parameter,
+        so this array depends on geometry alone and is identical across every
+        fit evaluation. Precomputing it once -- with the same
+        ``0.5 * (.) / n_mol`` directed-pair / per-molecule reduction that
+        :func:`fit.predict_per_mol` applies -- removes the entire per-pair
+        quadrupole recomputation from the DE inner loop. Memoised on first use
+        (``cached_property``: computed lazily, then stored on the instance).
+        """
+        s = (
+            1
+            + 2 * (self.b_ij**2)
+            - 5 * (self.a_i**2 + self.a_j**2)
+            - 20 * self.a_i * self.a_j * self.b_ij
+            + 35 * (self.a_i**2) * (self.a_j**2)
+        )
+        unit_pair = 0.75 * s / (self.r_mag**5)
+        frame = np.bincount(
+            self.frame_index, weights=unit_pair, minlength=self.n_frames
+        )
+        return 0.5 * frame / self.n_mol
+
+    @cached_property
+    def gb_geom(self):
+        """Geometry-only GB squares ``(sum_sq, diff_sq, b_sq)``, reused per eval.
+
+        ``sum_sq = (a_i + a_j)**2``, ``diff_sq = (a_i - a_j)**2``,
+        ``b_sq = b_ij**2`` -- the parameter-independent pieces of the GB shape /
+        axial / directional terms. Precomputed once and threaded into
+        :func:`precompute_dots_gb` so they are not rebuilt on every fit
+        evaluation. Memoised on first use (``cached_property``).
+        """
+        return (
+            (self.a_i + self.a_j) ** 2,
+            (self.a_i - self.a_j) ** 2,
+            self.b_ij**2,
+        )
 
 
 _CACHE_FIELDS = ("r_mag", "a_i", "a_j", "b_ij", "frame_index", "n_mol", "target_per_mol")
