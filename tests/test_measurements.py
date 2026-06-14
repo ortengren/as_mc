@@ -34,7 +34,7 @@ def test_average_energy_recompute_matches_direct():
     reproduces calc_total_energy exactly; identical frames give zero variance."""
     frame = _make_uniform_frame(n=8, box=20.0)
     nl_radius = 15.0
-    expected = calc_total_energy(frame, [nl_radius] * len(frame), "GB")
+    expected = calc_total_energy(frame, [nl_radius] * len(frame))
     m = AverageEnergy(recompute=True, nl_radius=nl_radius)
     for _ in range(3):
         m.compute(frame, {"total_energy": 999.0}, None)  # bogus scalar must be ignored
@@ -54,7 +54,7 @@ def test_average_energy_recompute_restores_or_vec_from_array_data():
     from array_data and still reproduces calc_total_energy."""
     frame = _make_uniform_frame(n=8, box=20.0)
     or_vec = frame.arrays["or_vec"].copy()
-    expected = calc_total_energy(frame, [15.0] * len(frame), "GB")
+    expected = calc_total_energy(frame, [15.0] * len(frame))
     bare = frame.copy()
     bare.set_array("or_vec", None)  # mimic row.toatoms(), which drops custom arrays
     m = AverageEnergy(recompute=True, nl_radius=15.0)

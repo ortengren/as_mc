@@ -1,7 +1,11 @@
 import ase
+import json
 import numpy as np
+from abc import ABC, abstractmethod
 from ase.neighborlist import neighbor_list
+from dataclasses import dataclass
 from numpy import linalg as la
+from pathlib import Path
 import pandas as pd
 import random
 from scipy.spatial.transform import Rotation
@@ -91,43 +95,115 @@ def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, Q):
     return energies
 
 
-def calc_total_energy(frame, nl_cutoff, method="GB"):
-    if method == "GB":
-        # get all interacting pairs (i, j) and their shift vectors
-        i, j, s = neighbor_list("ijS", frame, nl_cutoff)
+def calc_total_energy(frame, nl_cutoff, potential=None):
+    """Total pair energy of ``frame`` under ``potential``.
 
-        # filter for i < j to avoid double counting
-        unique_pairs_mask = i < j
-        i = i[unique_pairs_mask]
-        j = j[unique_pairs_mask]
-        s = s[unique_pairs_mask]
+    ``potential`` is a :class:`Potential`; if ``None`` the package default
+    (:data:`DEFAULT_POTENTIAL`) is used.
+    """
+    if potential is None:
+        potential = DEFAULT_POTENTIAL
 
-        # calculate displacements
-        cell = frame.get_cell()
-        shift_vecs = np.dot(s, cell)
-        displacements = frame.positions[j] + shift_vecs - frame.positions[i]
+    # get all interacting pairs (i, j) and their shift vectors
+    i, j, s = neighbor_list("ijS", frame, nl_cutoff)
 
-        # calculate orientations
-        uhat1 = frame.arrays["or_vec"][i]
-        uhat2 = frame.arrays["or_vec"][j]
+    # filter for i < j to avoid double counting
+    unique_pairs_mask = i < j
+    i = i[unique_pairs_mask]
+    j = j[unique_pairs_mask]
+    s = s[unique_pairs_mask]
 
-        # calculate pairwise energies
-        gb_e = gb(uhat1, uhat2, displacements, *GB_PARAMS.values())
-        qq_e = np.squeeze(quadrupole(uhat1, uhat2, displacements, QQ))
-        pw_energies = gb_e + qq_e
+    # calculate displacements
+    cell = frame.get_cell()
+    shift_vecs = np.dot(s, cell)
+    displacements = frame.positions[j] + shift_vecs - frame.positions[i]
 
-        return np.sum(pw_energies)
-    else:
-        return NotImplementedError()
+    # calculate orientations
+    uhat1 = frame.arrays["or_vec"][i]
+    uhat2 = frame.arrays["or_vec"][j]
+
+    # calculate pairwise energies
+    return np.sum(potential.pair_energy(uhat1, uhat2, displacements))
 
 
-GB_PARAMS = {
-    "sigma0": 6.16753952,
-    "eps0": 0.08,
-    "kappa": 0.53134663,
-    "kappa_prime": 0.68032599,
-    "mu": -0.39313992,
-    "nu": 4.37606907,
-}
+# TODO: Class structure may need to be updated for AniSOAP implementation.  Currently
+# handles only pairwise potentials.  This change would also likely require changes to
+# MetropolisCalculator.
+class Potential(ABC):
+    """Interface the Metropolis sampler depends on: a named, pairwise energy.
 
-QQ = -3.83795985
+    Concrete potentials carry their own parameters and implement
+    :meth:`pair_energy`. The ``name`` (provenance, e.g. which fit) is stamped
+    into simulation outputs so every run records which potential it used.
+    """
+
+    name: str
+
+    @abstractmethod
+    def pair_energy(self, uhat1, uhat2, r):
+        """Per-pair energies for orientations ``uhat1``/``uhat2`` and
+        displacement vectors ``r`` (callers sum over the returned array)."""
+
+
+# GB parameters in the order ``gb`` expects them (followed by the quadrupole Q).
+_GB_PARAM_KEYS = ("sigma0", "eps0", "kappa", "kappa_prime", "mu", "nu")
+
+
+@dataclass(frozen=True)
+class GBQPotential(Potential):
+    """Gay-Berne + quadrupole pair potential with a recorded provenance name."""
+
+    name: str
+    sigma0: float
+    eps0: float
+    kappa: float
+    kappa_prime: float
+    mu: float
+    nu: float
+    Q: float
+
+    @classmethod
+    def from_json(cls, path, name=None):
+        """Build from a fit ``params.json`` (the ``{value, unit}`` schema written
+        by ``asmcmc.fitting``). ``name`` defaults to the path tail below the
+        ``fitting/`` directory, e.g. ``multiseed/uniform/seed_0/uniform``."""
+        path = Path(path)
+        data = json.loads(path.read_text())
+        if name is None:
+            parts = path.parent.parts
+            if "fitting" in parts:
+                name = "/".join(parts[parts.index("fitting") + 1 :])
+            else:
+                name = path.parent.name
+        values = {k: data[k]["value"] for k in (*_GB_PARAM_KEYS, "Q")}
+        return cls(name=name, **values)
+
+    @property
+    def gb_args(self):
+        """GB parameters as a tuple in the order ``gb`` accepts them."""
+        return tuple(getattr(self, k) for k in _GB_PARAM_KEYS)
+
+    def gb_params_dict(self):
+        """GB parameters as a dict (matches the legacy ``GB_PARAMS`` mapping)."""
+        return {k: getattr(self, k) for k in _GB_PARAM_KEYS}
+
+    def pair_energy(self, uhat1, uhat2, r):
+        gb_e = gb(uhat1, uhat2, r, *self.gb_args)
+        qq_e = np.squeeze(quadrupole(uhat1, uhat2, r, self.Q))
+        return gb_e + qq_e
+
+
+# Resolve the default potential relative to this file (not the cwd) so imports
+# work regardless of where the interpreter is launched. Points at the tracked
+# uniform/seed_0 fit; switch via GBQPotential.from_json(<other params.json>).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PARAMS_PATH = (
+    _REPO_ROOT / "results/fitting/multiseed/uniform/seed_0/uniform/params.json"
+)
+DEFAULT_POTENTIAL = GBQPotential.from_json(DEFAULT_PARAMS_PATH)
+
+# Backward-compatible aliases, derived from the active default so dependents
+# (initialize.py lattice spacing, nvt_scan.py reduced-unit scales) stay
+# consistent with whatever potential the sampler uses.
+GB_PARAMS = DEFAULT_POTENTIAL.gb_params_dict()
+QQ = DEFAULT_POTENTIAL.Q

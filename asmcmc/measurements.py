@@ -50,12 +50,12 @@ class AverageEnergy(Measurement):
     is required when recomputing.
     """
 
-    def __init__(self, recompute=False, nl_radius=None, energy_func="GB"):
+    def __init__(self, recompute=False, nl_radius=None, potential=None):
         super().__init__()
         self.energies = []
         self.recompute = recompute
         self.nl_radius = nl_radius
-        self.energy_func = energy_func
+        self.potential = potential
         if recompute and nl_radius is None:
             raise ValueError("recompute=True requires nl_radius")
 
@@ -68,7 +68,7 @@ class AverageEnergy(Measurement):
                 frame = frame.copy()
                 frame.set_array("or_vec", np.asarray(array_data["or_vec"]))
             cutoffs = [self.nl_radius] * len(frame)
-            energy = calc_total_energy(frame, cutoffs, self.energy_func)
+            energy = calc_total_energy(frame, cutoffs, potential=self.potential)
         else:
             energy = scalar_data["total_energy"]
         self.energies.append(energy)

@@ -151,7 +151,7 @@ def run_state_point(
         AverageEnergy(
             recompute=True,
             nl_radius=metro.nl_cutoffs[0],
-            energy_func=metro.energy_func,
+            potential=metro.potential,
         ),
     )
     analyzer.add_measurement("nematic", NematicOrderParameter())
