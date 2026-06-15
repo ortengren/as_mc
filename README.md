@@ -193,10 +193,11 @@ run_grid(temps=[200, 300, 400], pressures=[1e-6, 1e-5])
 #   orientational_correlation.png
 ```
 
-Or from the command line:
+Or from the command line. The CLI has three subcommands — `equilibrate`,
+`continue-eq`, and `produce` — one per action:
 
 ```bash
-python -m asmcmc.simulation.run --temps 200 300 400 --pressures 1e-6 1e-5
+python -m asmcmc.simulation.run produce --temps 200 300 400 --pressures 1e-6 1e-5
 ```
 
 Pass `--repeat x` (or `repeat=x`) to run `x` replicas with **different initial
@@ -206,11 +207,78 @@ replica lands in its own `rep{i}/` subdir and a cross-replica
 to the point dir:
 
 ```bash
-python -m asmcmc.simulation.run --temps 300 --repeat 5 --seed 0
+python -m asmcmc.simulation.run produce --temps 300 --repeat 5 --seed 0
 # results/simulations/npt_<datetime>/T300_P1e-06/
 #   rep00/ rep01/ … rep04/   (full artifact set each)
 #   summary.json, summary.md  (mean ± std over replicas)
 ```
+
+#### Equilibrate first, then check convergence before production
+
+To verify each grid point has equilibrated (e.g. the cell volume has plateaued)
+*before* committing to expensive production, run the `equilibrate` subcommand,
+then `produce --from` to restart production from those equilibrated configs:
+
+```bash
+# 1. equilibrate every (T, P); writes equilibration.db + trace plots per point
+python -m asmcmc.simulation.run equilibrate --temps 200 300 400 \
+    --out-dir results/simulations/eq_run
+# inspect results/simulations/eq_run/T*/volume_trace.png for a plateau
+
+# 2. start production from each point's final equilibrated frame (production-only)
+python -m asmcmc.simulation.run produce --from results/simulations/eq_run \
+    --temps 200 300 400
+```
+
+`equilibrate` writes `equilibration.db`, `equilibration_config.json`, and the
+trajectory trace PNGs (`volume_trace.png`/`energy_trace.png`/…) per point.
+`produce --from` reuses each point's final frame *and* its tuned trial-move
+widths and runs production-only (no re-equilibration). To render the trace plots
+for any existing db on their own: `python -m asmcmc.simulation.plots <path/to/db>`.
+
+If a point hasn't equilibrated for long enough, **continue the equilibration in
+place** for more steps with `continue-eq`:
+
+```bash
+# add 20k more equilibration steps, appended to the same equilibration.db
+python -m asmcmc.simulation.run continue-eq --from results/simulations/eq_run \
+    --temps 200 300 400 --num-eq-steps 20000
+# the regenerated volume_trace.png now covers the whole combined run
+```
+
+Here `--num-eq-steps` is the number of *additional* steps; the step counter
+continues so the trace plots stay monotonic across the resumed run.
+
+To act on **only some points** (e.g. just the ones that haven't converged), pass
+an explicit `--points` list of `T,P` pairs, which overrides `--temps`/`--pressures`:
+
+```bash
+# continue equilibration only at (200, 1e-6) and (400, 1e-5); other points untouched
+python -m asmcmc.simulation.run continue-eq --from results/simulations/eq_run \
+    --points 200,1e-6 400,1e-5 --num-eq-steps 20000
+```
+
+`--points` works for `produce` too (`points=[(T, P), …]` in `run_grid`/
+`equilibrate_grid`), to run an arbitrary subset of the grid.
+
+`--repeat` works through the whole equilibrate → check → produce workflow. With
+`equilibrate --repeat n` each point gets `n` replicas with different initial
+configs (seeds `seed`, `seed+1`, …) in their own `rep{i}/` subdirs, each with its
+own `equilibration.db` and trace plots to check (and continue) independently.
+Then `produce --from … --repeat n` starts each replica's production from its
+matching `rep{i}/equilibration.db`:
+
+```bash
+# equilibrate 3 replicas per point, check each rep{i}/volume_trace.png
+python -m asmcmc.simulation.run equilibrate --repeat 3 --seed 0 \
+    --temps 200 300 400 --out-dir results/simulations/eq_run
+# run production for all 3 replicas, each resuming its own equilibrated config
+python -m asmcmc.simulation.run produce --from results/simulations/eq_run --repeat 3 --seed 0 \
+    --temps 200 300 400
+```
+
+(Pass the same `--repeat`/`--seed` to the `produce`/`continue-eq` step as to the
+`equilibrate` step.)
 
 ### Drive the sampler directly
 

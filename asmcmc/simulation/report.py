@@ -146,6 +146,11 @@ def run_config(metro, db_path, meta=None):
         "mean_volume": mean_vol,
         "number_density": float(n_particles / mean_vol) if mean_vol > 0 else float("nan"),
     }
+    # how the initial config was built -- one copy per run, not per frame
+    initializer = getattr(metro, "initializer", None)
+    if initializer is not None:
+        config["initializer"] = type(initializer).__name__
+        config.update(initializer.provenance())
     config.update(meta)
     return config
 
