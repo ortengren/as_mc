@@ -3,7 +3,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
 import pytest
-from asmcmc.initialize import generate_random_config, SIGMA0
+from asmcmc.initialize import (
+    generate_random_config,
+    SIGMA0,
+    DEFAULT_N_PARTICLES,
+    DEFAULT_DENSITY,
+    Initializer,
+    RandomLatticeInitializer,
+    FrameInitializer,
+)
+from asmcmc.metropolis import MetropolisCalculator
 
 
 # --- helpers ---
@@ -112,3 +121,76 @@ def test_non_cube_particle_count():
     """N not a perfect cube should still work (SC lattice fills n_side^3, takes first N)."""
     f = generate_random_config(10, density=0.2, seed=0)
     assert f.positions.shape == (10, 3)
+
+
+# --- Initializer classes ---
+
+def test_initializer_is_abstract():
+    """The Initializer base class cannot be instantiated directly."""
+    with pytest.raises(TypeError):
+        Initializer()
+
+
+def test_random_lattice_initializer_generates_valid_frame():
+    init = RandomLatticeInitializer(n_particles=27, density=0.3, seed=0)
+    frame = init.generate()
+    assert frame.positions.shape == (27, 3)
+    assert frame.arrays["c_q"].shape == (27, 4)
+    # volume is recorded onto the initializer after generate()
+    assert init.volume == pytest.approx(frame.get_volume())
+
+
+def test_random_lattice_initializer_defaults():
+    init = RandomLatticeInitializer()
+    assert init.n_particles == DEFAULT_N_PARTICLES
+    assert init.density == DEFAULT_DENSITY
+    assert init.seed is None
+
+
+def test_random_lattice_initializer_matches_generate_random_config():
+    """The initializer is a thin wrapper around generate_random_config."""
+    init = RandomLatticeInitializer(n_particles=27, density=0.3, seed=7)
+    direct = generate_random_config(n_particles=27, density=0.3, seed=7)
+    np.testing.assert_array_equal(init.generate().positions, direct.positions)
+
+
+def test_random_lattice_initializer_provenance():
+    prov = RandomLatticeInitializer(n_particles=27, density=0.3, seed=5).provenance()
+    assert prov == {"init_n_particles": 27, "init_density": 0.3, "init_seed": 5}
+
+
+def test_frame_initializer_wraps_supplied_frame():
+    frame = generate_random_config(27, density=0.3, seed=0)
+    init = FrameInitializer(frame)
+    assert init.generate() is frame
+    assert init.n_particles == 27
+    assert init.volume == pytest.approx(frame.get_volume())
+    assert init.density == pytest.approx(27 / frame.get_volume())
+
+
+# --- MetropolisCalculator frame-source resolution ---
+
+def test_calculator_defaults_to_random_lattice_initializer():
+    mc = MetropolisCalculator(temp=300, pressure=0.0)
+    assert isinstance(mc.initializer, RandomLatticeInitializer)
+
+
+def test_calculator_wraps_init_frame_in_frame_initializer():
+    frame = generate_random_config(27, density=0.3, seed=0)
+    mc = MetropolisCalculator(temp=300, pressure=0.0, init_frame=frame)
+    assert isinstance(mc.initializer, FrameInitializer)
+
+
+def test_calculator_accepts_explicit_initializer():
+    init = RandomLatticeInitializer(n_particles=27, density=0.3, seed=0)
+    mc = MetropolisCalculator(temp=300, pressure=0.0, initializer=init)
+    assert mc.initializer is init
+
+
+def test_calculator_rejects_both_init_frame_and_initializer():
+    frame = generate_random_config(27, density=0.3, seed=0)
+    init = RandomLatticeInitializer(n_particles=27, density=0.3, seed=0)
+    with pytest.raises(ValueError, match="at most one"):
+        MetropolisCalculator(
+            temp=300, pressure=0.0, init_frame=frame, initializer=init
+        )
