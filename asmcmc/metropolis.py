@@ -1,5 +1,6 @@
 import numpy as np
 from tqdm.auto import tqdm
+from asmcmc.config import RunConfig
 from asmcmc.initialize import Initializer, FrameInitializer, RandomLatticeInitializer
 from asmcmc.trial_moves import (
     calc_or_vec,
@@ -89,7 +90,7 @@ class MetropolisCalculator:
         pos_delt=0.15,
         or_delt=0.05,
         vol_delt=0.05,
-        nl_radius=15,
+        nl_radius=15.0,
         nl_skin=1.0,
         output_dir=None,
         npt_ensemble=True,
@@ -105,7 +106,7 @@ class MetropolisCalculator:
         elif initializer is None:
             initializer = RandomLatticeInitializer()
         self.initializer = initializer
-        source = initializer.generate()
+        source = self.initializer.generate()
         self.init_frame = source
 
         # Copy the initial frame to ensure that it is not mutated by the simulation
@@ -120,6 +121,7 @@ class MetropolisCalculator:
         self.current_frame = frame
 
         # Initialize the simulation parameters
+        self.temp = temp
         self.beta = 1 / (temp * BOLTZCONST)
         self.pressure = pressure
         self.current_vol = np.linalg.det(frame.cell)
@@ -150,6 +152,7 @@ class MetropolisCalculator:
             self.output_dir = output_dir
 
         # set up neighborlist
+        self.nl_radius = nl_radius
         self.nl_cutoffs = [nl_radius] * len(self.current_frame)
         self.nl_skin = nl_skin
         self.nl = NeighborList(
@@ -167,6 +170,43 @@ class MetropolisCalculator:
 
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
+
+    @classmethod
+    def from_equilibration(
+        cls, output_dir, db_name="equilibration.db", config_name="run_config.json"
+    ):
+        """Rebuild a calculator from an equilibration run so it can be continued.
+
+        Static run definition (temp, pressure, ensemble, neighborlist, potential) comes
+        from ``{output_dir}/{config_name}``.  Evolving state (latest frame, tuned move
+        widths, step count) comes from the last entry of ``{output_dir}/{db_name}``.
+        Continuing the equilibration appends to the db.
+        """
+        cfg = RunConfig.load(os.path.join(output_dir, config_name))
+
+        db = connect(os.path.join(output_dir, db_name))
+        row = db.get(
+            db.count()  # rows are written in order so the last id is the most recent
+        )
+        frame = row.toatoms()  # records positions, cell, PBC only
+        frame.new_array("c_q", np.asarray(row.data["c_q"]))
+        frame.new_array("or_vec", np.asarray(row.data["or_vec"]))
+
+        metro = cls(
+            temp=cfg.temp,
+            pressure=cfg.pressure,
+            init_frame=frame,
+            potential=cfg.build_potential(),
+            pos_delt=row.pos_delta,  # db columns are *_delta; constructor args are *_delt
+            or_delt=row.or_delta,
+            vol_delt=row.vol_delta,
+            nl_radius=cfg.nl_radius,
+            nl_skin=cfg.nl_skin,
+            output_dir=output_dir,
+            npt_ensemble=cfg.npt_ensemble,
+        )
+        metro.step_count = row.step
+        return metro
 
     def calc_energy(self, center_idx):
         """Calculate the energy of particle at index `center_idx`."""
@@ -461,6 +501,14 @@ class MetropolisCalculator:
                 self.vol_delt = min(self.vol_delt, 0.5)  # cap to keep s_v positive
         return buffer
 
+    def _write_config(self, run=None):
+        path = os.path.join(self.output_dir, "run_config.json")
+        # Only write the config if it doesn't already exist in order to not overwrite
+        # the original config when resuming
+        if os.path.exists(path):
+            return
+        RunConfig.from_calculator(self, run=run).save(path)
+
     def equilibrate(
         self,
         num_steps,
@@ -472,6 +520,16 @@ class MetropolisCalculator:
         min_scale=0.9,
     ):
         """Perform an equilibration of the simulation."""
+
+        self._write_config(
+            run={
+                "kind": "equilibration",
+                "num_steps": num_steps,
+                "block_size": block_size,
+                "buffer_size": buffer_size,
+                "dynamic_delta": dynamic_delta,
+            }
+        )
 
         window = block_size // 2
 
@@ -500,16 +558,13 @@ class MetropolisCalculator:
                         min_scale=min_scale,
                     )
 
-        # update state
-        self.equilibrated = True
-        self.step_count = 0
-        self.current_frame.info["step"] = 0
-
         # write any frames left in buffer
         if len(buffer) > 0:
             with connect(db_file) as db:
                 for triplet in buffer:
                     db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
+
+        self.equilibrated = True
 
     def calculate_trajectory(
         self,
@@ -540,6 +595,17 @@ class MetropolisCalculator:
             self.pos_decisions = []
             self.or_decisions = []
             self.vol_decisions = []
+        else:
+            self._write_config(
+                run={
+                    "kind": "simulation",
+                    "num_steps": num_steps,
+                    "block_size": block_size,
+                    "buffer_size": buffer_size,
+                }
+            )
+        self.step_count = 0
+        self.current_frame.info["step"] = 0
         window = block_size // 2
 
         # initialize buffer

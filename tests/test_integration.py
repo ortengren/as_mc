@@ -99,13 +99,13 @@ def test_simulation_db_created(four_particle_frame, tmp_path):
         assert np.isfinite(row.key_value_pairs["total_energy"])
 
 
-def test_equilibration_resets_state(four_particle_frame, tmp_path):
-    """After equilibrate(): equilibrated=True, step_count=0, db written."""
+def test_equilibration_marks_equilibrated_and_keeps_step_count(four_particle_frame, tmp_path):
+    """After equilibrate(): equilibrated=True, step_count == num_steps (re-entrant), db written."""
     metro = make_metro(four_particle_frame, tmp_path)
     metro.equilibrate(num_steps=300, block_size=100, buffer_size=50)
 
     assert metro.equilibrated is True
-    assert metro.step_count == 0
+    assert metro.step_count == 300
 
     db_path = str(tmp_path / "sim" / "equilibration.db")
     assert os.path.exists(db_path), "equilibration.db was not created"
@@ -162,3 +162,79 @@ def test_trajectory_analyzer_on_output(four_particle_frame, tmp_path):
     mean_e, var_e = results["energy"]
     assert np.isfinite(mean_e), f"Mean energy is not finite: {mean_e}"
     assert np.isfinite(var_e),  f"Energy variance is not finite: {var_e}"
+
+
+# ---------------------------------------------------------------------------
+# Resume from equilibration (RunConfig + from_equilibration)
+# ---------------------------------------------------------------------------
+
+def test_from_equilibration_restores_state(four_particle_frame, tmp_path):
+    """from_equilibration rebuilds the static definition + the last db frame/deltas/step."""
+    metro = make_metro(four_particle_frame, tmp_path)
+    metro.equilibrate(num_steps=200, block_size=50, buffer_size=10)
+
+    out = str(tmp_path / "sim")
+    db = connect(out + "/equilibration.db")
+    row = db.get(db.count())
+
+    resumed = MetropolisCalculator.from_equilibration(out)
+
+    # static run definition (from run_config.json)
+    assert resumed.temp == metro.temp
+    assert resumed.pressure == metro.pressure
+    assert resumed.npt_ensemble == metro.npt_ensemble
+    assert resumed.nl_radius == metro.nl_radius
+    assert resumed.nl_skin == metro.nl_skin
+    assert resumed.potential == metro.potential
+
+    # evolving state (from the last db row)
+    np.testing.assert_allclose(resumed.current_frame.positions, row.toatoms().positions)
+    np.testing.assert_allclose(resumed.current_frame.arrays["c_q"], np.asarray(row.data["c_q"]))
+    np.testing.assert_allclose(
+        resumed.current_frame.arrays["or_vec"], np.asarray(row.data["or_vec"])
+    )
+    assert (resumed.pos_delt, resumed.or_delt, resumed.vol_delt) == (
+        row.pos_delta, row.or_delta, row.vol_delta
+    )
+    assert resumed.step_count == row.step
+
+
+def test_from_equilibration_appends_and_continues(four_particle_frame, tmp_path):
+    """Continuing a resumed run appends to the same db with a monotonic step axis."""
+    metro = make_metro(four_particle_frame, tmp_path)
+    metro.equilibrate(num_steps=200, block_size=50, buffer_size=10)
+
+    db_path = str(tmp_path / "sim" / "equilibration.db")
+    db = connect(db_path)
+    before = db.count()
+    last_step = db.get(before).step
+
+    resumed = MetropolisCalculator.from_equilibration(str(tmp_path / "sim"))
+    resumed.equilibrate(num_steps=last_step + 200, block_size=50, buffer_size=10)
+
+    steps = [r.step for r in connect(db_path).select()]
+    assert len(steps) > before            # rows were appended, not replaced
+    assert max(steps) == last_step + 200  # continued past the original target
+    assert steps == sorted(steps)         # continuous, monotonic step axis
+
+
+def test_from_equilibration_preserves_run_config(four_particle_frame, tmp_path):
+    """Resuming must not clobber the original run's run_config.json (write-once)."""
+    metro = make_metro(four_particle_frame, tmp_path)
+    metro.equilibrate(num_steps=100, block_size=50, buffer_size=10)
+    cfg_path = tmp_path / "sim" / "run_config.json"
+    original = cfg_path.read_text()
+
+    resumed = MetropolisCalculator.from_equilibration(str(tmp_path / "sim"))
+    resumed.equilibrate(num_steps=300, block_size=50, buffer_size=10)
+
+    assert cfg_path.read_text() == original
+
+
+def test_equilibrate_is_reentrant(four_particle_frame, tmp_path):
+    """A bare equilibrate leaves step_count == num_steps and continues on re-call."""
+    metro = make_metro(four_particle_frame, tmp_path)
+    metro.equilibrate(num_steps=100, block_size=50, buffer_size=10)
+    assert metro.step_count == 100
+    metro.equilibrate(num_steps=200, block_size=50, buffer_size=10)  # 100 more, not 200
+    assert metro.step_count == 200
