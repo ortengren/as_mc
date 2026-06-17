@@ -3,7 +3,7 @@ import json
 import numpy as np
 from abc import ABC, abstractmethod
 from ase.neighborlist import neighbor_list
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from numpy import linalg as la
 from pathlib import Path
 import pandas as pd
@@ -191,6 +191,18 @@ class GBQPotential(Potential):
         gb_e = gb(uhat1, uhat2, r, *self.gb_args)
         qq_e = np.squeeze(quadrupole(uhat1, uhat2, r, self.Q))
         return gb_e + qq_e
+
+    def to_dict(self):
+        return {"type": "GBQPotential", **asdict(self)}
+
+
+_POTENTIALS = {"GBQPotential": GBQPotential}
+
+
+def potential_from_dict(d):
+    d = dict(d)
+    cls = _POTENTIALS[d.pop("type")]
+    return cls(**d)
 
 
 # Resolve the default potential relative to this file (not the cwd) so imports
