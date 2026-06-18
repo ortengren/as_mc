@@ -140,7 +140,7 @@ class Potential(ABC):
     name: str
 
     @abstractmethod
-    def pair_energy(self, uhat1, uhat2, r):
+    def pair_energy(self, uhat1, uhat2, r) -> np.ndarray:
         """Per-pair energies for orientations ``uhat1``/``uhat2`` and
         displacement vectors ``r`` (callers sum over the returned array)."""
 

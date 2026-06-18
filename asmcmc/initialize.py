@@ -9,7 +9,7 @@ from asmcmc.trial_moves import calc_or_vec
 SIGMA0 = GB_PARAMS["sigma0"]
 
 DEFAULT_N_PARTICLES = 210
-DEFAULT_DENSITY = 0.3
+DEFAULT_DENSITY = 0.6
 
 
 class Initializer(ABC):
@@ -35,7 +35,9 @@ class Initializer(ABC):
     def provenance(self):
         """Compact, JSON-serialisable record of how the frame was built."""
         return {
-            "init_n_particles": None if self.n_particles is None else int(self.n_particles),
+            "init_n_particles": (
+                None if self.n_particles is None else int(self.n_particles)
+            ),
             "init_density": None if self.density is None else float(self.density),
             "init_seed": self.seed,
         }
