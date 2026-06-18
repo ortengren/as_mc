@@ -22,6 +22,15 @@ BOLTZCONST = 8.617e-5  # eV / K
 
 TARGET_ACC_RATE = 0.275
 
+# Bounds on the adaptive volume-move width. vol_delt is now the half-width of a
+# log-uniform volume scaling (s_v = exp(U(-vol_delt, vol_delt))), so s_v is always
+# positive regardless of vol_delt; the cap is just a sanity bound on the per-move
+# volume change. The lower floor stops a run of rejected volume moves from
+# shrinking vol_delt toward zero (e.g. ~1e-83), which freezes the box and turns
+# NPT into NVT at the starting density.
+MAX_VOL_DELT = 0.5
+MIN_VOL_DELT = 1e-3
+
 
 def generate_simulation_id(method="datetime"):
     """Generate an ID for the simulation."""
@@ -145,6 +154,11 @@ class MetropolisCalculator:
         # whether to attempt volume moves (NPT); set False for NVT
         self.npt_ensemble = npt_ensemble
 
+        # index into vol_decisions marking the start of the fresh (not-yet-tuned-on)
+        # block of volume moves; vol_delt is adapted on a window of these rather
+        # than every block, since volume moves are ~N× rarer than pos/or moves.
+        self._vol_tune_idx = 0
+
         # auto generate traj file name if needed
         if output_dir is None:
             self.output_dir = f"results/simulations/{generate_simulation_id()}"
@@ -173,7 +187,11 @@ class MetropolisCalculator:
 
     @classmethod
     def from_equilibration(
-        cls, output_dir, db_name="equilibration.db", config_name="run_config.json"
+        cls,
+        output_dir,
+        db_name="equilibration.db",
+        config_name="run_config.json",
+        vol_delt=None,
     ):
         """Rebuild a calculator from an equilibration run so it can be continued.
 
@@ -181,6 +199,11 @@ class MetropolisCalculator:
         from ``{output_dir}/{config_name}``.  Evolving state (latest frame, tuned move
         widths, step count) comes from the last entry of ``{output_dir}/{db_name}``.
         Continuing the equilibration appends to the db.
+
+        ``vol_delt`` overrides the volume move width carried in the last db row. The
+        default (``None``) keeps the tuned value; pass a float to reset it — useful
+        when an old run's ``vol_delt`` is far off (e.g. pinned at ``MAX_VOL_DELT``)
+        and the gated tuner would take many windows to crawl back from it.
         """
         cfg = RunConfig.load(os.path.join(output_dir, config_name))
 
@@ -199,7 +222,7 @@ class MetropolisCalculator:
             potential=cfg.build_potential(),
             pos_delt=row.pos_delta,  # db columns are *_delta; constructor args are *_delt
             or_delt=row.or_delta,
-            vol_delt=row.vol_delta,
+            vol_delt=row.vol_delta if vol_delt is None else vol_delt,
             nl_radius=cfg.nl_radius,
             nl_skin=cfg.nl_skin,
             output_dir=output_dir,
@@ -422,21 +445,54 @@ class MetropolisCalculator:
         # wrap particles to simulation box
         self.current_frame.wrap()
 
+        # Re-sync the running energy to a full recompute. ``current_energy`` is
+        # otherwise tracked incrementally (per-particle deltas on accepted
+        # position/orientation moves) and is only reset on accepted volume
+        # moves; small per-move inconsistencies accumulate into a drift of order
+        # eV over a long run. Recomputing once per block (cheap next to a block
+        # of single-particle steps) keeps the recorded energy exact and removes
+        # the discontinuity seen when a resumed run recomputes from scratch.
+        self.current_energy = calc_total_energy(
+            self.current_frame, self.nl_cutoffs, potential=self.potential
+        )
+        self.current_frame.info["total_energy"] = self.current_energy
+
         # record acceptance rates for most recent block
         if len(self.pos_decisions) < window:
-            pos_acc_rate = np.mean(self.pos_decisions[1:])
+            pos_acc_rate = np.mean(self.pos_decisions)
         else:
             pos_acc_rate = np.mean(self.pos_decisions[-window:])
+
         if len(self.or_decisions) < window:
-            or_acc_rate = np.mean(self.or_decisions[1:])
+            or_acc_rate = np.mean(self.or_decisions)
         else:
             or_acc_rate = np.mean(self.or_decisions[-window:])
-        if not self.npt_ensemble:
-            vol_acc_rate = float("nan")  # no volume moves attempted in NVT
+
+        # Record a rolling volume acceptance rate every block for diagnostics.
+        # (Kept separate from the tuning below so the db has a continuous trace
+        # even on blocks that don't tune and during production.)
+        if not self.npt_ensemble or len(self.vol_decisions) == 0:
+            vol_acc_rate = float("nan")  # NVT, or no volume moves attempted yet
         elif len(self.vol_decisions) < window:
-            vol_acc_rate = np.mean(self.vol_decisions[1:])
+            vol_acc_rate = np.mean(self.vol_decisions)
         else:
             vol_acc_rate = np.mean(self.vol_decisions[-window:])
+
+        # Adapt vol_delt only once `window` *fresh* volume moves have accrued since
+        # the last update. Volume moves occur ~1/N as often as pos/or moves, so
+        # updating every block would tune on a few stale, overlapping samples (and
+        # chase noise); gating on a non-overlapping fresh window gives a
+        # low-variance estimate of the current delta's acceptance.
+        if self.npt_ensemble and dynamic_delta:
+            fresh_moves = self.vol_decisions[self._vol_tune_idx :]
+            if len(fresh_moves) >= window:
+                fresh_acc = np.mean(fresh_moves)
+                if fresh_acc > 0.35:
+                    self.vol_delt *= min(max_scale, fresh_acc / TARGET_ACC_RATE)
+                elif fresh_acc < 0.20:
+                    self.vol_delt *= max(min_scale, fresh_acc / TARGET_ACC_RATE)
+                self.vol_delt = min(max(self.vol_delt, MIN_VOL_DELT), MAX_VOL_DELT)
+                self._vol_tune_idx = len(self.vol_decisions)
 
         # update frame info
         scalar_data = {
@@ -465,7 +521,7 @@ class MetropolisCalculator:
         buffer.append((self.current_frame.copy(), scalar_data, array_data))
         if len(buffer) >= buffer_size:
             # write to database
-            with connect(db_file) as db:
+            with connect(db_file) as db:  # type: ignore  # Pylance false positive
                 for triplet in buffer:
                     db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
             # clear buffer
@@ -490,15 +546,6 @@ class MetropolisCalculator:
                 scale_amt = max((min_scale, or_acc_rate / TARGET_ACC_RATE))
                 self.or_delt *= scale_amt
 
-            # update volume delta (NPT only)
-            if self.npt_ensemble:
-                if vol_acc_rate > 0.35:
-                    scale_amt = min((max_scale, vol_acc_rate / TARGET_ACC_RATE))
-                    self.vol_delt *= scale_amt
-                elif vol_acc_rate < 0.20:
-                    scale_amt = max((min_scale, vol_acc_rate / TARGET_ACC_RATE))
-                    self.vol_delt *= scale_amt
-                self.vol_delt = min(self.vol_delt, 0.5)  # cap to keep s_v positive
         return buffer
 
     def _write_config(self, run=None):
@@ -560,7 +607,7 @@ class MetropolisCalculator:
 
         # write any frames left in buffer
         if len(buffer) > 0:
-            with connect(db_file) as db:
+            with connect(db_file) as db:  # type: ignore  # Pylance false positive
                 for triplet in buffer:
                     db.write(triplet[0], key_value_pairs=triplet[1], data=triplet[2])
 
@@ -595,6 +642,7 @@ class MetropolisCalculator:
             self.pos_decisions = []
             self.or_decisions = []
             self.vol_decisions = []
+            self._vol_tune_idx = 0
         else:
             self._write_config(
                 run={
@@ -633,7 +681,7 @@ class MetropolisCalculator:
 
             # write any frames left in buffer
             if len(buffer) > 0:
-                with connect(db_file) as db:
+                with connect(db_file) as db:  # type: ignore  # Pylance false positive
                     for triplet in buffer:
                         db.write(
                             triplet[0], key_value_pairs=triplet[1], data=triplet[2]

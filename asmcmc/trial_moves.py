@@ -56,11 +56,11 @@ def calculate_quat_move(quat, delta):
     return new_quat
 
 
-# TODO: Test that new_vol matches determinant of new cell axes
 def calculate_vol_move(cell, curr_vol, delta):
-    # calculate random volume scaling factor uniformly in [1 - delta, 1 + delta]
-    s_v = 1 + rand.uniform(-delta, delta)
-    s_v = max(s_v, 1e-8)  # prevent complex cube root if vol_delt exceeds 1
+    # log-uniform volume scaling: ln(s_v) ~ U(-delta, delta), so the proposal is
+    # symmetric in ln(V). This matches the (N+1)*ln(V'/V) term in npt_decide_accept
+    # (which is derived for ln-volume sampling) and keeps s_v > 0 for any delta.
+    s_v = np.exp(rand.uniform(-delta, delta))
     # calculate amount to scale cell axes by
     s_l = s_v ** (1 / 3)
     new_cell = s_l * cell
