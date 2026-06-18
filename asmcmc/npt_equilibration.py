@@ -287,14 +287,18 @@ def _evaluate_point(k, temp, pressure, cfg, r=0):
     return k, output_dir
 
 
-def plot_point_results(output_dir, db_name="equilibration.db"):
+def plot_point_results(
+    output_dir, db_name="equilibration.db", png_name="equilibration_diagnostics.png"
+):
     """Per-point convergence diagnostics: total energy and volume versus step,
-    read back from the point's ``equilibration.db``.
+    read back from the point's ``db_name``.
 
     The visual equilibration check for one (T, P) point — flat energy and volume
     tails mean the point has relaxed and is equilibrated enough to resume /
-    sample from. Writes ``equilibration_diagnostics.png`` into ``output_dir`` and
-    returns its path.
+    sample from. Writes ``png_name`` into ``output_dir`` and returns its path.
+    (``db_name``/``png_name`` are parameterised so the same plot can render a
+    production trajectory's ``simulation.db`` without clobbering the equilibration
+    diagnostics.)
     """
     steps, energy, vol = [], [], []
     with connect(os.path.join(output_dir, db_name)) as db:  # type: ignore  # Pylance false positive
@@ -313,7 +317,7 @@ def plot_point_results(output_dir, db_name="equilibration.db"):
         ax.grid(True, alpha=0.3)
     fig.suptitle(os.path.relpath(output_dir))
     fig.tight_layout()
-    png = os.path.join(output_dir, "equilibration_diagnostics.png")
+    png = os.path.join(output_dir, png_name)
     fig.savefig(png, dpi=150)
     plt.close(fig)
     return png
