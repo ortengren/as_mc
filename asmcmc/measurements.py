@@ -87,44 +87,45 @@ class RadialDistributionFunction(Measurement):
 
         self.bin_edges = np.linspace(0, r_max, num_bins + 1)
         self.bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2.0
+        self.shell_vols = (4.0 / 3.0) * np.pi * (
+            self.bin_edges[1:] ** 3 - self.bin_edges[:-1] ** 3
+        )
 
+        # counts and their ideal-gas expectation are both accumulated per frame
+        # so a fluctuating (NPT) box normalises correctly bin-by-bin
         self.hist_counts = np.zeros(num_bins)
+        self.ideal_counts = np.zeros(num_bins)
         self.num_frames = 0
-        self.total_volume = 0.0
-        self.total_particles = 0
 
     def compute(self, frame, scalar_data, array_data):
-        # update running totals
         self.num_frames += 1
-        self.total_particles += len(frame)
-        self.total_volume += frame.get_volume()
+        n = len(frame)
 
-        # get distances between unique pairs
+        # The minimum-image convention only resolves separations out to half the
+        # shortest box length; past that a spherical shell is no longer fully
+        # contained in the cell, the histogram under-counts, and g(r) sags below
+        # 1. The box floats in NPT, so cap each frame at its own L/2 and keep
+        # only bins lying entirely inside it (others stay at their running value).
+        half_box = frame.cell.lengths().min() / 2.0
+        valid = self.bin_edges[1:] <= half_box
+
         dist_matrix = frame.get_all_distances(mic=True)
-        i, j = np.triu_indices(len(frame), k=1)
-        unique_distances = dist_matrix[i, j]
+        i, j = np.triu_indices(n, k=1)
+        counts, _ = np.histogram(dist_matrix[i, j], bins=self.bin_edges)
+        self.hist_counts += np.where(valid, counts, 0)
 
-        # update histogram
-        counts, _ = np.histogram(unique_distances, bins=self.bin_edges)
-        self.hist_counts += counts
+        # ideal-gas expectation for unique pairs in each shell, with THIS frame's
+        # density: N(N-1)/2 pairs each in the shell with probability shell/V
+        density = n / frame.get_volume()
+        ideal = (n - 1) / 2.0 * density * self.shell_vols
+        self.ideal_counts += np.where(valid, ideal, 0.0)
 
     def finalize(self):
-        avg_vol = self.total_volume / self.num_frames
-        avg_particles = self.total_particles / self.num_frames
-        density = avg_particles / avg_vol
-
-        # get volumes of each spherical shell
-        r_inner = self.bin_edges[:-1]
-        r_outer = self.bin_edges[1:]
-        shell_vols = (4.0 / 3.0) * np.pi * (r_outer**3 - r_inner**3)
-
-        # calculate expected counts for ideal gas
-        ideal_counts = (avg_particles / 2.0) * self.num_frames * density * shell_vols
-
-        # normalize
         g_r = np.zeros_like(self.hist_counts)
-        np.divide(self.hist_counts, ideal_counts, out=g_r, where=(ideal_counts > 0))
-
+        np.divide(
+            self.hist_counts, self.ideal_counts, out=g_r,
+            where=(self.ideal_counts > 0),
+        )
         return {
             "r": self.bin_centers,
             "g_r": g_r,
@@ -238,6 +239,89 @@ class HeatCapacity(Measurement):
         cv_ideal = 3 * BOLTZCONST
         cv_excess = e_var / (BOLTZCONST * self.num_particles * self.temp**2)
         return cv_ideal + cv_excess
+
+
+def integrated_autocorr_time(x):
+    """Integrated autocorrelation time tau of a 1-D series.
+
+        tau = 1 + 2 * sum_{k>=1} rho_k
+
+    where rho_k is the normalised autocorrelation at lag k. The autocovariance
+    is computed via FFT (O(M log M)); the sum is truncated at the first
+    non-positive rho_k (Geyer's "initial positive sequence"), which stops the
+    noisy long-lag tail from accumulating. tau >= 1 always; tau = 1 for an
+    uncorrelated series.
+    """
+    x = np.asarray(x, dtype=float)
+    n = len(x)
+    x = x - x.mean()
+    if n < 2 or np.dot(x, x) == 0.0:
+        return 1.0
+    # autocovariance via the Wiener-Khinchin theorem (zero-pad to avoid wrap)
+    f = np.fft.rfft(x, n=2 * n)
+    acf = np.fft.irfft(f * np.conjugate(f))[:n].real
+    acf /= acf[0]  # normalise so rho_0 = 1
+    tau = 1.0
+    for k in range(1, n):
+        if acf[k] <= 0.0:
+            break
+        tau += 2.0 * acf[k]
+    return tau
+
+
+class EffectiveSampleSize(Measurement):
+    """Effective number of independent samples for a per-frame scalar.
+
+    MCMC frames are serially correlated, so M stored frames are worth fewer than
+    M independent draws. With the integrated autocorrelation time tau (see
+    ``integrated_autocorr_time``),
+
+        ESS = M / tau
+
+    ``observable`` selects the scalar tracked each frame: pass a string to read
+    ``scalar_data[observable]`` (e.g. ``"total_energy"``, ``"vol"``), or a
+    callable ``(frame, scalar_data, array_data) -> float`` for derived
+    quantities (e.g. the per-frame nematic S). finalize() returns a dict:
+
+        ess          M / tau, the effective sample size
+        tau          integrated autocorrelation time
+        num_samples  M, the number of frames seen
+        mean, std    sample mean and standard deviation of the observable
+        sem          standard error of the mean, std / sqrt(ess); a 95% CI on
+                     ``mean`` is mean +/- 1.96 * sem
+
+    SEM uses ESS (not M) because serial correlation inflates the variance of the
+    mean from sigma^2 / M to sigma^2 / ESS. Valid for a *stationary* series and
+    for the mean itself; for nonlinear observables (heat capacity, ratios) block
+    bootstrap/jackknife the trajectory instead.
+    """
+
+    def __init__(self, observable):
+        super().__init__()
+        self.observable = observable
+        self.values = []
+
+    def compute(self, frame, scalar_data, array_data):
+        if callable(self.observable):
+            v = self.observable(frame, scalar_data, array_data)
+        else:
+            v = scalar_data[self.observable]
+        self.values.append(float(v))
+
+    def finalize(self):
+        x = np.asarray(self.values, dtype=float)
+        m = len(x)
+        tau = integrated_autocorr_time(x)
+        ess = m / tau
+        std = float(x.std()) if m else float("nan")
+        return {
+            "ess": ess,
+            "tau": tau,
+            "num_samples": m,
+            "mean": float(x.mean()) if m else float("nan"),
+            "std": std,
+            "sem": std / np.sqrt(ess) if m else float("nan"),
+        }
 
 
 class TrajectoryAnalyzer:
