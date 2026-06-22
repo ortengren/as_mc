@@ -96,7 +96,27 @@ def test_vol_move_scale_factor_bounded():
     for _ in range(200):
         new_cell, _ = calculate_vol_move(cell, old_vol, delta)
         s_v = np.linalg.det(new_cell) / old_vol
-        assert 1 - delta - 1e-12 <= s_v <= 1 + delta + 1e-12
+        assert np.exp(-delta) - 1e-12 <= s_v <= np.exp(delta) + 1e-12
+
+
+def test_vol_move_log_uniform_and_symmetric():
+    """ln(V'/V) is uniform on [-delta, delta] and symmetric about 0.
+
+    Symmetry in ln(V) is the detailed-balance requirement for the (N+1)*ln(V'/V)
+    acceptance criterion in npt_decide_accept; an asymmetric proposal (e.g. the old
+    uniform-in-V move) would need a Hastings correction and biases the volume.
+    """
+    cell = np.diag([10., 10., 10.])
+    old_vol = np.linalg.det(cell)
+    delta = 0.3
+    log_ratios = np.array([
+        np.log(calculate_vol_move(cell, old_vol, delta)[1] / old_vol)
+        for _ in range(20000)
+    ])
+    assert np.all(np.abs(log_ratios) <= delta + 1e-12)
+    assert abs(log_ratios.mean()) < 0.02          # symmetric about 0
+    assert log_ratios.min() < -0.9 * delta        # spans the full window
+    assert log_ratios.max() > 0.9 * delta
 
 
 def test_vol_move_volume_consistent():

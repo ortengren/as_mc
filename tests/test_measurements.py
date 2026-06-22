@@ -12,6 +12,8 @@ from asmcmc.measurements import (
     NematicOrderParameter,
     nematic_q_tensor,
     HeatCapacity,
+    EffectiveSampleSize,
+    integrated_autocorr_time,
     BOLTZCONST,
 )
 from asmcmc.metropolis import npt_decide_accept
@@ -120,6 +122,68 @@ def test_rdf_normalization_ideal_gas():
     bulk = g_r[(r > 4) & (r < 14)]
     assert len(bulk) > 0
     np.testing.assert_allclose(np.mean(bulk), 1.0, atol=0.2)
+
+
+def test_rdf_tail_converges_to_one_fluctuating_box():
+    """With an NPT-style floating box, g(r) must still converge to 1 in the bulk
+    and not sag at large r (the mic-beyond-L/2 bug). r_max is deliberately set
+    above L/2 for the smaller frames; those bins must be excluded, not droop."""
+    rng = np.random.default_rng(0)
+    n = 64
+    m = RadialDistributionFunction(r_max=24.0, num_bins=48)
+    for _ in range(40):
+        box = rng.uniform(36.0, 44.0)  # box floats, sometimes L/2 < r_max
+        positions = rng.uniform(0, box, size=(n, 3))
+        frame = ase.Atoms(
+            symbols="H" * n,
+            positions=positions,
+            cell=np.diag([box, box, box]),
+            pbc=True,
+        )
+        m.compute(frame, {}, {})
+    r, g_r = m.finalize()["r"], m.finalize()["g_r"]
+    tail = g_r[(r > 6) & (r < 17)]  # bulk, inside the smallest L/2 = 18
+    assert len(tail) > 0
+    np.testing.assert_allclose(np.mean(tail), 1.0, atol=0.1)
+
+
+def test_integrated_autocorr_time_iid_is_one():
+    rng = np.random.default_rng(1)
+    x = rng.standard_normal(20000)
+    assert abs(integrated_autocorr_time(x) - 1.0) < 0.3
+
+
+def test_integrated_autocorr_time_constant_series():
+    assert integrated_autocorr_time(np.full(100, 3.0)) == 1.0
+
+
+def test_ess_iid_matches_sample_count():
+    rng = np.random.default_rng(2)
+    m = EffectiveSampleSize("v")
+    n = 5000
+    for x in rng.standard_normal(n):
+        m.compute(None, {"v": x}, None)
+    res = m.finalize()
+    assert res["num_samples"] == n
+    assert 0.6 * n < res["ess"] <= n  # near-independent draws
+    # for ~iid data SEM should match the textbook std/sqrt(M) within ~tau
+    np.testing.assert_allclose(res["sem"], res["std"] / np.sqrt(res["ess"]))
+    assert abs(res["sem"] - res["std"] / np.sqrt(n)) < 0.2 * res["sem"]
+
+
+def test_ess_correlated_series_below_sample_count():
+    """An AR(1) walk is strongly autocorrelated, so ESS << M and tau > 1."""
+    rng = np.random.default_rng(3)
+    n, phi = 4000, 0.9
+    x = np.zeros(n)
+    for k in range(1, n):
+        x[k] = phi * x[k - 1] + rng.standard_normal()
+    m = EffectiveSampleSize(lambda f, s, a: s["x"])
+    for v in x:
+        m.compute(None, {"x": v}, None)
+    res = m.finalize()
+    assert res["tau"] > 5.0
+    assert res["ess"] < n / 5.0
 
 
 # --- OrientationalCorrelationFunction ---

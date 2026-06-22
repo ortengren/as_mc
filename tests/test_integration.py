@@ -6,8 +6,15 @@ import ase
 import pytest
 from ase.db import connect
 
-from asmcmc.metropolis import MetropolisCalculator
+from asmcmc.metropolis import (
+    MetropolisCalculator,
+    MIN_VOL_DELT,
+    MAX_VOL_DELT,
+    BOLTZCONST,
+    npt_decide_accept,
+)
 from asmcmc.potentials import calc_total_energy
+from asmcmc.trial_moves import calculate_vol_move
 from asmcmc.measurements import TrajectoryAnalyzer, AverageEnergy
 
 
@@ -144,6 +151,184 @@ def test_volume_tracking_consistent(four_particle_frame, tmp_path):
     )
 
 
+def test_recorded_energy_matches_recompute(four_particle_frame, tmp_path):
+    """Every recorded total_energy must equal a fresh recompute of its frame.
+
+    block_update re-syncs current_energy to calc_total_energy, so the energy
+    written to the db is exact and never carries accumulated incremental drift.
+    This is what keeps a resumed run (which recomputes from scratch) from
+    showing an energy discontinuity at the resume step.
+    """
+    metro = make_metro(four_particle_frame, tmp_path)
+    metro.equilibrate(num_steps=1000, block_size=50, buffer_size=1, progress=False)
+
+    db_path = str(tmp_path / "sim" / "equilibration.db")
+    with connect(db_path) as db:
+        rows = list(db.select())
+    assert len(rows) > 0
+
+    for row in rows:
+        frame = row.toatoms()
+        frame.new_array("c_q", np.asarray(row.data["c_q"]))
+        frame.new_array("or_vec", np.asarray(row.data["or_vec"]))
+        recomputed = calc_total_energy(
+            frame, [metro.nl_radius] * len(frame), potential=metro.potential
+        )
+        np.testing.assert_allclose(
+            row.total_energy, recomputed, rtol=1e-6, atol=1e-9,
+            err_msg=f"recorded energy at step {row.step} drifted from recompute",
+        )
+
+
+def test_resume_has_no_energy_jump(four_particle_frame, tmp_path):
+    """The last energy before a resume matches the first one after it.
+
+    With the per-block resync, from_equilibration's fresh recompute agrees with
+    the stored value, so the trajectory is continuous across the resume.
+    """
+    metro = make_metro(four_particle_frame, tmp_path)
+    metro.equilibrate(num_steps=500, block_size=50, buffer_size=1, progress=False)
+    last_step = metro.step_count
+
+    resumed = MetropolisCalculator.from_equilibration(str(tmp_path / "sim"))
+    np.testing.assert_allclose(
+        resumed.current_energy, metro.current_energy, rtol=1e-6, atol=1e-9,
+        err_msg="energy jumped across resume — incremental drift was not re-synced",
+    )
+    assert resumed.step_count == last_step
+
+
+def test_vol_delt_floored_on_rejected_volume_moves(four_particle_frame, tmp_path):
+    """A run of rejected volume moves must not shrink vol_delt below the floor."""
+    metro = make_metro(four_particle_frame, tmp_path, vol_delt=MIN_VOL_DELT)
+    # all moves rejected ⇒ acc rate 0 ⇒ dynamic_delta tries to shrink vol_delt
+    window = 50
+    metro.pos_decisions = [0] * (window + 1)
+    metro.or_decisions = [0] * (window + 1)
+
+    db_file = str(tmp_path / "sim" / "equilibration.db")
+    for _ in range(20):
+        # feed a fresh window of rejected volume moves each block so the gated
+        # tuner fires and repeatedly tries to shrink vol_delt
+        metro.vol_decisions += [0] * window
+        metro.block_update(window, [], db_file, dynamic_delta=True, buffer_size=1)
+
+    assert metro.vol_delt >= MIN_VOL_DELT
+
+
+# ---------------------------------------------------------------------------
+# Volume-move (delta) tuning: log-uniform proposal + gated adaptation
+# ---------------------------------------------------------------------------
+
+def test_acceptance_decreases_with_vol_delta(four_particle_frame, tmp_path):
+    """The log-uniform proposal paired with the (N+1) criterion gives a
+    monotonically decreasing acceptance(delta) — i.e. a unique well-defined
+    optimum for the tuner to converge to. (The old uniform-in-V proposal made
+    this flat/rising, so the tuner had no fixed point.)"""
+    metro = make_metro(four_particle_frame, tmp_path)
+    frame = metro.current_frame
+    nl, pot = metro.nl_cutoffs, metro.potential
+    beta = 1.0 / (BOLTZCONST * 300)
+    n = len(frame)
+    old_vol = frame.get_volume()
+    old_en = calc_total_energy(frame, nl, potential=pot)
+
+    def mean_acceptance(delta, trials=400):
+        accepts = 0
+        for _ in range(trials):
+            new_cell, new_vol = calculate_vol_move(frame.get_cell(), old_vol, delta)
+            cand = frame.copy()
+            cand.set_cell(new_cell, scale_atoms=True)
+            new_en = calc_total_energy(cand, nl, potential=pot)
+            if npt_decide_accept(old_en, new_en, old_vol, new_vol, beta, 0.0, n):
+                accepts += 1
+        return accepts / trials
+
+    acc_small = mean_acceptance(0.02)
+    acc_large = mean_acceptance(0.8)
+    assert 0.0 < acc_large < acc_small <= 1.0
+
+
+def test_vol_delt_tuning_is_gated_on_fresh_window(four_particle_frame, tmp_path):
+    """vol_delt updates only once `window` fresh volume moves accrue, on a
+    non-overlapping window, and not at all without fresh moves."""
+    metro = make_metro(four_particle_frame, tmp_path, vol_delt=0.05)
+    window = 10
+    db_file = str(tmp_path / "sim" / "equilibration.db")
+    metro.pos_decisions = [1] * window  # so pos/or means are defined
+    metro.or_decisions = [1] * window
+
+    # fewer than `window` volume moves -> no tuning
+    metro.vol_decisions = [1] * (window - 1)  # all accepted: would grow if tuned
+    before = metro.vol_delt
+    metro.block_update(window, [], db_file, dynamic_delta=True, buffer_size=1)
+    assert metro._vol_tune_idx == 0
+    assert metro.vol_delt == before
+
+    # top up to a full fresh window -> tunes once, idx advances, delta grows
+    metro.vol_decisions.append(1)
+    metro.block_update(window, [], db_file, dynamic_delta=True, buffer_size=1)
+    assert metro._vol_tune_idx == window
+    assert metro.vol_delt > before
+
+    # no new fresh moves -> no further tuning
+    grown = metro.vol_delt
+    metro.block_update(window, [], db_file, dynamic_delta=True, buffer_size=1)
+    assert metro._vol_tune_idx == window
+    assert metro.vol_delt == grown
+
+
+def test_vol_delt_capped_on_accepted_volume_moves(four_particle_frame, tmp_path):
+    """A run of accepted volume moves must not grow vol_delt past the cap."""
+    metro = make_metro(four_particle_frame, tmp_path, vol_delt=MAX_VOL_DELT)
+    window = 10
+    metro.pos_decisions = [1] * window
+    metro.or_decisions = [1] * window
+    db_file = str(tmp_path / "sim" / "equilibration.db")
+    for _ in range(20):
+        # fresh accepted volume moves each block ⇒ tuner repeatedly tries to grow
+        metro.vol_decisions += [1] * window
+        metro.block_update(window, [], db_file, dynamic_delta=True, buffer_size=1)
+
+    assert metro.vol_delt <= MAX_VOL_DELT
+
+
+def test_vol_delt_tunes_during_equilibration(four_particle_frame, tmp_path):
+    """A real (short) equilibration advances the tune index yet keeps vol_delt
+    clamped within bounds."""
+    metro = make_metro(four_particle_frame, tmp_path, vol_delt=0.05)
+    metro.equilibrate(num_steps=300, block_size=20, buffer_size=50, progress=False)
+    assert metro._vol_tune_idx >= 10  # window = block_size // 2; tuning happened
+    assert MIN_VOL_DELT <= metro.vol_delt <= MAX_VOL_DELT
+
+
+def test_production_does_not_tune_volume(four_particle_frame, tmp_path):
+    """dynamic_delta=False leaves vol_delt and the tune index untouched even
+    with a full window of decisions, but still records vol_acc_rate."""
+    metro = make_metro(four_particle_frame, tmp_path, vol_delt=0.05)
+    window = 10
+    metro.pos_decisions = [1] * window
+    metro.or_decisions = [1] * window
+    metro.vol_decisions = [1, 0] * window  # 20 moves, acc 0.5
+    before = metro.vol_delt
+    db_file = str(tmp_path / "sim" / "equilibration.db")
+    metro.block_update(window, [], db_file, dynamic_delta=False, buffer_size=1)
+    assert metro.vol_delt == before
+    assert metro._vol_tune_idx == 0
+    # recording is decoupled from tuning: vol_acc_rate is still logged
+    row = connect(db_file).get(1)
+    assert row.vol_acc_rate == pytest.approx(0.5)
+
+
+def test_nvt_leaves_vol_delt_untouched(four_particle_frame, tmp_path):
+    """NVT attempts no volume moves, so vol_delt never changes and no error."""
+    metro = make_metro(four_particle_frame, tmp_path, npt_ensemble=False, vol_delt=0.05)
+    before = metro.vol_delt
+    metro.equilibrate(num_steps=300, block_size=50, buffer_size=50, progress=False)
+    assert metro.vol_delt == before
+    assert metro._vol_tune_idx == 0
+
+
 def test_trajectory_analyzer_on_output(four_particle_frame, tmp_path):
     """TrajectoryAnalyzer returns a finite AverageEnergy result."""
     metro = make_metro(four_particle_frame, tmp_path)
@@ -197,6 +382,24 @@ def test_from_equilibration_restores_state(four_particle_frame, tmp_path):
         row.pos_delta, row.or_delta, row.vol_delta
     )
     assert resumed.step_count == row.step
+
+
+def test_from_equilibration_resets_vol_delt(four_particle_frame, tmp_path):
+    """vol_delt=X overrides the carried db value; the rest of the state is unchanged."""
+    metro = make_metro(four_particle_frame, tmp_path, vol_delt=MAX_VOL_DELT)
+    metro.equilibrate(num_steps=200, block_size=50, buffer_size=10)
+
+    out = str(tmp_path / "sim")
+    row = connect(out + "/equilibration.db").get(connect(out + "/equilibration.db").count())
+
+    reset = MetropolisCalculator.from_equilibration(out, vol_delt=0.05)
+    assert reset.vol_delt == 0.05                 # overridden, not the carried value
+    assert reset.pos_delt == row.pos_delta        # other deltas still from the db
+    assert reset.or_delt == row.or_delta
+    assert reset.step_count == row.step           # still resumes in place
+
+    kept = MetropolisCalculator.from_equilibration(out)  # default keeps tuned value
+    assert kept.vol_delt == row.vol_delta
 
 
 def test_from_equilibration_appends_and_continues(four_particle_frame, tmp_path):
