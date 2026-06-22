@@ -206,6 +206,7 @@ def test_main_creates_point_dirs_and_diagnostics(tmp_path):
         temp_grid=(300.0, 400.0),
         pressure_grid=(0.0,),
         n_particles=27,
+        density=1.0,  # N=27 columnar caps ~1.30; stay under it
         num_steps=2 * 27,
         block_size=27,
         seed0=100,
@@ -230,6 +231,7 @@ def test_main_replicas_reuses_existing_and_adds_new(tmp_path):
         temp_grid=(300.0, 400.0),
         pressure_grid=(0.0,),
         n_particles=27,
+        density=1.0,  # N=27 columnar caps ~1.30; stay under it
         num_steps=2 * 27,
         block_size=27,
         seed0=100,
@@ -268,6 +270,56 @@ def test_main_replicas_reuses_existing_and_adds_new(tmp_path):
     # Independent initial conditions -> the replicas are genuinely different runs,
     # not copies: replica 1 of point k=0 differs from its replica 0.
     assert _last_row(os.path.join(out_dir, "T300_P0", "102")) != before[0][1]
+
+
+def _run_config(output_dir):
+    import json
+
+    with open(os.path.join(output_dir, "run_config.json")) as fh:
+        return json.load(fh)
+
+
+def test_main_defaults_to_columnar_packing(tmp_path):
+    """The scan's default initializer is columnar, recorded in each run_config."""
+    out_dir = str(tmp_path / "npt_scan")
+    main(
+        temp_grid=(300.0,),
+        pressure_grid=(0.0,),
+        n_particles=27,
+        density=1.0,  # N=27 columnar caps ~1.30
+        num_steps=2 * 27,
+        block_size=27,
+        seed0=100,
+        out_dir=out_dir,
+        max_workers=1,
+    )
+    cfg = _run_config(os.path.join(out_dir, "T300_P0", "100"))
+    assert cfg["init"]["init_packing"] == "columnar"
+    assert cfg["init"]["init_density"] == 1.0
+
+
+def test_main_random_packing_is_honored(tmp_path):
+    """packing='random' overrides the default and is recorded in the run_config."""
+    out_dir = str(tmp_path / "npt_scan")
+    main(
+        temp_grid=(300.0,),
+        pressure_grid=(0.0,),
+        n_particles=27,
+        packing="random",
+        density=0.3,
+        num_steps=2 * 27,
+        block_size=27,
+        seed0=100,
+        out_dir=out_dir,
+        max_workers=1,
+    )
+    cfg = _run_config(os.path.join(out_dir, "T300_P0", "100"))
+    assert cfg["init"]["init_packing"] == "random"
+
+
+def test_main_rejects_unknown_packing(tmp_path):
+    with pytest.raises(ValueError, match="unknown packing"):
+        main(packing="hexatic", out_dir=str(tmp_path / "scan"))
 
 
 # ---------------------------------------------------------------------------

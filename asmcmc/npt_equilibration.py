@@ -20,8 +20,8 @@ on it via ``MetropolisCalculator.from_equilibration({seed}-dir)``; the ``{seed}`
 subdirectory leaves room for multiple independent replicas of the same point.
 
 Because volume floats in NPT, density is *not* an input axis (as it is in the NVT
-scan): every point starts from one config at ``density`` and relaxes to whatever
-volume (T, P) dictates.
+scan): every point starts from one config (a columnar, near-equilibrium ordered
+start by default) and relaxes to whatever volume (T, P) dictates.
 
 Run:  python -m asmcmc.npt_equilibration
 """
@@ -53,8 +53,27 @@ import matplotlib
 matplotlib.use("Agg")  # batch run: write figures to file, never open a window
 import matplotlib.pyplot as plt
 
-from asmcmc.initialize import RandomLatticeInitializer
+from asmcmc.initialize import (
+    RandomLatticeInitializer,
+    ColumnarLatticeInitializer,
+    DEFAULT_DENSITY,
+    DEFAULT_COLUMNAR_DENSITY,
+)
 from asmcmc.metropolis import MetropolisCalculator
+
+# Selectable initial-config packings. Columnar is the default: for these oblate
+# particles it starts at near-equilibrium (ordered) density — the *fast*
+# equilibration direction (melting an ordered start is barrier-free; freezing a
+# disordered one is not). Random (dilute simple-cubic) is kept for
+# transition-bracketing checks that approach a boundary from the disordered side.
+_INITIALIZERS = {
+    "columnar": ColumnarLatticeInitializer,
+    "random": RandomLatticeInitializer,
+}
+_DEFAULT_DENSITY = {
+    "columnar": DEFAULT_COLUMNAR_DENSITY,
+    "random": DEFAULT_DENSITY,
+}
 
 
 def point_dirname(temp, pressure):
@@ -271,7 +290,8 @@ def _evaluate_point(k, temp, pressure, cfg, r=0):
     if os.path.exists(os.path.join(output_dir, "run_config.json")):
         return k, output_dir
 
-    initializer = RandomLatticeInitializer(
+    init_cls = _INITIALIZERS[cfg.get("packing", "columnar")]
+    initializer = init_cls(
         n_particles=cfg["n_particles"], density=cfg["density"], seed=seed
     )
     equilibrate_point(
@@ -337,26 +357,34 @@ def _submission_order(grid):
 
 
 def main(
-    temp_grid=(40.0, 70.0, 100.0, 130.0, 160.0),
-    pressure_grid=(1e-5, 3e-5, 1e-4, 3e-4),
+    temp_grid=(10.0, 50.0, 100.0, 150.0, 200.0, 250.0),
+    pressure_grid=(5e-7, 1e-6, 1.5e-6),
     n_particles=125,
-    density=0.3,
-    num_steps=375_000,
-    block_size=375,
-    buffer_size=50,
+    density=0.75,
+    packing="random",
+    num_steps=500_000,
+    block_size=None,
+    buffer_size=100,
     seed0=12345,
-    replicas=1,
-    out_dir="results/npt_scan",
-    max_workers=8,
+    replicas=2,
+    out_dir="results/low_p_scan",
+    max_workers=12,
 ):
     """Equilibrate the (T, P) grid in parallel, one resumable run dir per
     (point, replica).
 
     ``temp`` is in Kelvin and ``pressure`` in eV/Å³, handed straight to the
-    sampler. The default grid is a small placeholder — set your own. Every point
-    starts from one ``n_particles`` config at reduced density ``density`` and
-    relaxes its volume; ``num_steps`` is the (re-entrant) equilibration target and
-    ``block_size`` defaults to ``n_particles`` (~one recorded frame per pass).
+    sampler. The default grid (9 T × 3 P = 27 points) is shaped by the first
+    production scan's phase diagram: 15 K spacing across the transition window
+    (70–175 K) where both the melting and clearing boundaries live, a single cold
+    crystal anchor at 40 K, and only three pressures (P* ≈ 0.45, 4.5, 13.5) — the
+    near-duplicate low-P isobars are pruned to one anchor. Every point
+    starts from one ``n_particles`` config built by ``packing`` (``"columnar"``,
+    the default ordered near-equilibrium start, or ``"random"`` dilute simple
+    cubic) at reduced density ``density`` and relaxes its volume. ``density=None``
+    picks the packing-appropriate default (columnar ~1.4, random ~0.6).
+    ``num_steps`` is the (re-entrant) equilibration target and ``block_size``
+    defaults to ``n_particles`` (~one recorded frame per pass).
 
     ``replicas`` independent equilibrations are run per (T, P) point — each from
     its own seed (and so its own initial config + MC stream), written to its own
@@ -381,6 +409,12 @@ def main(
     (default 8): processes contend for memory bandwidth / CPU frequency, so throughput
     plateaus around 8 concurrent points regardless of core count.
     """
+    if packing not in _INITIALIZERS:
+        raise ValueError(
+            f"unknown packing {packing!r}; choose from {sorted(_INITIALIZERS)}"
+        )
+    if density is None:
+        density = _DEFAULT_DENSITY[packing]
     if block_size is None:
         block_size = n_particles
     if replicas < 1:
@@ -399,6 +433,7 @@ def main(
     cfg = {
         "n_particles": n_particles,
         "density": density,
+        "packing": packing,
         "num_steps": num_steps,
         "block_size": block_size,
         "buffer_size": buffer_size,
@@ -474,6 +509,21 @@ if __name__ == "__main__":
         help="Scan directory to read points from / write to (default: results/npt_scan).",
     )
     parser.add_argument(
+        "--packing",
+        default="columnar",
+        choices=sorted(_INITIALIZERS),
+        help="Initial-config packing for a fresh scan (default: columnar — ordered, "
+        "near-equilibrium density; 'random' is the dilute simple-cubic start for "
+        "bracketing a transition from the disordered side).",
+    )
+    parser.add_argument(
+        "--density",
+        type=float,
+        default=None,
+        help="Reduced starting density rho* for a fresh scan "
+        "(default: packing-appropriate — columnar ~1.4, random ~0.6).",
+    )
+    parser.add_argument(
         "--reset-vol-delt",
         type=float,
         default=None,
@@ -493,4 +543,4 @@ if __name__ == "__main__":
         )
         extend_points(dirs, args.extend, vol_delt=args.reset_vol_delt)
     else:
-        main(out_dir=args.out_dir)
+        main(out_dir=args.out_dir, packing=args.packing, density=args.density)
