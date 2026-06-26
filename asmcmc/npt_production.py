@@ -159,9 +159,7 @@ def produce_points(
         max_workers=num_workers, mp_context=get_context("spawn")
     ) as pool:
         futures = {pool.submit(_produce_point, d, cfg): d for d in output_dirs}
-        for fut in tqdm(
-            as_completed(futures), total=len(futures), desc="Producing"
-        ):
+        for fut in tqdm(as_completed(futures), total=len(futures), desc="Producing"):
             d = futures[fut]
             try:
                 done.append(fut.result())
@@ -275,7 +273,9 @@ def _group_replicas_by_point(out_dir, db_name="simulation.db"):
     return {p: sorted(dirs) for p, dirs in points.items()}
 
 
-def aggregate(out_dir, db_name="simulation.db", csv_name="npt_production.csv", plot=True):
+def aggregate(
+    out_dir, db_name="simulation.db", csv_name="npt_production.csv", plot=True
+):
     """Reduce every produced (T, P) point under ``out_dir`` to observables with
     error bars and write a CSV (+ plots).
 
@@ -388,8 +388,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-workers",
         type=int,
-        default=8,
-        help="Max concurrent worker processes (default: 8).",
+        default=12,
+        help="Max concurrent worker processes (default: 12).",
     )
     args = parser.parse_args()
 

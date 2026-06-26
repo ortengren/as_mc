@@ -36,13 +36,16 @@ from asmcmc.npt_equilibration import _continue_point, plot_point_results
 
 # Point dir names (T{temp}_P{pressure}); both replica seeds under each are
 # extended by the tier's step budget.
-EXTEND_375 = {"T10_P1.5e-06", "T10_P1e-06", "T10_P5e-07", "T50_P5e-07", "T100_P5e-07"}
+EXTEND_500 = {"T10_P1.5e-06", "T10_P5e-07"}
+EXTEND_375 = set()
 EXTEND_250 = set()
-EXTEND_125 = set()
+EXTEND_125 = {"T200_P5e-07"}
 
 
 def extra_steps_for(point_name):
     """Extra steps for a point, or None if it's equilibrated (-> production)."""
+    if point_name in EXTEND_500:
+        return 500_000
     if point_name in EXTEND_375:
         return 375_000
     if point_name in EXTEND_250:
@@ -164,7 +167,7 @@ def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", default="results/low_press_npt_scan")
-    parser.add_argument("--max-workers", type=int, default=10)
+    parser.add_argument("--max-workers", type=int, default=6)
     parser.add_argument(
         "--dry-run", action="store_true", help="print the plan, launch nothing"
     )

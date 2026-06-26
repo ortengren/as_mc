@@ -7,6 +7,7 @@ import ase
 import pytest
 from asmcmc.measurements import (
     AverageEnergy,
+    AverageEnthalpy,
     RadialDistributionFunction,
     OrientationalCorrelationFunction,
     NematicOrderParameter,
@@ -63,6 +64,31 @@ def test_average_energy_recompute_restores_or_vec_from_array_data():
     m.compute(bare, {"total_energy": 999.0}, {"or_vec": or_vec})
     mean, _ = m.finalize()
     np.testing.assert_allclose(mean, expected, rtol=1e-12)
+
+
+# --- AverageEnthalpy ---
+
+
+def test_average_enthalpy_adds_pv():
+    """<H> = <U + P V> with V read per frame; reduces to <U> at P=0."""
+    P = 2.0
+    energies = np.array([1.0, 2.0, 3.0, 4.0])
+    vols = np.array([10.0, 11.0, 9.0, 12.0])
+    m = AverageEnthalpy(pressure=P)
+    for u, v in zip(energies, vols):
+        L = v ** (1.0 / 3.0)
+        frame = ase.Atoms(cell=[L, L, L], pbc=True)
+        m.compute(frame, {"total_energy": u}, None)
+    mean, std = m.finalize()
+    h = energies + P * vols
+    np.testing.assert_allclose(mean, h.mean(), rtol=1e-10)
+    np.testing.assert_allclose(std, h.std(), rtol=1e-10)
+
+    m0 = AverageEnthalpy(pressure=0.0)
+    for u, v in zip(energies, vols):
+        L = v ** (1.0 / 3.0)
+        m0.compute(ase.Atoms(cell=[L, L, L], pbc=True), {"total_energy": u}, None)
+    np.testing.assert_allclose(m0.finalize()[0], energies.mean(), rtol=1e-10)
 
 
 # --- RadialDistributionFunction ---
@@ -354,6 +380,34 @@ def test_heat_capacity_known_variance():
     sigma2 = np.var(energies)
     expected = 3 * BOLTZCONST + sigma2 / (BOLTZCONST * N * T**2)
     np.testing.assert_allclose(cv, expected, rtol=1e-10)
+
+
+def test_heat_capacity_npt_enthalpy_fluctuation():
+    """With a pressure, Cp uses Var(U + P V) — incl. the U-V covariance."""
+    T, N, P = 250.0, 4, 1.5
+    energies = np.array([1.0, 2.0, 3.0, 4.0])
+    vols = np.array([10.0, 12.0, 9.0, 11.0])
+    m = HeatCapacity(temperature=T, num_particles=N, pressure=P)
+    for u, v in zip(energies, vols):
+        L = v ** (1.0 / 3.0)
+        frame = ase.Atoms(cell=[L, L, L], pbc=True)
+        m.compute(frame, {"total_energy": u}, None)
+    cp = m.finalize()
+    h = energies + P * vols
+    expected = 3 * BOLTZCONST + np.var(h) / (BOLTZCONST * N * T**2)
+    np.testing.assert_allclose(cp, expected, rtol=1e-10)
+
+
+def test_heat_capacity_zero_pressure_matches_nvt():
+    """pressure=0 adds no P·V term, so Cp reduces to the NVT Cv."""
+    T, N = 300.0, 5
+    energies = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    frame = ase.Atoms(cell=[5.0, 5.0, 5.0], pbc=True)
+    m = HeatCapacity(temperature=T, num_particles=N, pressure=0.0)
+    for e in energies:
+        m.compute(frame, {"total_energy": e}, None)
+    expected = 3 * BOLTZCONST + np.var(energies) / (BOLTZCONST * N * T**2)
+    np.testing.assert_allclose(m.finalize(), expected, rtol=1e-10)
 
 
 # --- decide_accept ---

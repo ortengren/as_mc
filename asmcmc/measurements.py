@@ -79,6 +79,31 @@ class AverageEnergy(Measurement):
         return avg_e, var_e
 
 
+class AverageEnthalpy(AverageEnergy):
+    """Mean enthalpy H = U + P*V over an (NPT) trajectory.
+
+    Reuses AverageEnergy's energy handling -- the tracked
+    ``scalar_data["total_energy"]`` by default, or a from-scratch recompute with
+    ``recompute=True`` (which needs ``nl_radius``) -- and adds the P*V term from
+    each frame's volume (P in eV/A^3, V in A^3, matching the eV/A units). Only
+    meaningful for a constant-pressure run. finalize() returns (mean, std) of the
+    total enthalpy in eV; divide by the molecule count for a per-molecule value.
+    """
+
+    def __init__(self, pressure, recompute=False, nl_radius=None, potential=None):
+        super().__init__(recompute=recompute, nl_radius=nl_radius, potential=potential)
+        self.pressure = pressure
+
+    def compute(self, frame, scalar_data, array_data):
+        super().compute(frame, scalar_data, array_data)
+        # AverageEnergy just appended this frame's U; fold in P*V to make it H
+        self.energies[-1] += self.pressure * frame.get_volume()
+
+    def finalize(self):
+        h = np.asarray(self.energies)
+        return float(h.mean()), float(h.std())
+
+
 class RadialDistributionFunction(Measurement):
     def __init__(self, r_max, num_bins):
         super().__init__()
@@ -87,8 +112,8 @@ class RadialDistributionFunction(Measurement):
 
         self.bin_edges = np.linspace(0, r_max, num_bins + 1)
         self.bin_centers = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2.0
-        self.shell_vols = (4.0 / 3.0) * np.pi * (
-            self.bin_edges[1:] ** 3 - self.bin_edges[:-1] ** 3
+        self.shell_vols = (
+            (4.0 / 3.0) * np.pi * (self.bin_edges[1:] ** 3 - self.bin_edges[:-1] ** 3)
         )
 
         # counts and their ideal-gas expectation are both accumulated per frame
@@ -123,7 +148,9 @@ class RadialDistributionFunction(Measurement):
     def finalize(self):
         g_r = np.zeros_like(self.hist_counts)
         np.divide(
-            self.hist_counts, self.ideal_counts, out=g_r,
+            self.hist_counts,
+            self.ideal_counts,
+            out=g_r,
             where=(self.ideal_counts > 0),
         )
         return {
@@ -225,19 +252,48 @@ class NematicOrderParameter(Measurement):
 
 
 class HeatCapacity(Measurement):
-    def __init__(self, temperature, num_particles):
+    """Per-particle heat capacity from energy/enthalpy fluctuations.
+
+    ``pressure=None`` (the default) gives the constant-volume C_v from the
+    canonical fluctuation of the potential energy U,
+
+        C_v = 3 k_B + Var(U) / (N k_B T^2),
+
+    which is the right quantity for an NVT (fixed-box) trajectory. Passing a
+    ``pressure`` switches to the isobaric C_p, built from the instantaneous
+    enthalpy H = U + P V with V read per frame, so volume fluctuations and the
+    U-V covariance are both included,
+
+        C_p = 3 k_B + Var(U + P V) / (N k_B T^2),
+
+    the right quantity for an NPT trajectory (P in eV/A^3, V in A^3, matching
+    the codebase's eV/A units).
+
+    The leading 3 k_B is the equipartition (kinetic) term added by hand -- MC
+    samples no momenta -- assuming 6 quadratic momentum DOF per particle (3
+    translational + 3 rotational, i.e. a rigid 3-D rotor). It is the same
+    constant in both ensembles (the ideal-gas C_p - C_v = k_B shift is not
+    applied) and only sets the baseline, not the transition peak.
+    """
+
+    def __init__(self, temperature, num_particles, pressure=None):
         super().__init__()
-        self.energies = []
+        self.enthalpies = []
         self.temp = temperature
         self.num_particles = num_particles
+        self.pressure = pressure
 
     def compute(self, frame, scalar_data, array_data):
-        self.energies.append(scalar_data["total_energy"])
+        h = scalar_data["total_energy"]
+        if self.pressure is not None:
+            # NPT: instantaneous enthalpy U + P V (the box floats per frame)
+            h += self.pressure * frame.get_volume()
+        self.enthalpies.append(h)
 
     def finalize(self):
-        e_var = np.var(self.energies)
+        var = np.var(self.enthalpies)
         cv_ideal = 3 * BOLTZCONST
-        cv_excess = e_var / (BOLTZCONST * self.num_particles * self.temp**2)
+        cv_excess = var / (BOLTZCONST * self.num_particles * self.temp**2)
         return cv_ideal + cv_excess
 
 
@@ -290,8 +346,7 @@ class EffectiveSampleSize(Measurement):
         sem          standard error of the mean, std / sqrt(ess); a 95% CI on
                      ``mean`` is mean +/- 1.96 * sem
 
-    SEM uses ESS (not M) because serial correlation inflates the variance of the
-    mean from sigma^2 / M to sigma^2 / ESS. Valid for a *stationary* series and
+    SEM uses ESS. Valid for a *stationary* series and
     for the mean itself; for nonlinear observables (heat capacity, ratios) block
     bootstrap/jackknife the trajectory instead.
     """
@@ -336,8 +391,9 @@ class TrajectoryAnalyzer:
         with connect(self.db_path) as db:
             total_frames = db.count()
 
-            with tqdm(total=total_frames, desc="Analyzing Trajectory",
-                      disable=not progress) as pbar:
+            with tqdm(
+                total=total_frames, desc="Analyzing Trajectory", disable=not progress
+            ) as pbar:
                 for row in db.select():
                     frame = row.toatoms()
                     scalar_data = row.key_value_pairs
