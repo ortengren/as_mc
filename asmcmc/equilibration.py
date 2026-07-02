@@ -53,6 +53,7 @@ def equilibrate_point(
     buffer_size=100,
     dynamic_delta=True,
     potential=None,
+    progress=False,
 ):
     """Equilibrate one (T, P) NPT point into ``output_dir`` and return that path.
 
@@ -61,7 +62,9 @@ def equilibrate_point(
     ``equilibration.db`` + a write-once ``run_config.json`` into ``output_dir``.
 
     ``potential`` (default ``None`` ⇒ ``DEFAULT_POTENTIAL``) selects the pair
-    potential — pass a ``GBQPotential`` to run a non-default fit.
+    potential — pass a ``GBQPotential`` to run a non-default fit. ``progress``
+    (default ``False``) shows a tqdm bar for the run — left off by default so
+    parallel-scan workers don't interleave bars.
 
     Reseeding the global ``random``/``np.random`` streams (with ``seed``, or the
     initializer's own seed) makes the point reproducible and independent of how
@@ -95,7 +98,7 @@ def equilibrate_point(
         block_size=block_size,
         buffer_size=buffer_size,
         dynamic_delta=dynamic_delta,
-        progress=False,
+        progress=progress,
     )
     return output_dir
 
@@ -205,16 +208,14 @@ def pressure_ramp(
     block_size=None,
     buffer_size=100,
     dynamic_delta=True,
+    ascending=True,
+    progress=False,
 ):
     """Equilibrate one system through a staged pressure ramp and return the stage dirs.
 
-    Walks pressure across ``pressures`` (sorted ascending — a *pressurization*),
-    equilibrating at each stage before stepping up. Slowly raising P keeps the
-    system on the fluid/ordered branch as it densifies instead of over-driving it
-    into a jammed glass; because each stage is a fixed-(T, P) equilibration with
-    move widths retuned per stage, detailed balance is untouched — the ramp is a
-    state-*preparation* schedule, and only the final stage need be run to
-    convergence for downstream production.
+    Walks pressure across ``pressures``, equilibrating at each stage before stepping
+    up. Slowly raising P keeps the system on the fluid/ordered branch as it densifies
+    instead of over-driving it into a jammed glass.
 
     Each stage writes its own resumable run dir ``output_dir/stage{k}_P{p}/``
     (equilibration.db + write-once run_config.json + diagnostics PNG), exactly
@@ -234,6 +235,8 @@ def pressure_ramp(
     ``seed`` (default ``None`` ⇒ the initializer's own seed) fixes the MC stream;
     stage ``k`` uses ``seed + k`` so stages are reproducible yet independent.
     ``block_size`` defaults to the particle count (one recorded frame per pass).
+    ``progress`` (default ``False``) prints a per-stage header and shows that
+    stage's equilibration progress bar.
     """
     if isinstance(num_steps, int):
         num_steps = [num_steps] * len(pressures)
@@ -246,8 +249,12 @@ def pressure_ramp(
             f"steps and pressures must be the same length; "
             f"got {len(num_steps)} steps for {len(pressures)} pressures"
         )
-
-    sorted_pairs = sorted(zip(pressures, num_steps), key=lambda x: x[0])
+    if ascending:
+        sorted_pairs = sorted(zip(pressures, num_steps), key=lambda x: x[0])
+    else:
+        sorted_pairs = sorted(
+            zip(pressures, num_steps), key=lambda x: x[0], reverse=True
+        )
 
     os.makedirs(output_dir, exist_ok=True)
     base_seed = initializer.seed if seed is None else seed
@@ -268,6 +275,11 @@ def pressure_ramp(
             stage_init = FrameInitializer(prev.current_frame)
 
         stage_seed = None if base_seed is None else base_seed + k
+        if progress:
+            print(
+                f"[pressure_ramp] stage {k + 1}/{len(sorted_pairs)}  "
+                f"P={pressure:g} eV/Å³  ({n_steps} steps)"
+            )
         equilibrate_point(
             temp,
             pressure,
@@ -279,6 +291,7 @@ def pressure_ramp(
             buffer_size=buffer_size,
             dynamic_delta=dynamic_delta,
             potential=potential,
+            progress=progress,
         )
         plot_point_results(stage_dir)
         stage_dirs.append(stage_dir)
