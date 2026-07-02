@@ -1,8 +1,11 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import dataclasses
+
 import numpy as np
 import pytest
+from asmcmc.potentials import DEFAULT_POTENTIAL
 from asmcmc.initialize import (
     generate_random_config,
     generate_columnar_config,
@@ -178,6 +181,7 @@ def test_random_lattice_initializer_provenance():
         "init_density": 0.3,
         "init_seed": 5,
         "init_packing": "random",
+        "init_sigma0": SIGMA0,
     }
 
 
@@ -339,3 +343,69 @@ def test_calculator_accepts_columnar_initializer():
     init = ColumnarLatticeInitializer(n_particles=50, density=1.0, seed=0)
     mc = MetropolisCalculator(temp=300, pressure=0.0, initializer=init)
     assert mc.initializer is init
+
+
+# --- geometry is built for the simulated potential's shape, not the default ---
+
+
+def test_random_config_honors_custom_sigma0():
+    """rho* and hard-core spacing scale with the passed sigma0, not the global."""
+    sig = 4.0
+    f = generate_random_config(64, density=0.5, seed=0, sigma0=sig)
+    assert 64 * sig**3 / f.get_volume() == pytest.approx(0.5, rel=1e-10)
+    assert _min_pairwise_dist(f) >= sig
+
+
+def test_columnar_config_honors_custom_shape():
+    """Box (via sigma0) and contact distances (via kappa) follow the passed shape."""
+    sig, kap = 4.0, 0.5
+    f = generate_columnar_config(64, density=1.2, seed=0, sigma0=sig, kappa=kap)
+    assert 64 * sig**3 / f.get_volume() == pytest.approx(1.2, rel=1e-10)
+    # tightest packing is the axial (face-to-face) contact kappa*sigma0
+    assert _min_center_dist(f) >= kap * sig - 1e-9
+
+
+def test_random_initializer_reads_shape_from_potential():
+    pot = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=4.0, kappa=0.5)
+    init = RandomLatticeInitializer(n_particles=64, density=0.5, seed=0, potential=pot)
+    assert init.sigma0 == 4.0
+    f = init.generate()
+    assert 64 * 4.0**3 / f.get_volume() == pytest.approx(0.5, rel=1e-10)
+    assert init.provenance()["init_sigma0"] == 4.0
+
+
+def test_columnar_initializer_reads_shape_from_potential():
+    pot = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=4.0, kappa=0.5)
+    init = ColumnarLatticeInitializer(
+        n_particles=64, density=1.2, seed=0, potential=pot
+    )
+    assert (init.sigma0, init.kappa) == (4.0, 0.5)
+    f = init.generate()
+    assert 64 * 4.0**3 / f.get_volume() == pytest.approx(1.2, rel=1e-10)
+    prov = init.provenance()
+    assert prov["init_sigma0"] == 4.0
+    assert prov["init_kappa"] == 0.5
+
+
+def test_calculator_propagates_potential_shape_to_initializer():
+    """The footgun fix: an initializer built without a potential adopts the one
+    passed to the calculator, so geometry can't silently use the default shape."""
+    pot = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=6.0, kappa=0.5)
+    init = ColumnarLatticeInitializer(n_particles=64, density=1.0, seed=0)
+    mc = MetropolisCalculator(
+        temp=300, pressure=0.0, initializer=init, potential=pot, nl_radius=10.0
+    )
+    assert (init.sigma0, init.kappa) == (6.0, 0.5)
+    assert 64 * 6.0**3 / mc.init_frame.get_volume() == pytest.approx(1.0, rel=1e-10)
+
+
+def test_explicit_initializer_potential_wins_over_calculator():
+    """An initializer given its own potential keeps that shape; the calculator's
+    set_potential does not override an explicit choice."""
+    pot_init = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=6.0, kappa=0.5)
+    pot_calc = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=9.0, kappa=0.7)
+    init = ColumnarLatticeInitializer(
+        n_particles=64, density=1.0, seed=0, potential=pot_init
+    )
+    init.set_potential(pot_calc)
+    assert (init.sigma0, init.kappa) == (6.0, 0.5)

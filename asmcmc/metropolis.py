@@ -115,6 +115,15 @@ class MetropolisCalculator:
         elif initializer is None:
             initializer = RandomLatticeInitializer()
         self.initializer = initializer
+
+        # Resolve the potential before building the frame so the initializer can
+        # size the box / contact distances for the *simulated* shape rather than
+        # the package-default potential. An initializer constructed with its own
+        # potential keeps it; otherwise it adopts this one.
+        self.potential: Potential = (
+            potential if potential is not None else DEFAULT_POTENTIAL
+        )
+        self.initializer.set_potential(self.potential)
         source = self.initializer.generate()
         self.init_frame = source
 
@@ -138,9 +147,6 @@ class MetropolisCalculator:
         self.or_delt = or_delt
         self.vol_delt = vol_delt
         self.step_count = 0
-        self.potential: Potential = (
-            potential if potential is not None else DEFAULT_POTENTIAL
-        )
         self.pos_decisions = []
         self.or_decisions = []
         self.vol_decisions = []
