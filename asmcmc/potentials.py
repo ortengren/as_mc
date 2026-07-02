@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 EPS_0 = 8.8541878188e-22  # F / Å
 
 
-def gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa):
+def gb_shape_function(uhat1, uhat2, rhat, kappa):
     chi = (kappa**2 - 1) / (kappa**2 + 1)
     term1 = (np.vecdot(uhat1, rhat) + np.vecdot(uhat2, rhat)) ** 2 / (
         1 + chi * np.vecdot(uhat1, uhat2)
@@ -21,7 +21,7 @@ def gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa):
     term2 = (np.vecdot(uhat1, rhat) - np.vecdot(uhat2, rhat)) ** 2 / (
         1 - chi * np.vecdot(uhat1, uhat2)
     )
-    sigma = sigma0 / np.sqrt(1 - (chi / 2) * (term1 + term2))
+    sigma = 1 / np.sqrt(1 - (chi / 2) * (term1 + term2))
     return sigma
 
 
@@ -47,12 +47,12 @@ def gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu):
     return eps0 * eps1**nu * eps2**mu
 
 
-def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu):
+def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu, xi):
     rmag = np.expand_dims(la.norm(r, axis=-1), axis=-1)
     rhat = r / rmag
     eps = gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu)
-    sigma = gb_shape_function(uhat1, uhat2, rhat, sigma0, kappa)
-    term = sigma0 / (la.norm(r, axis=-1) - sigma + sigma0)
+    sigma = gb_shape_function(uhat1, uhat2, rhat, kappa)
+    term = xi * sigma0 / (la.norm(r, axis=-1) - (sigma0 * sigma) + (xi * sigma0))
     return 4 * eps * (term**12 - term**6)
 
 
@@ -74,7 +74,7 @@ def quadrupole(uhat1, uhat2, r, Q):
     return prefactor * s
 
 
-def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, Q):
+def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q):
     # M should have shape (N, 1431, 3, 3) where N is the number of frames
     E_GB = gb(
         M[:, :, 0, :],
@@ -86,6 +86,7 @@ def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, Q):
         kappa_prime,
         mu,
         nu,
+        xi,
     )
     E_QQ = quadrupole(M[:, :, 0, :], M[:, :, 1, :], M[:, :, 2, :], Q)
     E_QQ = np.squeeze(E_QQ)
@@ -146,7 +147,7 @@ class Potential(ABC):
 
 
 # GB parameters in the order ``gb`` expects them (followed by the quadrupole Q).
-_GB_PARAM_KEYS = ("sigma0", "eps0", "kappa", "kappa_prime", "mu", "nu")
+_GB_PARAM_KEYS = ("sigma0", "eps0", "kappa", "kappa_prime", "mu", "nu", "xi")
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,7 @@ class GBQPotential(Potential):
     kappa_prime: float
     mu: float
     nu: float
+    xi: float
     Q: float
 
     @classmethod
@@ -209,10 +211,10 @@ def potential_from_dict(d):
 # work regardless of where the interpreter is launched. Points at the tracked
 # uniform/seed_0 fit; switch via GBQPotential.from_json(<other params.json>).
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PARAMS_PATH = (
-    _REPO_ROOT / "results/fitting/multiseed/uniform/seed_0/uniform/params.json"
-)
+DEFAULT_PARAMS_PATH = _REPO_ROOT / "data/my_fitted_gbq_params.json"
+CACELLI_PARAMS_PATH = _REPO_ROOT / "data/lit_gbq_params.json"
 DEFAULT_POTENTIAL = GBQPotential.from_json(DEFAULT_PARAMS_PATH)
+CACELLI_POTENTIAL = GBQPotential.from_json(CACELLI_PARAMS_PATH)
 
 # Backward-compatible aliases, derived from the active default so dependents
 # (initialize.py lattice spacing, nvt_scan.py reduced-unit scales) stay
