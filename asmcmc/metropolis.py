@@ -28,7 +28,7 @@ TARGET_ACC_RATE = 0.275
 # volume change. The lower floor stops a run of rejected volume moves from
 # shrinking vol_delt toward zero (e.g. ~1e-83), which freezes the box and turns
 # NPT into NVT at the starting density.
-MAX_VOL_DELT = 0.5
+MAX_VOL_DELT = 0.4
 MIN_VOL_DELT = 1e-3
 
 
@@ -98,7 +98,7 @@ class MetropolisCalculator:
         potential: Optional[Potential] = None,
         pos_delt=0.15,
         or_delt=0.05,
-        vol_delt=0.05,
+        vol_delt=0.01,
         nl_radius=15.0,
         nl_skin=1.0,
         output_dir=None,
@@ -442,6 +442,8 @@ class MetropolisCalculator:
         buffer_size=100,
         max_scale=1.1,
         min_scale=0.9,
+        vol_max_scale=None,
+        vol_min_scale=None,
     ):
         """Perform a block update of the simulation.
 
@@ -490,13 +492,19 @@ class MetropolisCalculator:
         # chase noise); gating on a non-overlapping fresh window gives a
         # low-variance estimate of the current delta's acceptance.
         if self.npt_ensemble and dynamic_delta:
+            # vol_delt gets its own (optionally tighter) per-update slew bounds so a
+            # long run of accepted volume moves during a downhill collapse can't jump
+            # it up in one step; it still walks to its TARGET_ACC_RATE value, just
+            # gradually. Falls back to the shared pos/or scales when unset.
+            vmax = max_scale if vol_max_scale is None else vol_max_scale
+            vmin = min_scale if vol_min_scale is None else vol_min_scale
             fresh_moves = self.vol_decisions[self._vol_tune_idx :]
             if len(fresh_moves) >= window:
                 fresh_acc = np.mean(fresh_moves)
                 if fresh_acc > 0.35:
-                    self.vol_delt *= min(max_scale, fresh_acc / TARGET_ACC_RATE)
+                    self.vol_delt *= min(vmax, fresh_acc / TARGET_ACC_RATE)
                 elif fresh_acc < 0.20:
-                    self.vol_delt *= max(min_scale, fresh_acc / TARGET_ACC_RATE)
+                    self.vol_delt *= max(vmin, fresh_acc / TARGET_ACC_RATE)
                 self.vol_delt = min(max(self.vol_delt, MIN_VOL_DELT), MAX_VOL_DELT)
                 self._vol_tune_idx = len(self.vol_decisions)
 
@@ -571,8 +579,17 @@ class MetropolisCalculator:
         progress=True,
         max_scale=1.1,
         min_scale=0.9,
+        vol_max_scale=None,
+        vol_min_scale=None,
     ):
-        """Perform an equilibration of the simulation."""
+        """Perform an equilibration of the simulation.
+
+        ``vol_max_scale``/``vol_min_scale`` optionally give vol_delt tighter
+        per-update slew bounds than the shared ``max_scale``/``min_scale`` (see
+        ``block_update``): this slows how fast vol_delt can grow during a downhill
+        density collapse — spreading the compression over more steps so the lattice
+        can order instead of jamming — without capping the value it converges to.
+        """
 
         self._write_config(
             run={
@@ -581,6 +598,8 @@ class MetropolisCalculator:
                 "block_size": block_size,
                 "buffer_size": buffer_size,
                 "dynamic_delta": dynamic_delta,
+                "vol_max_scale": vol_max_scale,
+                "vol_min_scale": vol_min_scale,
             }
         )
 
@@ -609,6 +628,8 @@ class MetropolisCalculator:
                         buffer_size=buffer_size,
                         max_scale=max_scale,
                         min_scale=min_scale,
+                        vol_max_scale=vol_max_scale,
+                        vol_min_scale=vol_min_scale,
                     )
 
         # write any frames left in buffer
@@ -623,15 +644,21 @@ class MetropolisCalculator:
         self,
         num_steps,
         block_size=100,
-        num_eq_steps=10_000,
+        num_eq_steps=100_000,
         buffer_size=100,
         eq_block_size=None,
         max_scale=1.1,
-        min_scale=0.9,
+        min_scale=0.90,
+        vol_max_scale=None,
+        vol_min_scale=None,
         progress=True,
     ):
         """Performs a simulation of the system.  This method will first equilibrate
         the system, then perform the main simulation.
+
+        ``vol_max_scale``/``vol_min_scale`` are forwarded to the equilibration
+        (see ``equilibrate``) to slow vol_delt's growth during compression; they
+        have no effect on the production loop, which does not tune deltas.
         """
         # equilibrate
         if eq_block_size is None:
@@ -643,6 +670,8 @@ class MetropolisCalculator:
                 buffer_size=buffer_size,
                 max_scale=max_scale,
                 min_scale=min_scale,
+                vol_max_scale=vol_max_scale,
+                vol_min_scale=vol_min_scale,
                 progress=progress,
             )
             self.pos_decisions = []

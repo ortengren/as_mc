@@ -293,6 +293,53 @@ def test_vol_delt_capped_on_accepted_volume_moves(four_particle_frame, tmp_path)
     assert metro.vol_delt <= MAX_VOL_DELT
 
 
+def test_vol_delt_slew_bounded_per_update(four_particle_frame, tmp_path):
+    """vol_max_scale caps how much a single tuning update may grow vol_delt, even
+    when acceptance is high enough to warrant a larger jump; None falls back to the
+    shared max_scale (current behavior)."""
+    window = 10
+    db_file = str(tmp_path / "sim" / "equilibration.db")
+
+    def grow_factor(vol_max_scale):
+        metro = make_metro(four_particle_frame, tmp_path, vol_delt=0.05)
+        metro.pos_decisions = [1] * window
+        metro.or_decisions = [1] * window
+        metro.vol_decisions = [1] * window  # all accepted ⇒ tuner wants to grow
+        before = metro.vol_delt
+        metro.block_update(
+            window, [], db_file, dynamic_delta=True,
+            buffer_size=1, vol_max_scale=vol_max_scale,
+        )
+        return metro.vol_delt / before
+
+    # fresh_acc=1.0 ⇒ raw ratio 1/TARGET_ACC_RATE ≈ 3.6, clamped to the slew bound
+    assert grow_factor(1.02) == pytest.approx(1.02)
+    assert grow_factor(None) == pytest.approx(1.1)  # shared max_scale default
+
+
+def test_vol_delt_slew_limits_rate_not_ceiling(four_particle_frame, tmp_path):
+    """With a tight slew bound, vol_delt never jumps by more than the bound per
+    update, yet still climbs past its start toward its natural ceiling over many
+    updates — the *rate* is limited, the endpoint is not capped."""
+    metro = make_metro(four_particle_frame, tmp_path, vol_delt=0.05)
+    window = 10
+    metro.pos_decisions = [1] * window
+    metro.or_decisions = [1] * window
+    db_file = str(tmp_path / "sim" / "equilibration.db")
+    start = metro.vol_delt
+    prev = start
+    for _ in range(200):
+        metro.vol_decisions += [1] * window  # all accepted every block
+        metro.block_update(
+            window, [], db_file, dynamic_delta=True,
+            buffer_size=1, vol_max_scale=1.02,
+        )
+        assert metro.vol_delt <= prev * 1.02 + 1e-12  # never jumps past the bound
+        prev = metro.vol_delt
+    assert metro.vol_delt > start  # not pinned at the start value
+    assert metro.vol_delt == pytest.approx(MAX_VOL_DELT)  # walked up to its ceiling
+
+
 def test_vol_delt_tunes_during_equilibration(four_particle_frame, tmp_path):
     """A real (short) equilibration advances the tune index yet keeps vol_delt
     clamped within bounds."""
