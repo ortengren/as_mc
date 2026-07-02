@@ -87,7 +87,7 @@ def precompute_dots_gb_en_func(
 
 
 def precompute_dots_gb(
-    r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu,
+    r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu, xi,
     sum_sq=None, diff_sq=None, b_sq=None,
 ):
     if sum_sq is None:
@@ -103,7 +103,9 @@ def precompute_dots_gb(
     sigma = precompute_dots_gb_shape_func(
         a_i, a_j, b_ij, sigma0, kappa, sum_sq=sum_sq, diff_sq=diff_sq
     )
-    term = sigma0 / (r_mag - sigma + sigma0)
+    # sigma already folds in sigma0 (shape_func returns sigma0 / sqrt(...)), so
+    # this matches potentials.gb's xi*sigma0 / (r - sigma0*shape + xi*sigma0).
+    term = xi * sigma0 / (r_mag - sigma + xi * sigma0)
     # term**12 - term**6 == t6*(t6 - 1); one expensive array pow instead of two.
     t6 = term**6
     return 4 * eps * t6 * (t6 - 1)
@@ -121,14 +123,14 @@ def precompute_dots_quadrupole(r_mag, a_i, a_j, b_ij, Q):
     return prefactor * s
 
 
-def gbq(r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu, Q):
+def gbq(r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q):
     """Pairwise GB + quadrupole energy (vectorises over pair arrays).
 
     E_intra is intentionally absent: it is a per-molecule constant added once
     per molecule in fit.predict_per_mol, not per pair.
     """
     gb = precompute_dots_gb(
-        r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu
+        r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu, xi
     )
     q = precompute_dots_quadrupole(r_mag, a_i, a_j, b_ij, Q)
     return gb + q

@@ -8,7 +8,7 @@ Model (per molecule):
     E_pred = 0.5 * (sum over directed pairs of U_GBQ) / N_mol + E_intra
 
 Parameter vector ``theta`` order:
-    [sigma0, eps0, kappa, kappa_prime, mu, nu, Q, E_intra]
+    [sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q, E_intra]
 """
 
 from concurrent.futures import ProcessPoolExecutor
@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 from asmcmc.fitting.data import precompute_dots_gb
 
-PARAM_NAMES = ["sigma0", "eps0", "kappa", "kappa_prime", "mu", "nu", "Q", "E_intra"]
+PARAM_NAMES = ["sigma0", "eps0", "kappa", "kappa_prime", "mu", "nu", "xi", "Q", "E_intra"]
 
 # Boltzmann weight scale alpha = 1/(k_B*T), in 1/eV. The production fit is the
 # *uniform* (unweighted) one; this default only sets the reference Boltzmann
@@ -32,7 +32,7 @@ PARAM_NAMES = ["sigma0", "eps0", "kappa", "kappa_prime", "mu", "nu", "Q", "E_int
 # (Cacelli et al. 2004 used a ~ 0.4/(kcal/mol) ~ 9.22/eV for reference.)
 DEFAULT_ALPHA = 2.90
 
-# Search box for the 7 physical params (differential_evolution requires finite
+# Search box for the 8 physical params (differential_evolution requires finite
 # bounds on every parameter). E_intra is data-dependent (a ~-1601 eV/molecule
 # pedestal) and is appended per-call in default_bounds.
 DEFAULT_BOUNDS = {
@@ -42,6 +42,7 @@ DEFAULT_BOUNDS = {
     "kappa_prime": (0.001, 12.0),
     "mu": (-11.0, 8.0),  # mu and nu both have wide literature ranges
     "nu": (-12.46, 5.0),
+    "xi": (0.5, 2.0),  # GB range scale; 1.0 is the standard identity
     "Q": (-10.0, 0.0),  # only appears as Q^2, so pinned < 0
 }
 # Half-width (eV/molecule) of the E_intra search window around the mean target;
@@ -93,7 +94,7 @@ def predict_per_mol(theta, data):
     parameter ``Q**2``.  Algebraically identical to summing ``gbq`` per pair,
     but it drops the per-pair quadrupole work from the fit's inner loop.
     """
-    sigma0, eps0, kappa, kappa_prime, mu, nu, Q, E_intra = theta
+    sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q, E_intra = theta
     sum_sq, diff_sq, b_sq = data.gb_geom
     gb_pair = precompute_dots_gb(
         data.r_mag,
@@ -106,6 +107,7 @@ def predict_per_mol(theta, data):
         kappa_prime,
         mu,
         nu,
+        xi,
         sum_sq=sum_sq,
         diff_sq=diff_sq,
         b_sq=b_sq,
@@ -171,7 +173,7 @@ def train_test_split(n_frames, test_frac=0.2, seed=0):
 def default_bounds(data, e_intra_half_window=E_INTRA_HALF_WINDOW, idx=None):
     """``(lo, hi)`` per parameter for ``differential_evolution``.
 
-    The 7 physical params use ``DEFAULT_BOUNDS``; ``E_intra`` is centred on the
+    The 8 physical params use ``DEFAULT_BOUNDS``; ``E_intra`` is centred on the
     mean target energy (the ~-1601 eV/molecule intramolecular pedestal), widened
     by ``e_intra_half_window``. ``idx`` restricts the mean to a frame subset
     (e.g. the training split) so the box never peeks at held-out energies.

@@ -31,7 +31,7 @@ from asmcmc.fitting.report import (
 from asmcmc.fitting import run as run_mod
 from asmcmc.fitting.run import build_parser, cli, DEFAULT_DATA, DEFAULT_CUTOFF, DEFAULT_OUT
 
-# theta order: [sigma0, eps0, kappa, kappa_prime, mu, nu, Q, E_intra]
+# theta order: [sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q, E_intra]
 THETA = [*GB_PARAMS.values(), QQ, 0.0]
 
 
@@ -284,13 +284,14 @@ def test_run_fit_recovers_synthetic_params():
     term) is well identified so we check it directly.
     """
     data = _synthetic_fitdata(n_frames=8, pairs_per_frame=10, seed=3)
-    true = [6.0, 0.05, 0.4, 0.7, 2.0, 1.0, -3.0, -1601.0]
+    # order: [sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q, E_intra]
+    true = [6.0, 0.05, 0.4, 0.7, 2.0, 1.0, 1.0, -3.0, -1601.0]
     data.target_per_mol[:] = predict_per_mol(true, data)
 
     # bracket each true value; E_intra inferred from the (now exact) targets
     bounds = [
         (5.0, 7.0), (1e-3, 0.2), (0.2, 0.7), (0.3, 1.2),
-        (1.0, 3.0), (0.5, 1.5), (-5.0, 0.0),
+        (1.0, 3.0), (0.5, 1.5), (0.5, 1.5), (-5.0, 0.0),
     ]
     bounds.append(default_bounds(data)[-1])
 

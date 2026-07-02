@@ -508,11 +508,11 @@ def _dimer_components(theta, u1, u2, r_dir, distances):
     ``u1``/``u2`` are the two symmetry axes and ``r_dir`` the separation
     direction; returns ``(gb_e, qq_e, net)`` arrays the length of ``distances``.
     """
-    sigma0, eps0, kappa, kappa_prime, mu, nu, Q = theta[:7]
+    sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q = theta[:8]
     u1 = np.tile(np.asarray(u1, dtype=float), (distances.size, 1))
     u2 = np.tile(np.asarray(u2, dtype=float), (distances.size, 1))
     r = np.outer(distances, np.asarray(r_dir, dtype=float))
-    gb_e = np.asarray(gb(u1, u2, r, sigma0, eps0, kappa, kappa_prime, mu, nu))
+    gb_e = np.asarray(gb(u1, u2, r, sigma0, eps0, kappa, kappa_prime, mu, nu, xi))
     qq_e = np.asarray(quadrupole(u1, u2, r, Q))
     return gb_e, qq_e, gb_e + qq_e
 

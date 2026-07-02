@@ -22,6 +22,7 @@ PARAM_UNITS = {
     "kappa_prime": "dimensionless",
     "mu": "dimensionless",
     "nu": "dimensionless",
+    "xi": "dimensionless",
     "Q": "(eV*Angstrom^5)^0.5",
     "E_intra": "eV/molecule",
 }
