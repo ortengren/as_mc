@@ -123,6 +123,7 @@ def continue_point(
     buffer_size=100,
     dynamic_delta=True,
     vol_delt=None,
+    progress=False,
 ):
     """Resume one finished point in place and equilibrate ``extra_steps`` further.
 
@@ -156,7 +157,7 @@ def continue_point(
         block_size=block_size,
         buffer_size=buffer_size,
         dynamic_delta=dynamic_delta,
-        progress=False,
+        progress=progress,
     )
     return output_dir
 
