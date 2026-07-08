@@ -29,5 +29,8 @@ data/new_data/
 # Scratch / exploratory notebooks (absolute paths, not reproducible)
 asmcmc/fitting/scratch/
 
+# Literature and references
+literature/
+
 # Packaging
 *.egg-info/
