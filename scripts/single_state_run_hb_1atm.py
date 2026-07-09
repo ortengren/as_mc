@@ -40,19 +40,21 @@ def build_calculator():
         initializer=build_initializer(),
         potential=CACELLI_POTENTIAL,
         output_dir=OUTPUT_DIR,
+        pos_delt=0.07,
+        or_delt=0.02,
     )
 
 
 def equilibrate():
     calculator = build_calculator()
-    calculator.equilibrate(1_000_000, N_PARTICLES)
+    calculator.equilibrate(1_280_000, N_PARTICLES)
     return calculator
 
 
 def run_simulation():
     metro = MetropolisCalculator.from_equilibration(OUTPUT_DIR)
     metro.calculate_trajectory(
-        num_steps=2_000_000, block_size=N_PARTICLES, num_eq_steps=0, buffer_size=125
+        num_steps=2_000_000, block_size=N_PARTICLES, num_eq_steps=0, buffer_size=100
     )
     return metro
 
@@ -78,8 +80,8 @@ def take_measurements():
 
     # r_max stays below half the (NPT-fluctuating) box: the RDF/OCF only fill bins
     # inside each frame's L/2
-    R_MAX = 9.0
-    NUM_BINS = 90
+    R_MAX = 8.5
+    NUM_BINS = 85
 
     analyzer = TrajectoryAnalyzer(f"{RUN_DIR}/simulation.db")
     analyzer.add_measurement("rdf", RadialDistributionFunction(R_MAX, NUM_BINS))
@@ -98,8 +100,7 @@ def take_measurements():
 
 
 def main():
-    run_simulation()
-    take_measurements()
+    equilibrate()
 
 
 if __name__ == "__main__":

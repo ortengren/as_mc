@@ -12,8 +12,9 @@
     "unit": "dimensionless"
   },
   "kappa_prime": {
-    "value": 4.39,
-    "unit": "dimensionless"
+    "value": 0.22779043280182235,
+    "unit": "dimensionless",
+    "note": "Cacelli Table II lists 4.39, but their well-depth convention is inverted relative to potentials.py gb() (chi_prime(1/k') = -chi_prime(k')). 1/4.39 reproduces their fitted Fig. 3 dimer curves (FF -1.81, SP -2.26, TS -1.94 kcal/mol) under this implementation."
   },
   "mu": {
     "value": -10,
