@@ -14,10 +14,11 @@ import numpy as np
 
 from asmcmc.initialize import RandomLatticeInitializer
 from asmcmc.potentials import CACELLI_POTENTIAL
-from asmcmc.equilibration import pressure_ramp
+from asmcmc.equilibration import pressure_ramp, continue_point
+from asmcmc.metropolis import MetropolisCalculator
 
 T = 100.0  # K
-P_TARGET = 6.324209e-6  # eV / Å^3 = 1 atm — the state point we're bracketing
+P_TARGET = 6.324209e-6  # eV / Å^3 = 10 atm
 
 N_PARTICLES = 125
 DENSITY = 0.6  # rho* of the dilute, disordered start
@@ -66,10 +67,15 @@ def run_ramp():
     )
 
 
+def resume_equilibration():
+    """Resume the last stage of the ramp and equilibrate further."""
+
+    outdir = f"{OUTPUT_DIR}/stage05_P6.32421e-06"
+    continue_point(outdir, extra_steps=2_000_000, block_size=N_PARTICLES, progress=True)
+
+
 def main():
-    stage_dirs = run_ramp()
-    print(f"Ramp complete ({len(stage_dirs)} stages).")
-    print(f"Target-pressure stage: {stage_dirs[-1]}")
+    resume_equilibration()
 
 
 if __name__ == "__main__":

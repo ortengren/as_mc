@@ -7,7 +7,7 @@ from asmcmc.metropolis import MetropolisCalculator
 from asmcmc.potentials import GBQPotential, CACELLI_POTENTIAL
 
 T = 100.0  # K
-P = 6.324209e-6  # eV / Å^3 = 1 atm
+P = 6.324209e-6  # eV / Å^3 = 10 atm
 
 N_PARTICLES = 125
 DENSITY = 1.5
@@ -39,17 +39,13 @@ def equilibrate():
 
 
 def resume_equilibration():
-    metro = MetropolisCalculator.from_equilibration(
-        "../results/validation/100.0_6.324209e-06/dense"
-    )
+    metro = MetropolisCalculator.from_equilibration(OUTPUT_DIR)
     metro.equilibrate(3_000_000, 125)
     return metro
 
 
 def run_simulation():
-    metro = MetropolisCalculator.from_equilibration(
-        "../results/validation/100.0_6.324209e-06/dense"
-    )
+    metro = MetropolisCalculator.from_equilibration(OUTPUT_DIR)
     metro.calculate_trajectory(
         num_steps=2_000_000,
         block_size=125,
