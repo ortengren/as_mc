@@ -9,14 +9,18 @@ from asmcmc.potentials import DEFAULT_POTENTIAL
 from asmcmc.initialize import (
     generate_random_config,
     generate_columnar_config,
+    generate_herringbone_config,
     SIGMA0,
     KAPPA,
     DEFAULT_N_PARTICLES,
     DEFAULT_DENSITY,
     DEFAULT_COLUMNAR_DENSITY,
+    DEFAULT_HERRINGBONE_POS_JITTER,
+    DEFAULT_HERRINGBONE_OR_JITTER,
     Initializer,
     RandomLatticeInitializer,
     ColumnarLatticeInitializer,
+    HerringboneLatticeInitializer,
     FrameInitializer,
 )
 from asmcmc.metropolis import MetropolisCalculator
@@ -409,3 +413,132 @@ def test_explicit_initializer_potential_wins_over_calculator():
     )
     init.set_potential(pot_calc)
     assert (init.sigma0, init.kappa) == (6.0, 0.5)
+
+
+# --- herringbone config ---
+
+# experimental benzene Pbca cell edges (data/benzene_herringbone_cg.xyz)
+_HB_CELL_VOLUME = 6.914 * 7.476 * 9.563
+
+
+def _nematic_S(or_vecs):
+    Q = np.mean([1.5 * np.outer(u, u) - 0.5 * np.eye(3) for u in or_vecs], axis=0)
+    return np.linalg.eigvalsh(Q)[-1]
+
+
+def test_herringbone_shapes():
+    f = generate_herringbone_config(n_particles=125, seed=0)
+    assert len(f) == 128  # 125 snaps to a 4x4x2 supercell
+    assert f.positions.shape == (128, 3)
+    assert f.arrays["c_q"].shape == (128, 4)
+    assert f.arrays["or_vec"].shape == (128, 3)
+
+
+def test_herringbone_quaternion_and_or_vec_norms_unity():
+    f = generate_herringbone_config(n_particles=125, seed=0)
+    np.testing.assert_allclose(np.linalg.norm(f.arrays["c_q"], axis=1), 1.0, atol=1e-10)
+    np.testing.assert_allclose(
+        np.linalg.norm(f.arrays["or_vec"], axis=1), 1.0, atol=1e-10
+    )
+
+
+def test_herringbone_is_low_nematic_order():
+    """The defining feature vs columnar: T-shaped, S ~ 0.25 (not parallel S ~ 0.9)."""
+    f = generate_herringbone_config(n_particles=128, seed=0)
+    assert _nematic_S(f.arrays["or_vec"]) < 0.4
+
+
+def test_herringbone_pristine_matches_crystal_order():
+    """No jitter -> exactly the coarse-grained crystal normals (S ~ 0.22)."""
+    f = generate_herringbone_config(n_particles=128, pos_jitter=0.0, or_jitter=0.0)
+    assert _nematic_S(f.arrays["or_vec"]) == pytest.approx(0.217, abs=0.01)
+
+
+def test_herringbone_target_snaps_to_whole_supercell():
+    assert len(generate_herringbone_config(n_particles=125)) == 128  # 4x4x2
+    assert len(generate_herringbone_config(n_particles=108)) == 108  # 3x3x3
+    assert len(generate_herringbone_config(n_particles=1)) % 4 == 0
+
+
+def test_herringbone_density_none_keeps_experimental_cell():
+    f = generate_herringbone_config(n_particles=128, density=None, seed=0)
+    realized = len(f) * SIGMA0**3 / f.get_volume()
+    expected = 4 * SIGMA0**3 / _HB_CELL_VOLUME  # rho* of the experimental crystal
+    assert realized == pytest.approx(expected, rel=1e-6)
+
+
+def test_herringbone_density_rescales_exactly():
+    f = generate_herringbone_config(n_particles=128, density=1.2, seed=0)
+    realized = len(f) * SIGMA0**3 / f.get_volume()
+    assert realized == pytest.approx(1.2, rel=1e-10)
+
+
+def test_herringbone_no_overlaps():
+    f = generate_herringbone_config(n_particles=128, density=None, seed=0)
+    assert _min_center_dist(f) >= KAPPA * SIGMA0
+
+
+def test_herringbone_raises_on_density_too_high():
+    with pytest.raises(ValueError, match="too high"):
+        generate_herringbone_config(n_particles=128, density=10.0)
+
+
+def test_herringbone_seed_reproducibility():
+    f1 = generate_herringbone_config(n_particles=128, seed=42)
+    f2 = generate_herringbone_config(n_particles=128, seed=42)
+    np.testing.assert_array_equal(f1.positions, f2.positions)
+    np.testing.assert_array_equal(f1.arrays["c_q"], f2.arrays["c_q"])
+
+
+def test_herringbone_different_seeds_give_independent_starts():
+    f1 = generate_herringbone_config(n_particles=128, seed=1)
+    f2 = generate_herringbone_config(n_particles=128, seed=2)
+    assert not np.allclose(f1.positions, f2.positions)
+    assert not np.allclose(f1.arrays["c_q"], f2.arrays["c_q"])
+
+
+def test_herringbone_pbc_and_positions_within_box():
+    f = generate_herringbone_config(n_particles=128, seed=0)
+    assert all(f.pbc)
+    L = np.diag(f.cell)
+    assert np.all(f.positions >= 0)
+    assert np.all(f.positions < L)
+
+
+# --- HerringboneLatticeInitializer ---
+
+
+def test_herringbone_initializer_generates_valid_frame():
+    init = HerringboneLatticeInitializer(n_particles=125, seed=0)
+    frame = init.generate()
+    assert len(frame) == 128
+    assert init.n_particles == 128
+    assert init.volume == pytest.approx(frame.get_volume())
+
+
+def test_herringbone_initializer_snaps_and_records_realized_density():
+    init = HerringboneLatticeInitializer(n_particles=125, seed=0)
+    assert init.n_particles == 128  # realized before generate()
+    expected = 4 * SIGMA0**3 / _HB_CELL_VOLUME
+    assert init.density == pytest.approx(expected, rel=1e-6)
+
+
+def test_herringbone_initializer_matches_generate_herringbone_config():
+    init = HerringboneLatticeInitializer(n_particles=128, seed=7)
+    direct = generate_herringbone_config(n_particles=128, seed=7)
+    np.testing.assert_array_equal(init.generate().positions, direct.positions)
+
+
+def test_herringbone_initializer_provenance_records_packing_and_jitter():
+    prov = HerringboneLatticeInitializer(n_particles=125, seed=5).provenance()
+    assert prov["init_n_particles"] == 128
+    assert prov["init_seed"] == 5
+    assert prov["init_packing"] == "herringbone"
+    assert prov["init_pos_jitter"] == pytest.approx(DEFAULT_HERRINGBONE_POS_JITTER)
+    assert prov["init_or_jitter"] == pytest.approx(DEFAULT_HERRINGBONE_OR_JITTER)
+
+
+def test_calculator_accepts_herringbone_initializer():
+    init = HerringboneLatticeInitializer(n_particles=125, seed=0)
+    mc = MetropolisCalculator(temp=100, pressure=0.0, initializer=init)
+    assert mc.initializer is init

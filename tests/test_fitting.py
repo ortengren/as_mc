@@ -1,4 +1,5 @@
 import sys, os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
@@ -6,8 +7,8 @@ import ase
 import pytest
 
 from asmcmc.potentials import gb, quadrupole, GB_PARAMS, QQ
-from asmcmc.fitting.data import gbq, extract_periodic_pairs, FitData
-from asmcmc.fitting.fit import (
+from asmcmc.fitting_gbq.data import gbq, extract_periodic_pairs, FitData
+from asmcmc.fitting_gbq.fit import (
     predict_per_mol,
     boltzmann_weights,
     objective_function,
@@ -19,7 +20,7 @@ from asmcmc.fitting.fit import (
     PARAM_NAMES,
     PENALTY,
 )
-from asmcmc.fitting.report import (
+from asmcmc.fitting_gbq.report import (
     regression_metrics,
     evaluate_fit,
     params_to_dict,
@@ -28,8 +29,14 @@ from asmcmc.fitting.report import (
     PARAM_UNITS,
     BENZENE_SUBLIMATION_EV_PER_MOL,
 )
-from asmcmc.fitting import run as run_mod
-from asmcmc.fitting.run import build_parser, cli, DEFAULT_DATA, DEFAULT_CUTOFF, DEFAULT_OUT
+from asmcmc.fitting_gbq import run as run_mod
+from asmcmc.fitting_gbq.run import (
+    build_parser,
+    cli,
+    DEFAULT_DATA,
+    DEFAULT_CUTOFF,
+    DEFAULT_OUT,
+)
 
 # theta order: [sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q, E_intra]
 THETA = [*GB_PARAMS.values(), QQ, 0.0]
@@ -38,6 +45,7 @@ THETA = [*GB_PARAMS.values(), QQ, 0.0]
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _unit(v):
     v = np.asarray(v, dtype=float)
@@ -74,6 +82,7 @@ def _synthetic_fitdata(n_frames=4, pairs_per_frame=6, seed=1):
 # Math fidelity: the duplicated gbq must equal the canonical potentials.py
 # ---------------------------------------------------------------------------
 
+
 def test_gbq_matches_potentials_gb_plus_quadrupole():
     """gbq(invariants) == potentials.gb + quadrupole(vectors) on random pairs.
 
@@ -92,7 +101,7 @@ def test_gbq_matches_potentials_gb_plus_quadrupole():
     a_j = np.einsum("pk,pk->p", r_hat, u2)
     b_ij = np.einsum("pk,pk->p", u1, u2)
 
-    got = gbq(r_mag, a_i, a_j, b_ij, *GB_PARAMS.values(), QQ)
+    got = gbq(r_mag, a_i, a_j, b_ij, *GB_PARAMS.values())
     ref = gb(u1, u2, r_vec, **GB_PARAMS) + np.squeeze(quadrupole(u1, u2, r_vec, QQ))
     np.testing.assert_allclose(got, ref, rtol=1e-10, atol=1e-12)
 
@@ -100,6 +109,7 @@ def test_gbq_matches_potentials_gb_plus_quadrupole():
 # ---------------------------------------------------------------------------
 # Lattice-sum foundation: extraction + the 1/2 vs an independent image sum
 # ---------------------------------------------------------------------------
+
 
 def test_self_image_lattice_sum_matches_bruteforce():
     """predict_per_mol on a 1-particle crystal == a brute-force self-image sum.
@@ -112,7 +122,9 @@ def test_self_image_lattice_sum_matches_bruteforce():
     L = 7.0
     cutoff = 16.0
     u = _unit([1.0, 2.0, 3.0])
-    frame = ase.Atoms("H", positions=[[0.0, 0.0, 0.0]], cell=np.diag([L, L, L]), pbc=True)
+    frame = ase.Atoms(
+        "H", positions=[[0.0, 0.0, 0.0]], cell=np.diag([L, L, L]), pbc=True
+    )
     frame.new_array("or_vec", u[None, :].copy())
 
     pairs = extract_periodic_pairs(frame, "or_vec", cutoff)
@@ -153,6 +165,7 @@ def test_self_image_lattice_sum_matches_bruteforce():
 # Boltzmann weights: finite on absolute energies, physically ordered, invariant
 # ---------------------------------------------------------------------------
 
+
 def test_boltzmann_weights_stable_and_invariant():
     """Weights stay finite on ~-1600 eV targets and are shift-invariant."""
     target = np.array([-1601.0, -1600.5, -1602.3, -1599.8, -1601.7])
@@ -180,6 +193,7 @@ def test_boltzmann_weights_stable_and_invariant():
 # predict_per_mol: shape and the additive E_intra offset
 # ---------------------------------------------------------------------------
 
+
 def test_predict_per_mol_shape_and_offset():
     """One prediction per frame; E_intra shifts every prediction equally."""
     data = _synthetic_fitdata()
@@ -196,6 +210,7 @@ def test_predict_per_mol_shape_and_offset():
 # ---------------------------------------------------------------------------
 # objective_function: the scalar Cacelli merit F/2 that DE minimises
 # ---------------------------------------------------------------------------
+
 
 def test_objective_equals_half_cacelli_merit():
     """objective_function == 0.5 * sum_k (w_k / sum w)(pred_k - E_k)**2 = F/2."""
@@ -240,6 +255,7 @@ def test_objective_penalises_nonfinite():
 # ---------------------------------------------------------------------------
 # fitting machinery: split, bounds, and the differential_evolution driver
 # ---------------------------------------------------------------------------
+
 
 def test_train_test_split_deterministic_and_partitions():
     """Same seed -> same split; train/test are disjoint and cover every frame."""
@@ -290,25 +306,39 @@ def test_run_fit_recovers_synthetic_params():
 
     # bracket each true value; E_intra inferred from the (now exact) targets
     bounds = [
-        (5.0, 7.0), (1e-3, 0.2), (0.2, 0.7), (0.3, 1.2),
-        (1.0, 3.0), (0.5, 1.5), (0.5, 1.5), (-5.0, 0.0),
+        (5.0, 7.0),
+        (1e-3, 0.2),
+        (0.2, 0.7),
+        (0.3, 1.2),
+        (1.0, 3.0),
+        (0.5, 1.5),
+        (0.5, 1.5),
+        (-5.0, 0.0),
     ]
     bounds.append(default_bounds(data)[-1])
 
     weights = np.ones(data.n_frames)  # uniform: noise-free recovery, no reweight
     res = run_fit(
-        data, weights=weights, bounds=bounds, seed=0,
-        maxiter=300, tol=1e-10, polish=True,
+        data,
+        weights=weights,
+        bounds=bounds,
+        seed=0,
+        maxiter=300,
+        tol=1e-10,
+        polish=True,
     )
 
     assert res.fun < 1e-6
-    np.testing.assert_allclose(predict_per_mol(res.x, data), data.target_per_mol, atol=1e-3)
+    np.testing.assert_allclose(
+        predict_per_mol(res.x, data), data.target_per_mol, atol=1e-3
+    )
     np.testing.assert_allclose(res.x[PARAM_NAMES.index("E_intra")], -1601.0, atol=1e-2)
 
 
 # ---------------------------------------------------------------------------
 # report.regression_metrics: scalar error summary
 # ---------------------------------------------------------------------------
+
 
 def test_regression_metrics_perfect_fit():
     """pred == target -> zero errors and R^2 == 1."""
@@ -349,6 +379,7 @@ def test_regression_metrics_empty_and_constant_target():
 # report.evaluate_fit: per-partition metrics, with/without a split and pred reuse
 # ---------------------------------------------------------------------------
 
+
 def test_evaluate_fit_all_partition_default():
     """No split -> a single 'all' partition covering every frame."""
     data = _synthetic_fitdata(n_frames=10)
@@ -381,6 +412,7 @@ def test_evaluate_fit_pred_reuse_matches_theta_path():
 # report.params_to_dict: self-describing, JSON-serialisable parameter mapping
 # ---------------------------------------------------------------------------
 
+
 def test_params_to_dict_values_units_and_json_roundtrip():
     """Every param maps to its value+unit, in order, and survives JSON."""
     import json
@@ -398,6 +430,7 @@ def test_params_to_dict_values_units_and_json_roundtrip():
 # ---------------------------------------------------------------------------
 # report.sanity_checks: physical reasonableness of a fitted theta
 # ---------------------------------------------------------------------------
+
 
 def test_sanity_checks_offset_and_min_lattice():
     """E_intra is read from its slot; min lattice = min(pred) - E_intra."""
@@ -425,7 +458,9 @@ def test_sanity_checks_lattice_invariant_to_e_intra():
     shifted[PARAM_NAMES.index("E_intra")] += 3.0
     base = sanity_checks(THETA, data)
     bumped = sanity_checks(shifted, data)
-    assert bumped["E_intra_eV_per_mol"] == pytest.approx(base["E_intra_eV_per_mol"] + 3.0)
+    assert bumped["E_intra_eV_per_mol"] == pytest.approx(
+        base["E_intra_eV_per_mol"] + 3.0
+    )
     assert bumped["min_lattice_energy_eV_per_mol"] == pytest.approx(
         base["min_lattice_energy_eV_per_mol"]
     )
@@ -442,6 +477,7 @@ def test_sanity_checks_pred_reuse_matches():
 # report.write_artifacts: the three on-disk files + returned dicts
 # ---------------------------------------------------------------------------
 
+
 def test_write_artifacts_files_and_contents(tmp_path):
     """Writes params/metrics JSON + markdown report; returns matching dicts."""
     import json
@@ -449,7 +485,11 @@ def test_write_artifacts_files_and_contents(tmp_path):
     data = _synthetic_fitdata(n_frames=10)
     train, test = train_test_split(data.n_frames, test_frac=0.2, seed=0)
     out = write_artifacts(
-        str(tmp_path), THETA, data, train_idx=train, test_idx=test,
+        str(tmp_path),
+        THETA,
+        data,
+        train_idx=train,
+        test_idx=test,
         meta={"seed": 0, "dataset": "synthetic"},
     )
 
@@ -474,6 +514,7 @@ def test_write_artifacts_files_and_contents(tmp_path):
 # ---------------------------------------------------------------------------
 # run.build_parser / run.cli: flag parsing and the namespace -> main() mapping
 # ---------------------------------------------------------------------------
+
 
 def test_build_parser_defaults_and_de_knob_grouping():
     """Unset args take main()'s defaults; unset DE knobs stay None (dropped later)."""
@@ -505,13 +546,34 @@ def _capture_main(monkeypatch):
 def test_cli_translates_namespace_to_main(monkeypatch):
     """Set flags flow to main(); only the provided DE knobs ride in de_kwargs."""
     captured = _capture_main(monkeypatch)
-    out = cli([
-        "--dataset", "foo.xyz", "--cutoff", "12", "--out-dir", "/tmp/x",
-        "--weighting", "boltzmann", "--index", ":50",
-        "--test-frac", "0.3", "--split-seed", "1", "--fit-seed", "2",
-        "--workers", "-1", "--maxiter", "100", "--tol", "1e-3",
-        "--alpha", "3.87",
-    ])
+    out = cli(
+        [
+            "--dataset",
+            "foo.xyz",
+            "--cutoff",
+            "12",
+            "--out-dir",
+            "/tmp/x",
+            "--weighting",
+            "boltzmann",
+            "--index",
+            ":50",
+            "--test-frac",
+            "0.3",
+            "--split-seed",
+            "1",
+            "--fit-seed",
+            "2",
+            "--workers",
+            "-1",
+            "--maxiter",
+            "100",
+            "--tol",
+            "1e-3",
+            "--alpha",
+            "3.87",
+        ]
+    )
     assert out == {"sentinel": True}
     assert captured["dataset_path"] == "foo.xyz"
     assert captured["cutoff"] == 12.0
