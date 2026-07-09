@@ -17,15 +17,15 @@ import os
 
 import numpy as np
 
-from asmcmc.fitting.data import build_dataset
-from asmcmc.fitting.fit import (
+from asmcmc.fitting_gbq.data import build_dataset
+from asmcmc.fitting_gbq.fit import (
     DEFAULT_ALPHA,
     boltzmann_weights,
     run_fit,
     train_test_split,
 )
-from asmcmc.fitting.report import write_artifacts
-from asmcmc.fitting.plots import write_plots
+from asmcmc.fitting_gbq.report import write_artifacts
+from asmcmc.fitting_gbq.plots import write_plots
 
 DEFAULT_DATA = "data/xyz_files/ellipsoids_with_axes_and_energies.xyz"
 # Lattice-sum cutoff (Angstrom); matches the MC neighbour radius (nl_radius=15).

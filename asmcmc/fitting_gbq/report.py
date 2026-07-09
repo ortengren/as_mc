@@ -11,7 +11,7 @@ import os
 
 import numpy as np
 
-from asmcmc.fitting.fit import predict_per_mol, PARAM_NAMES
+from asmcmc.fitting_gbq.fit import predict_per_mol, PARAM_NAMES
 
 # Unit annotation per parameter, so the serialised values are self-describing.
 # Q enters the potential only as Q^2, so its natural unit is (energy*length^5)^1/2.
@@ -44,15 +44,20 @@ def regression_metrics(pred, target):
     target = np.asarray(target, dtype=float)
     n = int(target.size)
     if n == 0:
-        return {"n": 0, "rmse": float("nan"), "mae": float("nan"),
-                "max_abs_err": float("nan"), "r2": float("nan")}
+        return {
+            "n": 0,
+            "rmse": float("nan"),
+            "mae": float("nan"),
+            "max_abs_err": float("nan"),
+            "r2": float("nan"),
+        }
 
     err = pred - target
-    ss_res = float(np.sum(err ** 2))
+    ss_res = float(np.sum(err**2))
     ss_tot = float(np.sum((target - target.mean()) ** 2))
     return {
         "n": n,
-        "rmse": float(np.sqrt(np.mean(err ** 2))),
+        "rmse": float(np.sqrt(np.mean(err**2))),
         "mae": float(np.mean(np.abs(err))),
         "max_abs_err": float(np.max(np.abs(err))),
         "r2": 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan"),
@@ -152,13 +157,18 @@ def format_report(params, metrics, sanity, meta=None):
     lines.append("")
 
     lines.append("## Sanity checks (eV/molecule)")
-    lines.append("- inferred E_intra (isolated-molecule ref): "
-                 "{:.4f}".format(sanity["E_intra_eV_per_mol"]))
+    lines.append(
+        "- inferred E_intra (isolated-molecule ref): "
+        "{:.4f}".format(sanity["E_intra_eV_per_mol"])
+    )
     lines.append("- mean target: {:.4f}".format(sanity["mean_target_eV_per_mol"]))
-    lines.append("- min lattice energy (pred - E_intra): {:.4f} "
-                 "(benzene sublimation ref ~ {:.3f})".format(
-                     sanity["min_lattice_energy_eV_per_mol"],
-                     sanity["benzene_sublimation_ref_eV_per_mol"]))
+    lines.append(
+        "- min lattice energy (pred - E_intra): {:.4f} "
+        "(benzene sublimation ref ~ {:.3f})".format(
+            sanity["min_lattice_energy_eV_per_mol"],
+            sanity["benzene_sublimation_ref_eV_per_mol"],
+        )
+    )
     lines.append("")
     return "\n".join(lines)
 

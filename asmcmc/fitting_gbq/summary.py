@@ -23,14 +23,14 @@ matplotlib.use("Agg")  # batch reporting: write figures to file, never open a wi
 import matplotlib.pyplot as plt
 import numpy as np
 
-from asmcmc.fitting.data import build_dataset
-from asmcmc.fitting.fit import (
+from asmcmc.fitting_gbq.data import build_dataset
+from asmcmc.fitting_gbq.fit import (
     PARAM_NAMES,
     boltzmann_weights,
     predict_per_mol,
     train_test_split,
 )
-from asmcmc.fitting.run import DEFAULT_CUTOFF, DEFAULT_DATA
+from asmcmc.fitting_gbq.run import DEFAULT_CUTOFF, DEFAULT_DATA
 from asmcmc.potentials import gb, quadrupole
 
 DEFAULT_RESULTS_ROOT = "results/fitting"

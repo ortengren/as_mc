@@ -15,7 +15,7 @@ matplotlib.use("Agg")  # batch reporting: write figures to file, never open a wi
 import matplotlib.pyplot as plt
 import numpy as np
 
-from asmcmc.fitting.fit import predict_per_mol
+from asmcmc.fitting_gbq.fit import predict_per_mol
 
 
 def parity_plot(pred, target, train_idx=None, test_idx=None, path=None):
