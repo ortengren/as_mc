@@ -17,6 +17,10 @@ class RunConfig:
     or_delt: float
     vol_delt: float
     init: dict  # initializer.provenance()  (already JSON-ready)
+    # anisotropic (single-axis) volume moves? Defaults False so a run_config.json
+    # written before this flag existed loads as the isotropic moves that run used;
+    # from_calculator stamps the live sampler's value for new runs.
+    aniso_vol: bool = False
     run: dict | None = (
         None  # call-time knobs (num_steps, block_size, …) — provenance only
     )
@@ -35,6 +39,7 @@ class RunConfig:
             or_delt=metro.or_delt,
             vol_delt=metro.vol_delt,
             init=metro.initializer.provenance(),
+            aniso_vol=metro.aniso_vol,
             run=run,
         )
 

@@ -7,6 +7,7 @@ from asmcmc.trial_moves import (
     calculate_com_move,
     calculate_quat_move,
     calculate_vol_move,
+    calculate_aniso_vol_move,
 )
 from asmcmc.potentials import Potential, calc_total_energy, DEFAULT_POTENTIAL
 import random
@@ -103,6 +104,7 @@ class MetropolisCalculator:
         nl_skin=1.0,
         output_dir=None,
         npt_ensemble=True,
+        aniso_vol=True,
     ):
         # Resolve the frame source to a single Initializer. ``init_frame`` is a
         # convenience that wraps a supplied frame; ``initializer`` lets callers
@@ -159,6 +161,14 @@ class MetropolisCalculator:
 
         # whether to attempt volume moves (NPT); set False for NVT
         self.npt_ensemble = npt_ensemble
+
+        # volume-move geometry. True (default) = anisotropic: each volume move
+        # rescales one randomly chosen box axis, so the box aspect ratio can relax
+        # to the ordered columnar/nematic phases these oblate particles form.
+        # False = isotropic: uniform scaling of all three axes (size only).
+        # npt_decide_accept is correct for both — it uses only the total volume
+        # ratio V'/V (see calculate_aniso_vol_move).
+        self.aniso_vol = aniso_vol
 
         # index into vol_decisions marking the start of the fresh (not-yet-tuned-on)
         # block of volume moves; vol_delt is adapted on a window of these rather
@@ -233,6 +243,7 @@ class MetropolisCalculator:
             nl_skin=cfg.nl_skin,
             output_dir=output_dir,
             npt_ensemble=cfg.npt_ensemble,
+            aniso_vol=cfg.aniso_vol,
         )
         metro.step_count = row.step
         return metro
@@ -296,8 +307,15 @@ class MetropolisCalculator:
             old_vol = self.current_vol.copy()
             old_total_energy = self.current_energy.copy()
 
-            # calculate new values
-            new_cell, new_vol = calculate_vol_move(old_cell, old_vol, self.vol_delt)
+            # calculate new values: anisotropic (one random axis) or isotropic
+            if self.aniso_vol:
+                new_cell, new_vol = calculate_aniso_vol_move(
+                    old_cell, old_vol, self.vol_delt
+                )
+            else:
+                new_cell, new_vol = calculate_vol_move(
+                    old_cell, old_vol, self.vol_delt
+                )
 
             # apply new values
             self.current_frame.set_cell(new_cell, scale_atoms=True)
