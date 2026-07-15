@@ -32,6 +32,16 @@ TARGET_ACC_RATE = 0.275
 MAX_VOL_DELT = 0.4
 MIN_VOL_DELT = 1e-3
 
+# Ceiling on the adaptive rotation-move width. or_delt is a rotation *angle in
+# radians* (see calculate_quat_move), so a half-turn is the geometric maximum —
+# growing it further only re-parameterizes the same near-randomizing move while
+# the tuner chases an acceptance target a flat orientational landscape can't
+# deliver (the NVT scan's warm points walked it to ~1e4). Runs started from a
+# crystal should pass a much tighter max_or_delt (~0.25 rad ≈ 14°, a physical
+# libration): near-randomizing accepted rotations melt the starting order
+# instead of sampling around it, which vitrified the herringbone validation runs.
+MAX_OR_DELT = np.pi
+
 
 def generate_simulation_id(method="datetime"):
     """Generate an ID for the simulation."""
@@ -97,9 +107,9 @@ class MetropolisCalculator:
         init_frame: Optional[ase.Atoms] = None,
         initializer: Optional[Initializer] = None,
         potential: Optional[Potential] = None,
-        pos_delt=0.15,
-        or_delt=0.05,
-        vol_delt=0.01,
+        pos_delt=0.45,
+        or_delt=0.6,
+        vol_delt=0.001,
         nl_radius=15.0,
         nl_skin=1.0,
         output_dir=None,
@@ -313,9 +323,7 @@ class MetropolisCalculator:
                     old_cell, old_vol, self.vol_delt
                 )
             else:
-                new_cell, new_vol = calculate_vol_move(
-                    old_cell, old_vol, self.vol_delt
-                )
+                new_cell, new_vol = calculate_vol_move(old_cell, old_vol, self.vol_delt)
 
             # apply new values
             self.current_frame.set_cell(new_cell, scale_atoms=True)
@@ -462,11 +470,17 @@ class MetropolisCalculator:
         min_scale=0.9,
         vol_max_scale=None,
         vol_min_scale=None,
+        max_or_delt=None,
     ):
         """Perform a block update of the simulation.
 
         This involves wrapping particles, calculating acceptance rates,
         recording data, and writing to the database.
+
+        ``max_or_delt`` caps the adapted rotation width (default
+        ``MAX_OR_DELT``, the geometric π ceiling). Pass a tight value
+        (~0.25 rad) when equilibrating from a crystal, where near-randomizing
+        rotations would melt the starting order.
         """
         # wrap particles to simulation box
         self.current_frame.wrap()
@@ -577,6 +591,9 @@ class MetropolisCalculator:
             elif or_acc_rate < 0.20:
                 scale_amt = max((min_scale, or_acc_rate / TARGET_ACC_RATE))
                 self.or_delt *= scale_amt
+            self.or_delt = min(
+                self.or_delt, MAX_OR_DELT if max_or_delt is None else max_or_delt
+            )
 
         return buffer
 
@@ -599,6 +616,7 @@ class MetropolisCalculator:
         min_scale=0.9,
         vol_max_scale=None,
         vol_min_scale=None,
+        max_or_delt=None,
     ):
         """Perform an equilibration of the simulation.
 
@@ -607,6 +625,11 @@ class MetropolisCalculator:
         ``block_update``): this slows how fast vol_delt can grow during a downhill
         density collapse — spreading the compression over more steps so the lattice
         can order instead of jamming — without capping the value it converges to.
+
+        ``max_or_delt`` caps the adapted rotation width (see ``block_update``);
+        pass a tight value (~0.25 rad) when starting from a crystal so the tuner
+        cannot walk or_delt up to near-randomizing rotations that melt the
+        starting order before the box equilibrates.
         """
 
         self._write_config(
@@ -618,6 +641,7 @@ class MetropolisCalculator:
                 "dynamic_delta": dynamic_delta,
                 "vol_max_scale": vol_max_scale,
                 "vol_min_scale": vol_min_scale,
+                "max_or_delt": max_or_delt,
             }
         )
 
@@ -648,6 +672,7 @@ class MetropolisCalculator:
                         min_scale=min_scale,
                         vol_max_scale=vol_max_scale,
                         vol_min_scale=vol_min_scale,
+                        max_or_delt=max_or_delt,
                     )
 
         # write any frames left in buffer
@@ -669,14 +694,15 @@ class MetropolisCalculator:
         min_scale=0.90,
         vol_max_scale=None,
         vol_min_scale=None,
+        max_or_delt=None,
         progress=True,
     ):
         """Performs a simulation of the system.  This method will first equilibrate
         the system, then perform the main simulation.
 
-        ``vol_max_scale``/``vol_min_scale`` are forwarded to the equilibration
-        (see ``equilibrate``) to slow vol_delt's growth during compression; they
-        have no effect on the production loop, which does not tune deltas.
+        ``vol_max_scale``/``vol_min_scale``/``max_or_delt`` are forwarded to the
+        equilibration (see ``equilibrate``); they have no effect on the
+        production loop, which does not tune deltas.
         """
         # equilibrate
         if eq_block_size is None:
@@ -690,6 +716,7 @@ class MetropolisCalculator:
                 min_scale=min_scale,
                 vol_max_scale=vol_max_scale,
                 vol_min_scale=vol_min_scale,
+                max_or_delt=max_or_delt,
                 progress=progress,
             )
             self.pos_decisions = []
