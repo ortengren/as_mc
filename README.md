@@ -39,20 +39,6 @@ Tests need `pytest`.
 Run the commands and snippets below from the repository root (output paths are
 relative to the working directory).
 
-### Map the model's phase behaviour (NVT scan)
-
-```bash
-python -m asmcmc.nvt_scan                # writes results/scan_results/nvt_scan.csv + figures
-python -m asmcmc.nvt_scan --plot-only    # re-render figures from the existing CSV
-```
-
-Sweeps a grid of reduced temperatures and densities (T\*, ρ\*), running
-constant-volume MC **on the GB + quadrupole potential** at each point and
-recording the reduced energy, heat capacity, and nematic order parameter.
-These observables should indicate the occurrence of a phase transformation.
-This maps the analytic baseline's own phase behaviour; AniSOAP is not yet
-involved.
-
 ### Fit the GB + quadrupole potential
 
 The Gay-Berne + quadrupole parameters that the simulations use are fit to a
@@ -249,8 +235,57 @@ an end-to-end integration run, and the NVT scan.
 This project is very much still a work-in progress.  The core logic
 seems to work well, and the test suite currently passes (at least on my
 machine!).  At present, only the GB + quadrupole potential is implemented, and
- _not_ the AniSOAP ML potential.
+ *not* the AniSOAP ML potential.
 
 Currently, I am working on ensuring that simulations using the GB potential
 give reasonable results.  Next, I will implement energy calculation via AniSOAP,
 after which the two methods can finally be compared.
+
+## TODO: path to an AniSOAP potential (as of 2026-07-16)
+
+**Motivating finding:** a potential can fit condensed-phase per-configuration
+energies almost perfectly and still get the *pair interaction* badly wrong —
+per-molecule energies are sums over many pairs, so pairwise errors cancel in
+the fit target, and MC then samples exactly the geometries the fit never
+constrained. The GB+Q refit to the crystal dataset is the cautionary example:
+~3 kcal/mol test RMSE on the crystals, yet *repulsive* at the 3.9 Å cofacial
+stacking distance and anti-correlated with the ab initio dimer wells (which is
+why the literature Cacelli parameters — dimer-PES-fit, ~10 kcal/mol RMSE on
+the same crystals — nonetheless give far more realistic simulations).
+Consequence: every candidate potential must pass the **dimer-well benchmark**
+and an **in-MC physics test**, not just held-out energy parity.
+
+- [x] **Phase 0 — validation harness.** `asmcmc/validation.py`: scores any
+  `Potential` against the Cacelli et al. (2004) ab initio benzene dimer set
+  (`data/new_data/3648_1_supplements/`) — well correlation/RMSE, per-family
+  well depths (cofacial / parallel-displaced / T-shaped), and the fatal
+  `stacking_bound` check. Tests in `tests/test_validation.py` pin the two
+  reference points: Cacelli passes (0.21 kcal/mol well RMSE), the
+  condensed-phase refit fails (frozen inline as the known-bad fixture).
+- [ ] **Phase 1 — diagnoses.** (a) Coverage: compare pair-geometry
+  distributions (r, orientation invariants) of the 6,826 training crystals
+  (`data/anisoap_data/benzenes/`) against MC trajectories, to quantify how the
+  dataset under-samples MC-visited stacking geometries. (b) Baseline residual:
+  characterise `E_DFT − E_Cacelli` per molecule — the function the ML
+  correction must learn.
+- [ ] **Phase 2 — model: Cacelli-baselined Δ-learning.**
+  `E = E_GBQ(Cacelli) + AniSOAP·w` (ridge on AniSOAP descriptors,
+  mean-referenced target). The physical baseline hard-codes the repulsive core
+  and bound π-stacking so the ML correction cannot invert them; an
+  unconstrained linear model on raw energies is ruled out by the finding above.
+  Blocker: the GFRE-tuned hyperparameters (`optimized_gfres.npz`) are not in
+  the `data/anisoap_data` drop — obtain from the authors/SI or re-run
+  `hyperparameter_tuning/gfre.py`. **Gate A:** beat Cacelli on condensed-phase
+  test RMSE *and* pass the dimer benchmark.
+- [ ] **Phase 3 — MC integration.** Generalise the `Potential` seam for a
+  local-but-not-pairwise energy (incremental single-particle updates within
+  the descriptor cutoff; full re-evaluation on volume moves). Measure the
+  per-move AniSOAP descriptor cost early — it is the main feasibility risk
+  (MC needs energies only, no forces). **Gate B:** rerun the herringbone
+  validation protocol (100 K / 1 atm, N = 400); success = slipped-parallel
+  crystal with V/molecule pulled from Cacelli's ~96 Å³ toward experiment's
+  ~116 Å³.
+- [ ] **Phase 4 — only if Gate B stalls: close the data gap.** Active
+  learning: new PBE-D3 reference calculations (QuantumEspresso settings from
+  `data/anisoap_data/benzenes/README.md`) on MC-visited and close-contact
+  configurations, then retrain.

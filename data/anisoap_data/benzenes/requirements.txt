@@ -1,0 +1,16 @@
+ase
+bayes_opt
+chemiscope
+freud-analysis
+git+https://github.com/cersonsky-lab/AniSOAP
+matplotlib
+metatensor
+numpy
+os
+pickle
+rascaline
+rowan
+scikit-learn
+scipy
+skmatter
+tqdm
