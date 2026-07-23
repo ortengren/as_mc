@@ -1,8 +1,8 @@
 import numpy as np
 import ase.io
-import ase.neighborlist as nl
-import networkx as nx
 from ase import Atoms
+
+from asmcmc.utils import molecule_fragments
 from anisoap.representations import EllipsoidalDensityProjection
 from anisoap.utils import ClebschGordanReal
 from anisoap.asecg import CGRep as cg
@@ -12,24 +12,26 @@ import random
 
 
 def separate_mols(frame):
-    # build graph
-    G = nx.Graph(nl.build_neighbor_list(frame).get_connectivity_matrix(sparse=False))
-    separate_mols = nx.connected_components(G)
-    return [cg.CGInfo(list(comp), "pentacene", "PC") for comp in separate_mols]
+    """Molecules of ``frame`` as contiguous, PBC-unwrapped ``Atoms``.
+
+    Unwrapping matters: both ``cg.get_center_of_mass`` (``mic=False``) and
+    ``cg.get_quat_and_semiaxes`` (moments of inertia) read raw positions, so a
+    molecule straddling a cell face would otherwise yield a centre near the
+    cell centre and meaningless principal axes. See :mod:`asmcmc.utils`.
+    """
+    mols = []
+    for indices, positions in molecule_fragments(frame):
+        mol = frame[indices]
+        mol.set_positions(positions)
+        mols.append(mol)
+    return mols
 
 
 def get_cg_frame(frame):
-    c_diameters1 = []
-    c_diameters2 = []
-    c_diameters3 = []
-    cg_infos = separate_mols(frame)
     beads = []
-    for bead in cg_infos:
-        com = cg.get_center_of_mass(frame[bead.cg_indices])
-        axes, quat = cg.get_quat_and_semiaxes(frame[bead.cg_indices])
-        c_diameters1.append(axes[0])
-        c_diameters2.append(axes[1])
-        c_diameters3.append(axes[2])
+    for mol in separate_mols(frame):
+        com = cg.get_center_of_mass(mol)
+        axes, quat = cg.get_quat_and_semiaxes(mol)
         bead_frame = Atoms(positions=np.reshape(com, (1, -1)), cell=frame.cell, pbc=frame.pbc)
         bead_frame.arrays["quats"] = np.reshape(quat, (1, -1))
         bead_frame.arrays["c_diameter[1]"] = adjust_c_diameter(axes[0], 1, 12)
