@@ -29,15 +29,15 @@ NL_SKIN = 1.0
 # collapse -> dense glass (runs 2 and 3 of this validation).
 MAX_OR_DELT = 0.25  # rad
 
-OUTPUT_DIR = f"../results/validation/{T}_{P}/herringbone"
+OUTPUT_DIR = f"../results/validation/{T}_{P}/herringbone_jittered_2"
 
 
 def build_initializer():
     return HerringboneLatticeInitializer(
         n_particles=N_PARTICLES,
         density=None,
-        pos_jitter=0.0,
-        or_jitter=0.0,
+        pos_jitter=0.15,
+        or_jitter=0.15,
         seed=SEED,
         potential=CACELLI_POTENTIAL,
     )
@@ -58,7 +58,9 @@ def build_calculator():
 
 def equilibrate():
     calculator = build_calculator()
-    calculator.equilibrate(200_000, N_PARTICLES, max_or_delt=MAX_OR_DELT)
+    calculator.equilibrate(
+        1_000_000, N_PARTICLES, max_or_delt=MAX_OR_DELT, buffer_size=500, progress=True
+    )
     return calculator
 
 
@@ -67,23 +69,24 @@ def resume_equilibration():
 
     continue_point(
         OUTPUT_DIR,
-        extra_steps=10_000_000,
+        extra_steps=9_200_000,
         block_size=N_PARTICLES,
         max_or_delt=MAX_OR_DELT,
         progress=True,
+        buffer_size=500,
     )
 
 
 def run_simulation():
     metro = MetropolisCalculator.from_equilibration(OUTPUT_DIR)
     metro.calculate_trajectory(
-        num_steps=15_000_000, block_size=N_PARTICLES, num_eq_steps=0, buffer_size=200
+        num_steps=15_000_000, block_size=N_PARTICLES, num_eq_steps=0, buffer_size=500
     )
     return metro
 
 
 def take_measurements():
-    RUN_DIR = "../results/validation/100.0_6.324209e-07/herringbone"
+    RUN_DIR = "../results/validation/100.0_6.324209e-07/herringbone_jittered_2"
 
     # Pull the state point straight from the run's write-once config so the
     # measurements stay consistent with how the trajectory was generated.
