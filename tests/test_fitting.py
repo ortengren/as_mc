@@ -101,7 +101,7 @@ def test_gbq_matches_potentials_gb_plus_quadrupole():
     a_j = np.einsum("pk,pk->p", r_hat, u2)
     b_ij = np.einsum("pk,pk->p", u1, u2)
 
-    got = gbq(r_mag, a_i, a_j, b_ij, *GB_PARAMS.values())
+    got = gbq(r_mag, a_i, a_j, b_ij, *GB_PARAMS.values(), QQ)
     ref = gb(u1, u2, r_vec, **GB_PARAMS) + np.squeeze(quadrupole(u1, u2, r_vec, QQ))
     np.testing.assert_allclose(got, ref, rtol=1e-10, atol=1e-12)
 

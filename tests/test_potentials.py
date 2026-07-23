@@ -1,7 +1,10 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import itertools
 import json
+
+import ase
 import numpy as np
 import pytest
 from asmcmc.potentials import (
@@ -96,6 +99,37 @@ def test_calc_total_energy_two_particles(two_particle_frame):
     expected = gb(u1, u2, r, **GB_PARAMS).item() + np.squeeze(quadrupole(u1, u2, r, QQ)).item()
 
     np.testing.assert_allclose(total, expected, rtol=1e-8)
+
+
+def test_calc_total_energy_counts_periodic_self_images():
+    """A lone molecule in a small cell still interacts with its own images.
+
+    Regression: deduplicating pairs with ``i < j`` also discarded every
+    ``i == j`` self-image pair, so any cell with a lattice vector shorter than
+    the cutoff was under-counted -- and a one-molecule cell came back as
+    exactly 0.0. Only cells smaller than the cutoff are affected; MC boxes are
+    much larger, so sampler results are unchanged.
+    """
+    frame = ase.Atoms("X", positions=[[0., 0., 0.]], cell=[6., 6., 6.], pbc=True)
+    frame.arrays["or_vec"] = np.array([[0., 0., 1.]])
+
+    cutoff = 10.0
+    energy = calc_total_energy(frame, cutoff)
+    assert energy != 0.0
+
+    # Independent check: enumerate every image displacement inside the cutoff
+    # and halve, since each pair is shared between the two molecules it joins.
+    u = np.array([[0., 0., 1.]])
+    expected = 0.0
+    reach = int(np.ceil(cutoff / 6.0))
+    for n in itertools.product(range(-reach, reach + 1), repeat=3):
+        r = np.array([n], dtype=float) * 6.0
+        d = np.linalg.norm(r)
+        if 0.0 < d <= cutoff:
+            expected += gb(u, u, r, **GB_PARAMS).item()
+            expected += np.squeeze(quadrupole(u, u, r, QQ)).item()
+
+    np.testing.assert_allclose(energy, 0.5 * expected, rtol=1e-9)
 
 
 # --- GBQPotential (loading + provenance) ---

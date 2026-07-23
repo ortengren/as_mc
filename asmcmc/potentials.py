@@ -105,14 +105,15 @@ def calc_total_energy(frame, nl_cutoff, potential=None):
     if potential is None:
         potential = DEFAULT_POTENTIAL
 
-    # get all interacting pairs (i, j) and their shift vectors
+    # Every interacting pair (i, j) and its shift vector. neighbor_list emits
+    # each pair in BOTH directions, so the sum below is halved rather than
+    # filtered with i < j: that filter also drops the i == j self-image pairs
+    # a molecule has with its own periodic copies, which are real interactions
+    # whenever a lattice vector is shorter than the cutoff. (It made the energy
+    # of a one-molecule cell exactly zero.) Halving is the same convention as
+    # fitting_gbq.data.extract_periodic_pairs / fit.predict_per_mol, and is
+    # identical to the old result for boxes larger than the cutoff.
     i, j, s = neighbor_list("ijS", frame, nl_cutoff)
-
-    # filter for i < j to avoid double counting
-    unique_pairs_mask = i < j
-    i = i[unique_pairs_mask]
-    j = j[unique_pairs_mask]
-    s = s[unique_pairs_mask]
 
     # calculate displacements
     cell = frame.get_cell()
@@ -124,7 +125,7 @@ def calc_total_energy(frame, nl_cutoff, potential=None):
     uhat2 = frame.arrays["or_vec"][j]
 
     # calculate pairwise energies
-    return np.sum(potential.pair_energy(uhat1, uhat2, displacements))
+    return 0.5 * np.sum(potential.pair_energy(uhat1, uhat2, displacements))
 
 
 # TODO: Class structure may need to be updated for AniSOAP implementation.  Currently

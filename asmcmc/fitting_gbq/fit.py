@@ -18,7 +18,7 @@ import numpy as np
 from scipy.optimize import differential_evolution
 from tqdm import tqdm
 
-from asmcmc.fitting.data import precompute_dots_gb
+from asmcmc.fitting_gbq.data import precompute_dots_gb
 
 PARAM_NAMES = ["sigma0", "eps0", "kappa", "kappa_prime", "mu", "nu", "xi", "Q", "E_intra"]
 
