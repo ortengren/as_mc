@@ -41,6 +41,24 @@ def test_runconfig_save_load_round_trip(tmp_path):
     assert cfg.build_potential() == DEFAULT_POTENTIAL
 
 
+def test_runconfig_aniso_vol_round_trip(tmp_path):
+    """aniso_vol survives a save -> load round trip."""
+    path = tmp_path / "run_config.json"
+    _default_config(aniso_vol=True).save(path)
+    assert RunConfig.load(path).aniso_vol is True
+
+
+def test_runconfig_aniso_vol_defaults_false_for_legacy(tmp_path):
+    """A run_config.json predating the flag (no aniso_vol key) loads as isotropic
+    (False) — faithful to the moves those runs actually used."""
+    path = tmp_path / "run_config.json"
+    _default_config(aniso_vol=True).save(path)
+    data = json.loads(path.read_text())
+    del data["aniso_vol"]  # simulate a config written before the flag existed
+    path.write_text(json.dumps(data))
+    assert RunConfig.load(path).aniso_vol is False
+
+
 def test_runconfig_written_as_plain_json(tmp_path):
     """The config on disk is human-readable JSON with the expected fields."""
     cfg = _default_config(npt_ensemble=False)
@@ -70,6 +88,10 @@ def test_equilibrate_writes_run_config(two_particle_frame, tmp_path):
     assert cfg.nl_skin == metro.nl_skin
     assert cfg.build_potential() == metro.potential
     assert cfg.run["kind"] == "equilibration"
+    # the sampler's live volume-move geometry is stamped into the config; the
+    # default sampler is anisotropic
+    assert metro.aniso_vol is True
+    assert cfg.aniso_vol is True
 
 
 def test_write_config_is_write_once(two_particle_frame, tmp_path):

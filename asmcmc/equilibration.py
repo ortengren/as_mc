@@ -123,6 +123,7 @@ def continue_point(
     buffer_size=100,
     dynamic_delta=True,
     vol_delt=None,
+    max_or_delt=None,
     progress=False,
 ):
     """Resume one finished point in place and equilibrate ``extra_steps`` further.
@@ -137,6 +138,9 @@ def continue_point(
 
     ``vol_delt`` (default ``None``) is forwarded to ``from_equilibration`` to
     optionally reset the carried volume move width before continuing.
+    ``max_or_delt`` is forwarded to ``equilibrate`` to cap the adapted rotation
+    width (a resumed run re-tunes its deltas, so an uncapped continuation could
+    otherwise walk or_delt back up).
 
     Reseeds the global RNG from the point's seed subdir (offset by the resumed
     step) so the extension is reproducible and independent of how many other
@@ -157,6 +161,7 @@ def continue_point(
         block_size=block_size,
         buffer_size=buffer_size,
         dynamic_delta=dynamic_delta,
+        max_or_delt=max_or_delt,
         progress=progress,
     )
     return output_dir

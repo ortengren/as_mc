@@ -10,6 +10,7 @@ from asmcmc.metropolis import (
     MetropolisCalculator,
     MIN_VOL_DELT,
     MAX_VOL_DELT,
+    MAX_OR_DELT,
     BOLTZCONST,
     npt_decide_accept,
 )
@@ -129,8 +130,13 @@ def test_energy_tracking_consistent(four_particle_frame, tmp_path):
     recomputed = calc_total_energy(
         metro.current_frame, metro.nl_cutoffs, potential=metro.potential
     )
+    # atol, not just rtol: this 4-particle system's total energy is near zero
+    # (~-0.01 eV), so a pure relative tolerance is ill-conditioned. Benign drift
+    # (near-cutoff pairs differing between the skinned NL and a fresh rebuild,
+    # growing with move width) stays below ~1e-5 eV over 500 steps; a real
+    # bookkeeping bug (e.g. a missed current_energy update) shows up at >=1e-2.
     np.testing.assert_allclose(
-        metro.current_energy, recomputed, rtol=1e-4,
+        metro.current_energy, recomputed, rtol=1e-4, atol=1e-4,
         err_msg="Incremental energy tracker drifted from calc_total_energy",
     )
 
@@ -149,6 +155,47 @@ def test_volume_tracking_consistent(four_particle_frame, tmp_path):
         metro.current_vol, actual_vol, rtol=1e-6,
         err_msg="self.current_vol is stale — not updated after accepted volume moves",
     )
+
+
+def test_isotropic_vol_only_scales_box_uniformly(four_particle_frame, tmp_path):
+    """aniso_vol=False keeps the box an exact uniform scaling of the start: the
+    three axis lengths stay in a constant ratio no matter which volume moves are
+    accepted (isotropic scaling can only change size, never shape)."""
+    metro = make_metro(four_particle_frame, tmp_path, aniso_vol=False)
+    orig = metro.current_frame.cell.lengths().copy()
+    for _ in range(2000):
+        metro.step()
+    ratios = metro.current_frame.cell.lengths() / orig
+    np.testing.assert_allclose(
+        ratios, ratios[0], rtol=1e-10,
+        err_msg="isotropic volume moves must scale all three axes by one factor",
+    )
+
+
+def test_anisotropic_vol_changes_box_shape(four_particle_frame, tmp_path):
+    """aniso_vol=True (the default) lets the aspect ratio change: after at least one
+    accepted single-axis volume move the three axis lengths are no longer in the
+    starting ratio."""
+    metro = make_metro(four_particle_frame, tmp_path)  # default: anisotropic
+    assert metro.aniso_vol is True
+    orig = metro.current_frame.cell.lengths().copy()
+    for _ in range(3000):
+        metro.step()
+    if not any(metro.vol_decisions):
+        pytest.skip("no volume moves accepted in this run; cannot observe a shape change")
+    ratios = metro.current_frame.cell.lengths() / orig
+    assert not np.allclose(ratios, ratios[0]), (
+        "anisotropic volume moves should break the uniform box aspect ratio"
+    )
+
+
+def test_from_equilibration_restores_aniso_vol(four_particle_frame, tmp_path):
+    """The volume-move geometry (recorded in run_config.json) survives a resume;
+    the non-default value proves it is read back, not just re-defaulted."""
+    metro = make_metro(four_particle_frame, tmp_path, aniso_vol=False)
+    metro.equilibrate(num_steps=100, block_size=50, buffer_size=10)
+    resumed = MetropolisCalculator.from_equilibration(str(tmp_path / "sim"))
+    assert resumed.aniso_vol is False
 
 
 def test_recorded_energy_matches_recompute(four_particle_frame, tmp_path):
@@ -338,6 +385,57 @@ def test_vol_delt_slew_limits_rate_not_ceiling(four_particle_frame, tmp_path):
         prev = metro.vol_delt
     assert metro.vol_delt > start  # not pinned at the start value
     assert metro.vol_delt == pytest.approx(MAX_VOL_DELT)  # walked up to its ceiling
+
+
+def test_or_delt_capped_at_geometric_ceiling(four_particle_frame, tmp_path):
+    """The adapted rotation width never grows past MAX_OR_DELT (π): or_delt is a
+    rotation angle, so larger values only re-parameterize the same move while the
+    tuner chases an acceptance target a flat orientational landscape can't give."""
+    metro = make_metro(four_particle_frame, tmp_path, or_delt=MAX_OR_DELT)
+    window = 10
+    metro.pos_decisions = [1] * window
+    db_file = str(tmp_path / "sim" / "equilibration.db")
+    for _ in range(20):
+        # every rotation accepted ⇒ tuner repeatedly tries to grow or_delt
+        metro.or_decisions += [1] * window
+        metro.block_update(window, [], db_file, dynamic_delta=True, buffer_size=1)
+
+    assert metro.or_delt <= MAX_OR_DELT
+
+
+def test_max_or_delt_caps_rotation_width(four_particle_frame, tmp_path):
+    """An explicit max_or_delt clamps or_delt at that value — the guard that keeps
+    a crystal start from being orientationally melted by near-randomizing
+    rotations — while leaving pos_delt tuning untouched."""
+    cap = 0.25
+    metro = make_metro(four_particle_frame, tmp_path, or_delt=0.2, pos_delt=0.1)
+    window = 10
+    db_file = str(tmp_path / "sim" / "equilibration.db")
+    for _ in range(20):
+        # everything accepted ⇒ tuner wants to grow both widths every block
+        metro.pos_decisions += [1] * window
+        metro.or_decisions += [1] * window
+        metro.block_update(
+            window, [], db_file, dynamic_delta=True, buffer_size=1, max_or_delt=cap
+        )
+
+    assert metro.or_delt == pytest.approx(cap)
+    assert metro.pos_delt > 0.1  # pos_delt kept tuning independently
+
+
+def test_equilibrate_forwards_max_or_delt(four_particle_frame, tmp_path):
+    """equilibrate threads max_or_delt through to block_update and records it in
+    the run config, so a capped run is reproducible from its config."""
+    import json
+
+    cap = 0.05  # tight enough that a short free-rotor run must hit it
+    metro = make_metro(four_particle_frame, tmp_path, or_delt=cap)
+    metro.equilibrate(
+        num_steps=300, block_size=20, buffer_size=50, progress=False, max_or_delt=cap
+    )
+    assert metro.or_delt <= cap
+    with open(os.path.join(metro.output_dir, "run_config.json")) as f:
+        assert json.load(f)["run"]["max_or_delt"] == cap
 
 
 def test_vol_delt_tunes_during_equilibration(four_particle_frame, tmp_path):

@@ -8,6 +8,7 @@ from asmcmc.trial_moves import (
     calculate_com_move,
     calculate_quat_move,
     calculate_vol_move,
+    calculate_aniso_vol_move,
     quaternion_multiply,
 )
 
@@ -144,3 +145,88 @@ def test_vol_move_real_cell_large_delta():
         new_cell, _ = calculate_vol_move(cell, old_vol, delta=1.5)
         assert np.isrealobj(new_cell), "Cell has complex entries"
         assert np.all(np.isfinite(new_cell)), "Cell has non-finite entries"
+
+
+# --- calculate_aniso_vol_move ---
+
+def test_aniso_vol_move_scale_factor_bounded():
+    """V'/V = s must lie in [exp(-delta), exp(delta)] (a single-axis log scale)."""
+    cell = np.diag([10., 12., 15.])  # non-cubic, so axes are distinguishable
+    old_vol = np.linalg.det(cell)
+    delta = 0.1
+    for _ in range(300):
+        _, new_vol = calculate_aniso_vol_move(cell, old_vol, delta)
+        s_v = new_vol / old_vol
+        assert np.exp(-delta) - 1e-12 <= s_v <= np.exp(delta) + 1e-12
+
+
+def test_aniso_vol_move_changes_one_axis_only():
+    """Exactly one lattice vector is rescaled (by V'/V, since only it moves); the
+    other two are left untouched."""
+    cell = np.diag([10., 12., 15.])
+    old_vol = np.linalg.det(cell)
+    for _ in range(300):
+        new_cell, new_vol = calculate_aniso_vol_move(cell, old_vol, 0.3)
+        changed = np.any(new_cell != np.asarray(cell), axis=1)  # per lattice vector
+        assert changed.sum() == 1, "more than one axis moved"
+        axis = int(np.argmax(changed))
+        s = new_vol / old_vol  # one axis ⇒ the volume ratio *is* that axis's scale
+        np.testing.assert_allclose(new_cell[axis], np.asarray(cell)[axis] * s, rtol=1e-10)
+        for other in range(3):
+            if other != axis:
+                np.testing.assert_array_equal(new_cell[other], np.asarray(cell)[other])
+
+
+def test_aniso_vol_move_stays_orthorhombic():
+    """A diagonal (orthorhombic) cell stays diagonal — a box length changes but no
+    shear is introduced."""
+    cell = np.diag([10., 12., 15.])
+    old_vol = np.linalg.det(cell)
+    for _ in range(200):
+        new_cell, _ = calculate_aniso_vol_move(cell, old_vol, 0.5)
+        off_diag = new_cell[~np.eye(3, dtype=bool)]
+        np.testing.assert_allclose(off_diag, 0.0, atol=1e-12)
+
+
+def test_aniso_vol_move_log_uniform_and_symmetric():
+    """ln(V'/V) is uniform on [-delta, delta] and symmetric about 0 — the same
+    detailed-balance requirement the (N+1)*ln(V'/V) criterion places on the
+    isotropic move (see test_vol_move_log_uniform_and_symmetric)."""
+    cell = np.diag([10., 12., 15.])
+    old_vol = np.linalg.det(cell)
+    delta = 0.3
+    log_ratios = np.array([
+        np.log(calculate_aniso_vol_move(cell, old_vol, delta)[1] / old_vol)
+        for _ in range(20000)
+    ])
+    assert np.all(np.abs(log_ratios) <= delta + 1e-12)
+    assert abs(log_ratios.mean()) < 0.02          # symmetric about 0
+    assert log_ratios.min() < -0.9 * delta        # spans the full window
+    assert log_ratios.max() > 0.9 * delta
+
+
+def test_aniso_vol_move_volume_consistent():
+    """Returned new_vol must equal det(new_cell)."""
+    cell = np.diag([10., 12., 15.])
+    old_vol = np.linalg.det(cell)
+    for _ in range(200):
+        new_cell, new_vol = calculate_aniso_vol_move(cell, old_vol, 0.2)
+        np.testing.assert_allclose(new_vol, np.linalg.det(new_cell), rtol=1e-10)
+
+
+def test_aniso_vol_move_does_not_mutate_input():
+    """The caller's cell array must be left unchanged (the move returns a copy)."""
+    cell = np.diag([10., 12., 15.])
+    cell_before = cell.copy()
+    calculate_aniso_vol_move(cell, np.linalg.det(cell), 0.5)
+    np.testing.assert_array_equal(cell, cell_before)
+
+
+def test_aniso_vol_move_positive_real_large_delta():
+    """s > 0 and the cell stays real/finite even when delta >= 1."""
+    cell = np.diag([10., 12., 15.])
+    old_vol = np.linalg.det(cell)
+    for _ in range(300):
+        new_cell, new_vol = calculate_aniso_vol_move(cell, old_vol, 1.5)
+        assert new_vol > 0, f"new_vol={new_vol} is not positive"
+        assert np.isrealobj(new_cell) and np.all(np.isfinite(new_cell))

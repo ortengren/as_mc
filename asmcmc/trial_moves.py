@@ -66,3 +66,29 @@ def calculate_vol_move(cell, curr_vol, delta):
     new_cell = s_l * cell
     new_vol = curr_vol * s_v
     return new_cell, new_vol
+
+
+def calculate_aniso_vol_move(cell, curr_vol, delta):
+    """Anisotropic log-uniform volume move: rescale a single, randomly chosen
+    lattice vector by s = exp(U(-delta, delta)), leaving the other two axes fixed.
+
+    Where ``calculate_vol_move`` scales all three axes by the same s_v**(1/3) (an
+    isotropic *size* change), this changes one box length at a time, so the box can
+    relax its *aspect ratio* over many moves — needed to reach the ordered
+    anisotropic (columnar / nematic) phases these oblate particles form, which an
+    isotropic move can never reach from a differently-shaped start.
+
+    Only one axis scales, so V'/V = s exactly, and the (N+1)*ln(V'/V) term in
+    ``npt_decide_accept`` is therefore unchanged — it depends only on the total
+    volume ratio, not on which or how many axes moved. Sampling ln(s) ~
+    U(-delta, delta) keeps the proposal symmetric in ln(V) (the detailed-balance
+    requirement for that criterion) and s > 0 for any delta.
+    """
+    s = np.exp(rand.uniform(-delta, delta))
+    axis = rand.randrange(3)
+    # np.array(..., dtype=float) copies (so the caller's cell is untouched) and
+    # coerces an ASE Cell to a plain 3x3 ndarray; scaling row ``axis`` stretches
+    # that lattice vector, keeping an orthorhombic cell orthorhombic.
+    new_cell = np.array(cell, dtype=float)
+    new_cell[axis] *= s
+    return new_cell, curr_vol * s
