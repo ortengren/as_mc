@@ -126,12 +126,21 @@ and an **in-MC physics test**, not just held-out energy parity.
   `stacking_bound` check. Tests in `tests/test_validation.py` pin the two
   reference points: Cacelli passes (0.21 kcal/mol well RMSE), the
   condensed-phase refit fails (frozen inline as the known-bad fixture).
-- [ ] **Phase 1 — diagnoses.** (a) Coverage: compare pair-geometry
-  distributions (r, orientation invariants) of the 6,826 training crystals
-  (`data/anisoap_data/benzenes/`) against MC trajectories, to quantify how the
-  dataset under-samples MC-visited stacking geometries. (b) Baseline residual:
-  characterise `E_DFT − E_Cacelli` per molecule — the function the ML
-  correction must learn.
+- [x] **Phase 1 — diagnoses.** `notebooks/phase1_coverage_residual.ipynb`,
+  comparing the training crystals against the validated MC production run in the
+  Gay-Berne pair invariants `(r, a_hi, |b|)`.
+  *(a) Coverage:* the contact shell is well constrained — only **1.3 %** of MC
+  pair density at `r ≤ 4.8 Å` falls in bins with no training data — so the
+  refit's stacking failure was the fitting objective, not a hole in the data.
+  Over the full 7 Å descriptor range the gap grows to **13.4 %**. Caveat: the
+  training cells hold 1–2 molecules, so every self-image pair is exactly
+  parallel and orientational diversity is degenerate by construction.
+  *(b) Baseline residual:* `Δ = E_DFT − E_Cacelli` has an overall RMS of
+  **0.457 eV/molecule**, but 8.8 % of frames (the high-energy repulsive tail
+  MC never visits) carry **58 %** of its variance, while the 68 % of frames
+  that are bound sit at **0.126 eV/molecule**. Consequence for Phase 2: weight
+  the correction toward the bound regime and quote Gate A there, or the fit
+  will chase a repulsive tail exactly as the GB+Q refit did.
 - [ ] **Phase 2 — model: Cacelli-baselined Δ-learning.**
   `E = E_GBQ(Cacelli) + AniSOAP·w` (ridge on AniSOAP descriptors,
   mean-referenced target). The physical baseline hard-codes the repulsive core
