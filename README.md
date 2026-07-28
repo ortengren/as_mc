@@ -71,17 +71,23 @@ Add your own observable by subclassing `Measurement` (implement `compute` and
 | ---- | ---- |
 | `asmcmc/` | The installable package — everything importable lives here |
 | `asmcmc/metropolis.py` | `MetropolisCalculator` — the Metropolis-Hastings sampler (NPT default, NVT optional) and full simulation runs |
-| `asmcmc/potentials.py` | Gay-Berne + quadrupole pair potential (Walsh benzene parameters) |
-| `asmcmc/trial_moves.py` | Trial moves: translation, quaternion rotation, isotropic volume scaling |
-| `asmcmc/initialize.py` | `generate_random_config` — randomized starting configuration at a target density |
-| `asmcmc/measurements.py` | Observable framework: `Measurement` base, `TrajectoryAnalyzer`, and ready-made measurements (energy, heat capacity, RDF, orientational correlation, nematic order) |
-| `asmcmc/driver.py` | Multi-temperature NPT runs plus AniSOAP feature generation (`python -m asmcmc.driver`) |
+| `asmcmc/potentials.py` | Gay-Berne + quadrupole pair potentials: `Potential` ABC, `GBQPotential`, `DEFAULT_POTENTIAL`, `CACELLI_POTENTIAL` |
+| `asmcmc/trial_moves.py` | Trial moves: translation, quaternion rotation, isotropic and single-axis anisotropic volume scaling |
+| `asmcmc/initialize.py` | Starting configurations + `Initializer` classes: random, columnar, herringbone, or an existing frame |
+| `asmcmc/measurements.py` | Observable framework: `Measurement` base, `TrajectoryAnalyzer`, and ready-made measurements (energy, enthalpy, heat capacity, RDF, orientational correlation, nematic order) |
+| `asmcmc/config.py` | `RunConfig` — the frozen, JSON-serialisable record of a run's static definition (`run_config.json`) |
+| `asmcmc/equilibration.py` | Single-point NPT equilibration primitives: `equilibrate_point`, `continue_point`, `find_point_dirs`, `pressure_ramp` |
+| `asmcmc/npt_equilibration.py` | Equilibrate a grid of (T, P) state points in parallel (`python -m asmcmc.npt_equilibration`) |
+| `asmcmc/npt_production.py` | Production trajectories on equilibrated points, plus replica aggregation |
+| `asmcmc/validation.py` | Physics validation benchmarks for candidate potentials (Cacelli dimer wells) |
+| `asmcmc/utils.py` | Geometry helpers turning atomistic frames into ellipsoids (no `anisoap`/`metatensor` dependency) |
 | `asmcmc/fitting_gbq/` | Fit the GB + quadrupole potential to reference energies (`python -m asmcmc.fitting_gbq.run`) |
 | `asmcmc/generate_cg_reps.py` | AniSOAP coarse-grained representation generation |
 | `tests/` | pytest suite |
+| `scripts/` | Run drivers and fit campaign shell scripts; `scripts/archive/` holds superseded ones |
 | `data/` | Input datasets (`data/xyz_files/` crystal structures; bulk files kept on disk, not in VCS) |
 | `notebooks/` | Exploratory analysis notebooks (not load-bearing) |
-| `results/` | Regenerable outputs (gitignored): `results/simulations/` NPT runs, `results/scan_results/` NVT scans |
+| `results/` | Regenerable outputs (gitignored except the fit campaign): `results/simulations/` MC runs, `results/validation/` Cacelli validation runs, `results/fitting/` fit artifacts |
 
 Trajectories are stored as ASE `.db` files.
 
