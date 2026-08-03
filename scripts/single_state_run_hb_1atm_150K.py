@@ -13,11 +13,13 @@ from asmcmc.equilibration import continue_point
 
 import pickle
 import json
+import matplotlib.pyplot as plt
+from ase.db import connect
 
-T = 300.0  # K
+T = 150.0  # K
 P = 6.324209e-7  # eV / Å^3 = 1 atm
 
-SEED = 123219
+SEED = 313
 N_PARTICLES = 400
 NL_RADIUS = 6.8
 NL_SKIN = 1.0
@@ -29,7 +31,7 @@ NL_SKIN = 1.0
 # collapse -> dense glass (runs 2 and 3 of this validation).
 MAX_OR_DELT = 0.25  # rad
 
-OUTPUT_DIR = f"../results/validation/{T}_{P}/herringbone_jittered_2"
+OUTPUT_DIR = f"../results/validation/{T}_{P}/herringbone_jittered_0"
 
 
 def build_initializer():
@@ -86,11 +88,10 @@ def run_simulation():
 
 
 def take_measurements():
-    RUN_DIR = "../results/validation/300.0_6.324209e-07/herringbone_jittered_2"
 
     # Pull the state point straight from the run's write-once config so the
     # measurements stay consistent with how the trajectory was generated.
-    with open(f"{RUN_DIR}/run_config.json") as f:
+    with open(f"{OUTPUT_DIR}/run_config.json") as f:
         config = json.load(f)
 
     temp = config["temp"]
@@ -109,7 +110,7 @@ def take_measurements():
     R_MAX = 12
     NUM_BINS = 120
 
-    analyzer = TrajectoryAnalyzer(f"{RUN_DIR}/simulation.db")
+    analyzer = TrajectoryAnalyzer(f"{OUTPUT_DIR}/simulation.db")
     analyzer.add_measurement("rdf", RadialDistributionFunction(R_MAX, NUM_BINS))
     analyzer.add_measurement("ocf", OrientationalCorrelationFunction(R_MAX, NUM_BINS))
     analyzer.add_measurement("nematic", NematicOrderParameter())
@@ -119,10 +120,39 @@ def take_measurements():
     )
     results = analyzer.run_analysis()
 
-    RESULTS_PATH = f"{RUN_DIR}/measurements.pkl"
+    RESULTS_PATH = f"{OUTPUT_DIR}/measurements.pkl"
 
     with open(RESULTS_PATH, "wb") as f:
         pickle.dump(results, f)
+
+
+def equilibration_diagnostics():
+    steps, energy, vol = [], [], []
+    with connect(f"{OUTPUT_DIR}/simulation.db") as db:
+        for row in db.select():
+            steps.append(row.step)
+            energy.append(row.total_energy)
+            vol.append(row.vol)
+
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+    axs[0].plot(steps, energy, marker=".")
+    axs[0].set_ylabel("Total energy  (eV)")
+
+    axs[1].plot(steps, vol, marker=".", color="tab:green")
+    axs[1].set_ylabel("Volume  (Å³)")
+
+    for ax in axs:
+        ax.set_xlabel("Step")
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle("Equilibration Diagnostics")
+    fig.tight_layout()
+
+    fig.savefig(
+        f"{OUTPUT_DIR}/equilibration_diagnostics.png",
+        dpi=150,
+    )
 
 
 def main():
