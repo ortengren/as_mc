@@ -16,6 +16,11 @@ from asmcmc.measurements import (
     EffectiveSampleSize,
     integrated_autocorr_time,
     BOLTZCONST,
+    BENZENE_FUNDAMENTALS,
+    EV_PER_K_TO_J_PER_MOL_K,
+    HC_OVER_K,
+    einstein_function,
+    vibrational_heat_capacity,
 )
 from asmcmc.metropolis import npt_decide_accept
 from asmcmc.potentials import calc_total_energy
@@ -465,3 +470,127 @@ def test_decide_accept_zero_vol_rejected():
     """new_vol == 0 must be rejected without raising."""
     beta, P, N = 1.0, 0.0, 2
     assert not npt_decide_accept(0.0, 0.0, 1000.0, 0.0, beta, P, N)
+
+
+# --- Intramolecular vibrations (Einstein sum) ---
+
+
+def test_benzene_table_carries_thirty_modes():
+    """The 20 distinct fundamentals must account for all 3N - 6 = 30 modes.
+
+    This is the sum rule the whole correction rests on. The NIST/Shimanouchi
+    table lists degeneracy only via the symmetry species (e = 2, a/b = 1) and
+    repeats three entries for Fermi-resonance doublets, so a naive read gives
+    23 modes, not 30.
+    """
+    assert len(BENZENE_FUNDAMENTALS) == 20
+    assert sum(g for _, g in BENZENE_FUNDAMENTALS) == 30
+    assert all(g in (1, 2) for _, g in BENZENE_FUNDAMENTALS)
+    # 10 doubly degenerate (e species) and 10 not.
+    assert sum(1 for _, g in BENZENE_FUNDAMENTALS if g == 2) == 10
+
+
+def test_einstein_function_classical_limit():
+    """f_E -> 1 as x -> 0: each mode carries its full classical k_B."""
+    np.testing.assert_allclose(einstein_function(0.0), 1.0, rtol=1e-12)
+    np.testing.assert_allclose(einstein_function(1e-10), 1.0, rtol=1e-12)
+    np.testing.assert_allclose(einstein_function(1e-3), 1.0, rtol=1e-6)
+
+
+def test_einstein_function_freezes_out():
+    """f_E -> x^2 e^-x for x >> 1, and never overflows at extreme x."""
+    x = 40.0
+    np.testing.assert_allclose(einstein_function(x), x**2 * np.exp(-x), rtol=1e-15)
+    for huge in (1e3, 1e6, 1e30):
+        val = einstein_function(huge)
+        assert np.isfinite(val) and val >= 0.0
+
+
+def test_einstein_function_matches_naive_form():
+    """The sinh form equals x^2 e^x/(e^x - 1)^2 wherever the latter is stable."""
+    x = np.array([0.1, 0.5, 1.0, 2.0, 5.0, 20.0, 40.0])
+    naive = x**2 * np.exp(x) / np.expm1(x) ** 2
+    np.testing.assert_allclose(einstein_function(x), naive, rtol=1e-12)
+
+
+def test_einstein_function_monotonic_in_x():
+    """f_E decreases monotonically in x = Theta/T (i.e. increases with T)."""
+    x = np.linspace(0.05, 30.0, 400)
+    assert np.all(np.diff(einstein_function(x)) < 0)
+
+
+def test_vibrational_heat_capacity_high_temperature_limit():
+    """T >> all Theta: every one of the 30 modes contributes k_B."""
+    c = vibrational_heat_capacity(1e6)
+    np.testing.assert_allclose(c / BOLTZCONST, 30.0, rtol=1e-4)
+
+
+def test_vibrational_heat_capacity_vanishes_at_low_temperature():
+    """T << all Theta: everything is frozen out."""
+    assert vibrational_heat_capacity(1.0) / BOLTZCONST < 1e-100
+
+
+def test_vibrational_heat_capacity_monotonic_in_temperature():
+    temps = np.linspace(50.0, 1500.0, 200)
+    assert np.all(np.diff(vibrational_heat_capacity(temps)) > 0)
+
+
+def test_vibrational_heat_capacity_matches_gas_phase_residual():
+    """Physical anchor: for the ideal gas, C_p = 4R + C_vib.
+
+    Benzene's ideal-gas C_p(298.15 K) is 82.44 J/(mol K); the rigid-molecule
+    part is 4R (3/2 translation + 3/2 rotation + R for P V). What is left must
+    be the vibrational sum, which validates both the frequencies and -- far
+    more easily got wrong -- the degeneracies.
+    """
+    residual = 82.44 - 4 * 8.314463  # ~49.2 J/(mol K)
+    c = float(vibrational_heat_capacity(298.15)) * EV_PER_K_TO_J_PER_MOL_K
+    # 2% covers the harmonic/observed-fundamental mismatch; a dropped
+    # degeneracy would land ~30% low and is what this test is guarding.
+    np.testing.assert_allclose(c, residual, rtol=0.02)
+
+
+def test_vibrational_heat_capacity_degeneracy_actually_matters():
+    """Ignoring the e-species degeneracy must visibly break the anchor."""
+    flat = tuple((nu, 1) for nu, _ in BENZENE_FUNDAMENTALS)
+    full = float(vibrational_heat_capacity(298.15))
+    assert float(vibrational_heat_capacity(298.15, flat)) < 0.75 * full
+
+
+def test_vibrational_heat_capacity_shapes():
+    """Scalar in, scalar out; array in, matching array out."""
+    assert np.shape(vibrational_heat_capacity(300.0)) == ()
+    temps = np.array([100.0, 200.0, 300.0])
+    assert vibrational_heat_capacity(temps).shape == (3,)
+
+
+def test_hc_over_k_converts_wavenumber_to_kelvin():
+    """Theta = h c nu / k_B; 410 cm^-1 (benzene's lowest) is ~590 K."""
+    np.testing.assert_allclose(HC_OVER_K * 410.0, 589.9, rtol=1e-3)
+
+
+def test_heat_capacity_vibrational_modes_default_off():
+    """Omitting vibrational_modes reproduces the pre-existing result exactly."""
+    T, N = 300.0, 5
+    energies = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    m = HeatCapacity(temperature=T, num_particles=N)
+    for e in energies:
+        m.compute(None, {"total_energy": e}, None)
+    expected = 3 * BOLTZCONST + np.var(energies) / (BOLTZCONST * N * T**2)
+    np.testing.assert_allclose(m.finalize(), expected, rtol=1e-12)
+
+
+def test_heat_capacity_adds_vibrational_term():
+    """Passing vibrational_modes adds exactly vibrational_heat_capacity(T)."""
+    T, N = 300.0, 5
+    energies = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    kwargs = dict(temperature=T, num_particles=N)
+    bare = HeatCapacity(**kwargs)
+    withvib = HeatCapacity(**kwargs, vibrational_modes=BENZENE_FUNDAMENTALS)
+    for e in energies:
+        bare.compute(None, {"total_energy": e}, None)
+        withvib.compute(None, {"total_energy": e}, None)
+    delta = withvib.finalize() - bare.finalize()
+    np.testing.assert_allclose(
+        delta, float(vibrational_heat_capacity(T)), rtol=1e-12
+    )

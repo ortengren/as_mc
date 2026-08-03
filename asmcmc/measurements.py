@@ -251,6 +251,104 @@ class NematicOrderParameter(Measurement):
         }
 
 
+HC_OVER_K = 1.438777  # h c / k_B in cm K -- converts a wavenumber to a Theta
+
+# eV/K per molecule -> J/(mol K), for comparison against calorimetry tables.
+EV_PER_K_TO_J_PER_MOL_K = 96485.33
+
+# (wavenumber [cm^-1], degeneracy) for the 20 distinct fundamentals of benzene.
+# Shimanouchi's "selected frequency" values (NSRDS-NBS 39, 1972) received from
+# the NIST Chemistry WebBook.
+BENZENE_FUNDAMENTALS = (
+    (3062.0, 1),  # 1   a1g  CH stretch
+    (992.0, 1),  # 2   a1g  ring stretch (breathing)
+    (1326.0, 1),  # 3   a2g  CH bend
+    (673.0, 1),  # 4   a2u  CH bend (out of plane)
+    (3068.0, 1),  # 5   b1u  CH stretch
+    (1010.0, 1),  # 6   b1u  ring deformation
+    (995.0, 1),  # 7   b2g  CH bend
+    (703.0, 1),  # 8   b2g  ring deformation
+    (1310.0, 1),  # 9   b2u  ring stretch
+    (1150.0, 1),  # 10  b2u  CH bend
+    (849.0, 2),  # 11  e1g  CH bend
+    (3063.0, 2),  # 12  e1u  CH stretch
+    (1486.0, 2),  # 13  e1u  ring stretch + deformation
+    (1038.0, 2),  # 14  e1u  CH bend
+    (3047.0, 2),  # 15  e2g  CH stretch
+    (1596.0, 2),  # 16  e2g  ring stretch
+    (1178.0, 2),  # 17  e2g  CH bend
+    (606.0, 2),  # 18  e2g  ring deformation
+    (975.0, 2),  # 19  e2u  CH bend
+    (410.0, 2),  # 20  e2u  ring deformation
+)
+
+
+def einstein_function(x):
+    """Heat capacity of one harmonic oscillator, in units of k_B, at x = Theta/T.
+
+        f_E(x) = x^2 e^x / (e^x - 1)^2 = (x/2)^2 / sinh^2(x/2)
+
+    The sinh form is used because the first subtracts 1 from a large
+    exponential. f_E is a smooth switch turning the mode's classical k_B on as
+    T rises past its characteristic temperature Theta = h c nu / k_B:
+
+        x -> 0  (T >> Theta):  f_E -> 1, equipartition (1/2 k_B kinetic +
+                               1/2 k_B potential)
+        x -> inf (T << Theta): f_E -> x^2 e^-x, exponentially frozen out
+
+    with the crossover at x ~ 1. Accepts a scalar or any array shape.
+
+    Note this is the Einstein *function*, which is exact for an independent
+    harmonic oscillator -- not the Einstein *model* of a solid, whose single
+    shared frequency famously misses the T^3 law that acoustic branches give.
+    Molecular vibrations really are independent oscillators at fixed measured
+    frequencies, so no Einstein-model approximation is involved here.
+    """
+    x = np.asarray(x, dtype=float)
+    # Clipping keeps sinh finite at both ends; f_E underflows to 0 long before
+    # x = 700, and is 1 to ~1e-16 below x = 1e-8, so neither bound is physical.
+    xc = np.clip(x, 1e-8, 700.0)
+    f = (xc / (2.0 * np.sinh(xc / 2.0))) ** 2
+    return np.where(x < 1e-8, 1.0, f)
+
+
+def vibrational_heat_capacity(temperature, fundamentals=BENZENE_FUNDAMENTALS):
+    """Intramolecular vibrational heat capacity per molecule, in eV/K.
+
+        C_vib(T) = k_B sum_j g_j f_E(Theta_j / T)
+
+    over the distinct fundamentals j with degeneracies g_j. The modes are
+    independent, so ln q_vib is a sum over modes and every extensive quantity
+    decomposes mode by mode; the zero-point term is T-independent and so
+    contributes to U and H but exactly nothing here.
+
+    This is the piece a rigid-body MC trajectory cannot contain. The sampler
+    gives each molecule 6 degrees of freedom (3 translational + 3 rotational),
+    which ``HeatCapacity`` already accounts for via its 3 k_B kinetic term plus
+    the configurational fluctuation. Real benzene has 3 x 12 = 36, so what is
+    missing is exactly the 30 intramolecular vibrations -- and only those. Do
+    not add a q_rot or q_trans on top; the MC samples both.
+
+    The additivity relies on the intramolecular Hamiltonian being separable
+    from the intermolecular one and independent of V. That independence is what
+    lets q_vib factor out of the NPT volume integral, so this same term adds to
+    C_p in NPT exactly as it adds to C_v in NVT (no P V work is done by an
+    intramolecular mode). It holds well for benzene's stiff ring and CH modes;
+    it is the lattice modes, which the MC does sample, that carry the large
+    volume dependence.
+
+    ``temperature`` may be a scalar or an array (the result matches its shape).
+    Multiply by ``EV_PER_K_TO_J_PER_MOL_K`` to compare against calorimetry.
+    """
+    temp = np.asarray(temperature, dtype=float)
+    nu = np.array([f[0] for f in fundamentals], dtype=float)
+    degeneracy = np.array([f[1] for f in fundamentals], dtype=float)
+    theta = HC_OVER_K * nu
+    x = theta[:, None] / temp.reshape(1, -1)
+    c = BOLTZCONST * (degeneracy[:, None] * einstein_function(x)).sum(axis=0)
+    return c.reshape(temp.shape)
+
+
 class HeatCapacity(Measurement):
     """Per-particle heat capacity from energy/enthalpy fluctuations.
 
@@ -274,14 +372,26 @@ class HeatCapacity(Measurement):
     translational + 3 rotational, i.e. a rigid 3-D rotor). It is the same
     constant in both ensembles (the ideal-gas C_p - C_v = k_B shift is not
     applied) and only sets the baseline, not the transition peak.
+
+    Those 6 DOF are all a rigid-body sampler has. Passing ``vibrational_modes``
+    (e.g. ``BENZENE_FUNDAMENTALS``) adds the analytic intramolecular term
+    ``vibrational_heat_capacity`` on top, which is what any comparison against
+    a real calorimetry curve needs. It is left off by default because it is a
+    property of the molecule, not of the trajectory, and because it is only
+    half the quantum correction: the librational lattice modes the MC *does*
+    sample are treated classically, which biases the result the other way at
+    low T (h c nu / k_B T ~ 1.4 for a 100 cm^-1 mode at 100 K).
     """
 
-    def __init__(self, temperature, num_particles, pressure=None):
+    def __init__(
+        self, temperature, num_particles, pressure=None, vibrational_modes=None
+    ):
         super().__init__()
         self.enthalpies = []
         self.temp = temperature
         self.num_particles = num_particles
         self.pressure = pressure
+        self.vibrational_modes = vibrational_modes
 
     def compute(self, frame, scalar_data, array_data):
         h = scalar_data["total_energy"]
@@ -294,7 +404,10 @@ class HeatCapacity(Measurement):
         var = np.var(self.enthalpies)
         cv_ideal = 3 * BOLTZCONST
         cv_excess = var / (BOLTZCONST * self.num_particles * self.temp**2)
-        return cv_ideal + cv_excess
+        total = cv_ideal + cv_excess
+        if self.vibrational_modes is not None:
+            total += float(vibrational_heat_capacity(self.temp, self.vibrational_modes))
+        return total
 
 
 def integrated_autocorr_time(x):
