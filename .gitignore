@@ -34,3 +34,9 @@ todo_list.odt
 
 # Packaging
 *.egg-info/
+
+# Signac
+.signac
+view
+workspace
+signac_project_document.json
