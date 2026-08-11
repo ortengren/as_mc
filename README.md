@@ -9,10 +9,10 @@ This project serves as a real-world benchmark of AniSOAP, designed to compare
 its effectiveness with other approaches (especially analytic potentials, i.e.
 the Gay-Berne potential).
 
-The bulk of the simulation logic lives in `asmcmc/metropolis.py`.  The
+The bulk of the simulation logic lives in `asmcmc/base/metropolis.py`.  The
 `MetropolisCalculator` class contains methods for performing full simulation
 runs, including equilibration.  Simulations can be read and evaluated using
-tools from `asmcmc/measurements.py`.  In particular, the `TrajectoryAnalyzer`
+tools from `asmcmc/utils/measurements.py`.  In particular, the `TrajectoryAnalyzer`
 class offers an efficient way to determine quantities of interest, such as heat
 capacity and orientational correlation.
 
@@ -42,7 +42,7 @@ relative to the working directory).
 ### Run a simulation
 
 ```python
-from asmcmc.metropolis import MetropolisCalculator
+from asmcmc.base.metropolis import MetropolisCalculator
 
 # NPT by default; pass npt_ensemble=False for fixed-volume NVT.
 # init_frame=None auto-generates a starting configuration.
@@ -54,7 +54,7 @@ metro.calculate_trajectory(num_steps=200_000, num_eq_steps=100_000)
 ### Analyse a trajectory
 
 ```python
-from asmcmc.measurements import TrajectoryAnalyzer, HeatCapacity, RadialDistributionFunction
+from asmcmc.utils.measurements import TrajectoryAnalyzer, HeatCapacity, RadialDistributionFunction
 
 analyzer = TrajectoryAnalyzer("results/simulations/demo/simulation.db")
 analyzer.add_measurement("Cv", HeatCapacity(temperature=300, num_particles=125))
@@ -70,18 +70,23 @@ Add your own observable by subclassing `Measurement` (implement `compute` and
 | Path | Role |
 | ---- | ---- |
 | `asmcmc/` | The installable package — everything importable lives here |
-| `asmcmc/metropolis.py` | `MetropolisCalculator` — the Metropolis-Hastings sampler (NPT default, NVT optional) and full simulation runs |
-| `asmcmc/potentials.py` | Gay-Berne + quadrupole pair potentials: `Potential` ABC, `GBQPotential`, `DEFAULT_POTENTIAL`, `CACELLI_POTENTIAL` |
-| `asmcmc/trial_moves.py` | Trial moves: translation, quaternion rotation, isotropic and single-axis anisotropic volume scaling |
-| `asmcmc/initialize.py` | Starting configurations + `Initializer` classes: random, columnar, herringbone, or an existing frame |
-| `asmcmc/measurements.py` | Observable framework: `Measurement` base, `TrajectoryAnalyzer`, and ready-made measurements (energy, enthalpy, heat capacity, RDF, orientational correlation, nematic order) |
-| `asmcmc/config.py` | `RunConfig` — the frozen, JSON-serialisable record of a run's static definition (`run_config.json`) |
-| `asmcmc/equilibration.py` | Single-point NPT equilibration primitives: `equilibrate_point`, `continue_point`, `find_point_dirs`, `pressure_ramp` |
-| `asmcmc/npt_equilibration.py` | Equilibrate a grid of (T, P) state points in parallel (`python -m asmcmc.npt_equilibration`) |
-| `asmcmc/npt_production.py` | Production trajectories on equilibrated points, plus replica aggregation |
-| `asmcmc/validation.py` | Physics validation benchmarks for candidate potentials (Cacelli dimer wells) |
-| `asmcmc/utils.py` | Geometry helpers turning atomistic frames into ellipsoids (no `anisoap`/`metatensor` dependency) |
+| `asmcmc/base/` | The sampler engine — self-contained, no imports out of `base/` |
+| `asmcmc/base/metropolis.py` | `MetropolisCalculator` — the Metropolis-Hastings sampler (NPT default, NVT optional) and full simulation runs |
+| `asmcmc/base/potentials.py` | Gay-Berne + quadrupole pair potentials: `Potential` ABC, `GBQPotential`, `DEFAULT_POTENTIAL`, `CACELLI_POTENTIAL` |
+| `asmcmc/base/trial_moves.py` | Trial moves: translation, quaternion rotation, isotropic and single-axis anisotropic volume scaling |
+| `asmcmc/base/initialize.py` | Starting configurations + `Initializer` classes: random, columnar, herringbone, or an existing frame |
+| `asmcmc/base/config.py` | `RunConfig` — the frozen, JSON-serialisable record of a run's static definition (`run_config.json`) |
+| `asmcmc/base/paths.py` | `data_path()` — resolves paths under `data/`, anchored on the package location |
+| `asmcmc/utils/` | Orchestration, analysis, and helpers supporting the engine |
+| `asmcmc/utils/measurements.py` | Observable framework: `Measurement` base, `TrajectoryAnalyzer`, and ready-made measurements (energy, enthalpy, heat capacity, RDF, orientational correlation, nematic order) |
+| `asmcmc/utils/equilibration.py` | Single-point NPT equilibration primitives: `equilibrate_point`, `continue_point`, `find_point_dirs`, `pressure_ramp` |
+| `asmcmc/utils/npt_equilibration.py` | Equilibrate a grid of (T, P) state points in parallel (`python -m asmcmc.utils.npt_equilibration`) |
+| `asmcmc/utils/npt_production.py` | Production trajectories on equilibrated points |
+| `asmcmc/utils/replica_stats.py` | Reduce a point's replicas to observables with between-replica error bars |
+| `asmcmc/utils/validation.py` | Physics validation benchmarks for candidate potentials (Cacelli dimer wells) |
+| `asmcmc/utils/geometry.py` | Geometry helpers turning atomistic frames into ellipsoids (no `anisoap`/`metatensor` dependency) |
 | `asmcmc/fitting_gbq/` | Fit the GB + quadrupole potential to reference energies (`python -m asmcmc.fitting_gbq.run`) |
+| `asmcmc/cluster_dataset.py` | UMA-labelled benzene cluster dataset generation |
 | `asmcmc/generate_cg_reps.py` | AniSOAP coarse-grained representation generation |
 | `tests/` | pytest suite |
 | `scripts/` | Run drivers and fit campaign shell scripts; `scripts/archive/` holds superseded ones |
@@ -127,7 +132,7 @@ Every candidate potential must therefore pass the **dimer-well benchmark** and a
 
 ### Done so far
 
-- [x] **Dimer-well validation harness.** `asmcmc/validation.py` scores any
+- [x] **Dimer-well validation harness.** `asmcmc/utils/validation.py` scores any
   `Potential` against the Cacelli et al. (2004) ab initio benzene dimer set
   (`data/new_data/3648_1_supplements/`) — well correlation/RMSE, per-family
   well depths (cofacial / parallel-displaced / T-shaped), and the fatal
@@ -152,7 +157,7 @@ Every candidate potential must therefore pass the **dimer-well benchmark** and a
   exactly as the GB+Q refit did.
 - [x] **Polymorph ordering, from static E(V)**
   (`notebooks/polymorph_ordering.ipynb`) — needs neither DFT nor MC, just
-  `asmcmc.utils.coarse_grain_frame` on the experimental Pbca crystal
+  `asmcmc.utils.geometry.coarse_grain_frame` on the experimental Pbca crystal
   (`data/benzene_pbca_cod_7238223.cif`) plus `calc_total_energy`.
   MC is *not* failing to equilibrate: it correctly finds Cacelli's global
   minimum, which is the **wrong crystal**. Cacelli prefers slipped-parallel over

@@ -2,18 +2,18 @@
 replica_stats.py — Reduce a produced (T, P) point's replicas to observables with
 error bars.
 
-Consumes the run dirs that ``scripts/npt_scan.py`` produces: each
-``out_dir/T{temp}_P{pressure}/{seed}/`` holding a ``simulation.db`` is one
+Consumes the run dirs that ``asmcmc.utils.npt_production.produce_points`` writes:
+each ``out_dir/T{temp}_P{pressure}/{seed}/`` holding a ``simulation.db`` is one
 replica, and sibling ``{seed}`` dirs are independent replicas of the same point
 (their independence was injected at the initial condition, before equilibration).
 That makes the spread across a point's replicas a meaningful error / ergodicity
 estimate rather than a restatement of within-chain autocorrelation.
 
 This is the analysis layer, built on ``measurements.TrajectoryAnalyzer`` /
-``EffectiveSampleSize`` — deliberately separate from the parallel *drivers* in
-``scripts/npt_scan.py`` and from the per-run-dir primitives in
-``asmcmc.utils.npt_production``, so a notebook can import it without pulling in a process
-pool or an argparse entry point.
+``EffectiveSampleSize`` — deliberately separate from the production *driver* and
+the per-run-dir primitives in ``asmcmc.utils.npt_production``, so a notebook (or
+that module's own ``--aggregate`` CLI path) can pull it in without every
+production worker also importing pandas/matplotlib.
 """
 
 import os
