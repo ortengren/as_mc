@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# AniSOAP feature generation (asmcmc.cluster_dataset, asmcmc.generate_cg_reps)
+# AniSOAP feature generation (asmcmc.data_preparation.generate_cg_reps)
 anisoap = [
     "anisoap",
     "metatensor",

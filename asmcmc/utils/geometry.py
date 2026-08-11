@@ -1,6 +1,7 @@
 """Geometry helpers for turning atomistic molecular frames into ellipsoids.
 
-Kept free of ``anisoap``/``metatensor`` (unlike :mod:`asmcmc.generate_cg_reps`,
+Kept free of ``anisoap``/``metatensor`` (unlike
+:mod:`asmcmc.data_preparation.generate_cg_reps`,
 which pulls in the optional ``[anisoap]`` extra) so the coarse-graining can be
 imported and tested from the base install.
 

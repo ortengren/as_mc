@@ -9,10 +9,12 @@ import numpy as np
 import pytest
 from ase.io import read
 
-from asmcmc.cluster_dataset import (
+from asmcmc.data_preparation.cluster_dataset import (
     CONFIG_NAME,
+    build_proposal,
     SamplingSettings,
     build_reference_benzene,
+    center_of_mass,
     config_rng,
     dataset_frames,
     energy_decomposition,
@@ -327,7 +329,7 @@ def _run(tmp_path, n_configs, **kw):
 @pytest.fixture
 def stub_uma(monkeypatch):
     """Swap UMA for the stub everywhere generate_shard reaches for it."""
-    import asmcmc.cluster_dataset as cd
+    import asmcmc.data_preparation.cluster_dataset as cd
 
     monkeypatch.setattr(cd, "load_uma_calculator", lambda *a, **k: StubCalculator())
     return cd
@@ -480,3 +482,145 @@ def test_saved_frames_carry_the_training_targets(stub_uma, tmp_path):
         # the Delta-learning target is formable from the frame alone
         delta = f.info["interaction_energy"] - f.info["gbq_interaction_energy"]
         assert np.isfinite(delta)
+
+
+# --- motif-seeded orientation sampling ---------------------------------------
+
+
+def _motif_settings(**kw):
+    return SamplingSettings(orientation_sampling="motif", **kw)
+
+
+def test_uniform_sampling_still_reproduces_the_pilot(reference):
+    """Golden value: config 0 of shard 0 of ``results/cluster_pilot/``.
+
+    Motif seeding is opt-in precisely so this keeps holding. If adding it had
+    perturbed the default rng stream, the shipped 500-frame campaign would have
+    become unreproducible from the tree and the resume tests would be silently
+    meaningless. The constants below were read off the stored frame, so this
+    does not depend on the (gitignored) campaign being present.
+    """
+    settings = SamplingSettings(
+        radial_sampling="mixture", min_atom_distance=2.4, compact_probability=0.70
+    )
+    rng = config_rng(20260731, 0, 0)
+    n_molecules = 3 if rng.random() < 0.7 else 2
+    assert n_molecules == 2
+
+    cluster = make_cluster(n_molecules, reference, rng, settings)
+
+    assert cluster.get_positions()[0] == pytest.approx(
+        [-2.64232989, -5.70378909, 2.21335699], abs=1e-7
+    )
+    coms = np.asarray(
+        [
+            center_of_mass(cluster.get_positions()[ids], cluster.get_masses()[ids])
+            for ids in molecule_indices(cluster)
+        ]
+    )
+    assert np.linalg.norm(coms[1] - coms[0]) == pytest.approx(11.007058, abs=1e-5)
+    # The default path carries no proposal metadata at all.
+    assert "log_q" not in cluster.info
+
+
+def test_motif_clusters_record_a_finite_log_q(reference):
+    for n_mol in (2, 3):
+        cluster = make_cluster(n_mol, reference, config_rng(7, n_mol), _motif_settings())
+        assert np.isfinite(cluster.info["log_q"])
+        assert cluster.info["proposal_component"] in {
+            "stacked_tight",
+            "stacked_wide",
+            "t_shaped",
+            "uniform",
+        }
+        assert int(cluster.info["n_molecules"]) == n_mol
+
+
+def test_motif_log_q_matches_the_mixture_for_a_dimer(reference):
+    """The stamped density must be the mixture evaluated at the geometry that
+    was actually written out -- not at the one that was proposed."""
+    from asmcmc.utils.geometry import coarse_grain_frame
+
+    settings = _motif_settings()
+    proposal = build_proposal(settings)
+    cluster = make_cluster(2, reference, config_rng(11, 3), settings, proposal)
+
+    cg = coarse_grain_frame(cluster)
+    normals = np.asarray(cg.arrays["or_vec"])
+    com = cg.get_positions()
+    recomputed = proposal.log_density(
+        normals[0:1], normals[1:2], (com[1] - com[0])[None, :]
+    )[0]
+    assert recomputed == pytest.approx(cluster.info["log_q"], abs=1e-6)
+
+
+def test_motif_trimer_density_sums_over_both_anchors(reference):
+    """The third molecule is placed from anchor 0 or 1 with equal probability and
+    the stored frame does not say which, so both terms must contribute."""
+    settings = _motif_settings()
+    proposal = build_proposal(settings)
+    radial = proposal.components[-1].radial
+
+    coms = [np.zeros(3), np.array([0.0, 0.0, 4.0])]
+    third = np.array([0.0, 0.0, 9.0])  # 9.0 from molecule 0, 5.0 from molecule 1
+    separations = np.array([np.linalg.norm(third - c) for c in coms])
+
+    both = float(np.sum(0.5 * radial.pdf(separations) / (4 * np.pi * separations**2)))
+    single = float(0.5 * radial.pdf(separations[:1])[0] / (4 * np.pi * separations[0] ** 2))
+    assert both > single * 1.5, "one anchor term alone would understate the density"
+
+
+def test_motif_reaches_close_contacts_the_uniform_path_rarely_does(reference):
+    """The whole point: motif seeding converts attempts into short-range samples."""
+    from asmcmc.utils.geometry import coarse_grain_frame
+
+    def closest(settings, n=60, seed0=0):
+        out = []
+        for i in range(n):
+            cluster = make_cluster(2, reference, config_rng(seed0, i), settings)
+            com = coarse_grain_frame(cluster).get_positions()
+            out.append(np.linalg.norm(com[1] - com[0]))
+        return np.asarray(out)
+
+    motif = closest(_motif_settings(uniform_weight=0.1))
+    uniform = closest(SamplingSettings())
+
+    # Measured over 150 draws: uniform puts 2.7% of pairs inside 5 A with a
+    # median separation of 12.0 A; motif puts 36.7% inside 5 A at a median of
+    # 5.3 A. Asserted loosely enough to survive the 60-draw sample here.
+    assert np.mean(motif < 5.0) > 5 * np.mean(uniform < 5.0)
+    assert np.mean(motif < 5.0) > 0.20
+    assert np.median(motif) < 0.6 * np.median(uniform)
+
+
+def test_motif_refuses_flexible_monomers(reference):
+    """A vibrated monomer's realised normal is not the proposed one, so log_q
+    would describe a geometry that was never written."""
+    with pytest.raises(ValueError, match="requires rigid=True"):
+        make_cluster(2, reference, config_rng(1, 1), _motif_settings(rigid=False))
+
+
+def test_cli_rejects_an_unknown_orientation_sampling(tmp_path):
+    with pytest.raises(ValueError, match="orientation_sampling must be one of"):
+        main(
+            n_configs=1,
+            out_dir=tmp_path,
+            n_shards=1,
+            settings=SamplingSettings(orientation_sampling="nonsense"),
+            max_workers=1,
+        )
+
+
+def test_motif_campaign_stamps_provenance(stub_uma, tmp_path):
+    """A campaign has to say how it was sampled, or its log_q cannot be interpreted."""
+    main(
+        n_configs=4,
+        out_dir=tmp_path,
+        n_shards=1,
+        decomposition="monomers",
+        settings=SamplingSettings(orientation_sampling="motif"),
+        max_workers=1,
+    )
+    for frame in dataset_frames(tmp_path):
+        assert frame.info["orientation_sampling"] == "motif"
+        assert np.isfinite(frame.info["log_q"])

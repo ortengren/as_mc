@@ -86,8 +86,9 @@ Add your own observable by subclassing `Measurement` (implement `compute` and
 | `asmcmc/utils/validation.py` | Physics validation benchmarks for candidate potentials (Cacelli dimer wells) |
 | `asmcmc/utils/geometry.py` | Geometry helpers turning atomistic frames into ellipsoids (no `anisoap`/`metatensor` dependency) |
 | `asmcmc/fitting_gbq/` | Fit the GB + quadrupole potential to reference energies (`python -m asmcmc.fitting_gbq.run`) |
-| `asmcmc/cluster_dataset.py` | UMA-labelled benzene cluster dataset generation |
-| `asmcmc/generate_cg_reps.py` | AniSOAP coarse-grained representation generation |
+| `asmcmc/data_preparation/` | Dataset generation for potential fitting (model-agnostic; model-specific featurisation lives in its fit package) |
+| `asmcmc/data_preparation/cluster_dataset.py` | UMA-labelled benzene cluster dataset generation (`python -m asmcmc.data_preparation.cluster_dataset`) |
+| `asmcmc/data_preparation/generate_cg_reps.py` | AniSOAP coarse-grained representation generation |
 | `tests/` | pytest suite |
 | `scripts/` | Run drivers and fit campaign shell scripts; `scripts/archive/` holds superseded ones |
 | `data/` | Input datasets (`data/xyz_files/` crystal structures; bulk files kept on disk, not in VCS) |
