@@ -119,58 +119,27 @@ after which the two methods can finally be compared.
 ## TODO: path to an AniSOAP potential (as of 2026-07-28)
 
 **Motivating finding:** a potential can fit condensed-phase per-configuration
-energies almost perfectly and still get the *pair interaction* badly wrong —
-per-molecule energies are sums over many pairs, so pairwise errors cancel in
-the fit target, and MC then samples exactly the geometries the fit never
-constrained. The GB+Q refit to the crystal dataset is the cautionary example:
-~3 kcal/mol test RMSE on the crystals, yet *repulsive* at the 3.9 Å cofacial
-stacking distance and anti-correlated with the ab initio dimer wells (which is
-why the literature Cacelli parameters — dimer-PES-fit, ~10 kcal/mol RMSE on
-the same crystals — nonetheless give far more realistic simulations).
-Every candidate potential must therefore pass the **dimer-well benchmark** and a
-**condensed-phase physics test**, not just held-out energy parity.
+energies almost perfectly and still get the *pair interaction* badly wrong. The
+GB+Q refit to the crystal dataset is an example: ~3 kcal/mol test RMSE on the
+crystals, yet repulsive at the 3.9 Å cofacial stacking distance and anti-correlated
+with the ab initio dimer wells (which is why the literature Cacelli parameters give
+far more realistic simulations).
 
 ### Done so far
 
 - [x] **Dimer-well validation harness.** `asmcmc/utils/validation.py` scores any
   `Potential` against the Cacelli et al. (2004) ab initio benzene dimer set
   (`data/new_data/3648_1_supplements/`) — well correlation/RMSE, per-family
-  well depths (cofacial / parallel-displaced / T-shaped), and the fatal
-  `stacking_bound` check. `tests/test_validation.py` pins both reference
-  points: Cacelli passes (0.21 kcal/mol well RMSE), the condensed-phase refit
-  fails (frozen inline as the known-bad fixture).
-- [x] **Coverage & baseline residual**
-  (`notebooks/training_coverage_residual.ipynb`) — the training crystals versus
-  the validated MC production run, in the Gay-Berne pair invariants
-  `(r, a_hi, |b|)`.
-  *Coverage:* the contact shell is well constrained — only **1.3 %** of MC pair
-  density at `r ≤ 4.8 Å` falls in bins with no training data — so the refit's
-  stacking failure came from the fitting objective, not a hole in the data.
-  Over the full 7 Å descriptor range the gap grows to **13.4 %**. Caveat: the
-  training cells hold 1–2 molecules, so every self-image pair is exactly
-  parallel and orientational diversity is degenerate by construction.
-  *Residual:* `Δ = E_DFT − E_Cacelli` has an overall RMS of **0.457 eV/molecule**,
-  but 8.8 % of frames (the high-energy repulsive tail MC never visits) carry
-  **58 %** of its variance, while the 68 % that are bound sit at
-  **0.126 eV/molecule**. So weight the correction toward the bound regime and
-  quote its accuracy target there, or the fit will chase a repulsive tail
-  exactly as the GB+Q refit did.
+  well depths (cofacial / parallel-displaced / T-shaped), and the `stacking_bound`
+  check. `tests/test_validation.py` pins both reference points: Cacelli passes
+  (0.21 kcal/mol well RMSE), the condensed-phase refit fails.
 - [x] **Polymorph ordering, from static E(V)**
-  (`notebooks/polymorph_ordering.ipynb`) — needs neither DFT nor MC, just
-  `asmcmc.utils.geometry.coarse_grain_frame` on the experimental Pbca crystal
-  (`data/benzene_pbca_cod_7238223.cif`) plus `calc_total_energy`.
-  MC is *not* failing to equilibrate: it correctly finds Cacelli's global
-  minimum, which is the **wrong crystal**. Cacelli prefers slipped-parallel over
-  herringbone by **1.28 kcal/mol** frozen (**≈1.1** after relaxing both), and
-  that minimum sits at 95.8 Å³ — essentially the MC production density of 96.5.
-  The error also *inverts with volume*: `E_HB − E_SP` runs **+2.26** kcal/mol at
-  96.5 Å³ to **−0.46** at the training set's 193.5, crossing zero near 120 Å³.
-  Herringbone survives relaxation as a local minimum between ~105 and 116 Å³ but
-  **loses metastability below ~105 Å³**, and MC operates below that limit. The
-  refit fails too, minimising at **200.4 Å³** ≈ the training density and unbound
-  at the experimental volume. Since the training set sits entirely at one
-  density — the one where Cacelli happens to rank the polymorphs correctly —
-  parity against it cannot detect any of this.
+  (`notebooks/polymorph_ordering.ipynb`) — MC is not failing to equilibrate: it
+  correctly finds Cacelli's global minimum, which is the wrong crystal. Cacelli
+  prefers slipped-parallel over herringbone by 1.28 kcal/mol (≈1.1 after relaxing
+  both), and that minimum sits at 95.8 Å³, nearly matching the MC production density
+  of 96.5.  Herringbone survives relaxation as a local minimum between ~105 and 116 Å³
+  but loses metastability below ~105 Å³, and MC operates below that limit.
 
 ### Next
 
