@@ -1,7 +1,11 @@
 import numpy as np
 from tqdm.auto import tqdm
 from asmcmc.base.config import RunConfig
-from asmcmc.base.initialize import Initializer, FrameInitializer, RandomLatticeInitializer
+from asmcmc.base.initialize import (
+    Initializer,
+    FrameInitializer,
+    RandomLatticeInitializer,
+)
 from asmcmc.base.trial_moves import (
     calc_or_vec,
     calculate_com_move,
@@ -33,13 +37,12 @@ MAX_VOL_DELT = 0.4
 MIN_VOL_DELT = 1e-3
 
 # Ceiling on the adaptive rotation-move width. or_delt is a rotation *angle in
-# radians* (see calculate_quat_move), so a half-turn is the geometric maximum —
-# growing it further only re-parameterizes the same near-randomizing move while
-# the tuner chases an acceptance target a flat orientational landscape can't
-# deliver (the NVT scan's warm points walked it to ~1e4). Runs started from a
-# crystal should pass a much tighter max_or_delt (~0.25 rad ≈ 14°, a physical
-# libration): near-randomizing accepted rotations melt the starting order
-# instead of sampling around it, which vitrified the herringbone validation runs.
+# radians*, so a half-turn is the geometric maximum. Growing it further only
+# re-parameterizes the same near-randomizing move while the tuner chases an acceptance
+# target a flat orientational landscape can't reach. Runs started from a crystal
+# may need to pass a much tighter max_or_delt (~0.25 rad ≈ 14°): near-randomizing
+# accepted rotations melt the starting order instead of sampling around it, which
+# causes glass formation.
 MAX_OR_DELT = np.pi
 
 
@@ -176,8 +179,8 @@ class MetropolisCalculator:
         # rescales one randomly chosen box axis, so the box aspect ratio can relax
         # to the ordered columnar/nematic phases these oblate particles form.
         # False = isotropic: uniform scaling of all three axes (size only).
-        # npt_decide_accept is correct for both — it uses only the total volume
-        # ratio V'/V (see calculate_aniso_vol_move).
+        # npt_decide_accept is correct for both, since it uses only the total volume
+        # ratio V'/V.
         self.aniso_vol = aniso_vol
 
         # index into vol_decisions marking the start of the fresh (not-yet-tuned-on)
@@ -478,7 +481,7 @@ class MetropolisCalculator:
         recording data, and writing to the database.
 
         ``max_or_delt`` caps the adapted rotation width (default
-        ``MAX_OR_DELT``, the geometric π ceiling). Pass a tight value
+        ``MAX_OR_DELT``, the geometric π ceiling). May require a tight value
         (~0.25 rad) when equilibrating from a crystal, where near-randomizing
         rotations would melt the starting order.
         """
@@ -486,8 +489,7 @@ class MetropolisCalculator:
         self.current_frame.wrap()
 
         # Re-sync the running energy to a full recompute. ``current_energy`` is
-        # otherwise tracked incrementally (per-particle deltas on accepted
-        # position/orientation moves) and is only reset on accepted volume
+        # otherwise tracked incrementally and is only reset on accepted volume
         # moves; small per-move inconsistencies accumulate into a drift of order
         # eV over a long run. Recomputing once per block (cheap next to a block
         # of single-particle steps) keeps the recorded energy exact and removes
@@ -623,8 +625,7 @@ class MetropolisCalculator:
         ``vol_max_scale``/``vol_min_scale`` optionally give vol_delt tighter
         per-update slew bounds than the shared ``max_scale``/``min_scale`` (see
         ``block_update``): this slows how fast vol_delt can grow during a downhill
-        density collapse — spreading the compression over more steps so the lattice
-        can order instead of jamming — without capping the value it converges to.
+        density collapse without capping the value it converges to.
 
         ``max_or_delt`` caps the adapted rotation width (see ``block_update``);
         pass a tight value (~0.25 rad) when starting from a crystal so the tuner
