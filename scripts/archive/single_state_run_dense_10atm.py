@@ -1,10 +1,10 @@
-from asmcmc.initialize import (
+from asmcmc.base.initialize import (
     RandomLatticeInitializer,
     ColumnarLatticeInitializer,
     FrameInitializer,
 )
-from asmcmc.metropolis import MetropolisCalculator
-from asmcmc.potentials import GBQPotential, CACELLI_POTENTIAL
+from asmcmc.base.metropolis import MetropolisCalculator
+from asmcmc.base.potentials import GBQPotential, CACELLI_POTENTIAL
 
 T = 100.0  # K
 P = 6.324209e-6  # eV / Å^3 = 10 atm

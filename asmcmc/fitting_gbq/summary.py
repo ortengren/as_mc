@@ -31,7 +31,7 @@ from asmcmc.fitting_gbq.fit import (
     train_test_split,
 )
 from asmcmc.fitting_gbq.run import DEFAULT_CUTOFF, DEFAULT_DATA
-from asmcmc.potentials import gb, quadrupole
+from asmcmc.base.potentials import gb, quadrupole
 
 DEFAULT_RESULTS_ROOT = "results/fitting"
 DEFAULT_OUT = "results/fitting/summary"

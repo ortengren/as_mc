@@ -4,8 +4,8 @@ import pytest
 
 from ase.db import connect
 
-from asmcmc.npt_equilibration import _evaluate_point, plot_point_results
-from asmcmc.npt_production import produce_point, produce_points
+from asmcmc.utils.npt_equilibration import _evaluate_point, plot_point_results
+from asmcmc.utils.npt_production import produce_point, produce_points
 
 
 # ---------------------------------------------------------------------------

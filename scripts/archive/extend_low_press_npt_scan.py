@@ -14,7 +14,7 @@ on whether a *persistent one-directional trend* (and/or a between-replica
 density disagreement) remains over the back half -- not on a flat tail.
 
 Reuses the tested ``_continue_point`` worker + ``plot_point_results`` from
-asmcmc.npt_equilibration. All tiers share ONE spawn pool, longest job first, so
+asmcmc.utils.npt_equilibration. All tiers share ONE spawn pool, longest job first, so
 the +250k runs (the long pole) start at t=0 and the workers stay busy.
 
     python scripts/extend_low_press_npt_scan.py --dry-run   # print the plan, run nothing
@@ -32,7 +32,7 @@ import ase.db
 import numpy as np
 from tqdm import tqdm
 
-from asmcmc.npt_equilibration import _continue_point, plot_point_results
+from asmcmc.utils.npt_equilibration import _continue_point, plot_point_results
 
 # Point dir names (T{temp}_P{pressure}); both replica seeds under each are
 # extended by the tier's step budget.

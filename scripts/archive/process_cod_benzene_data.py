@@ -5,7 +5,7 @@ from ase.neighborlist import build_neighbor_list, natural_cutoffs
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial.transform import Rotation
 
-from asmcmc.trial_moves import calc_or_vec
+from asmcmc.base.trial_moves import calc_or_vec
 
 CIF_PATH = "../data/benzene_pbca_cod_7238223.cif"
 OUT_PATH = "../data/benzene_herringbone_cg.xyz"

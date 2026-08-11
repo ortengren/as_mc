@@ -109,7 +109,7 @@ def coarse_grain_frame(frame, mult=BOND_CUTOFF_MULT, mass_weighted=True):
 
     Returns an :class:`ase.Atoms` of ``X`` sites carrying an ``or_vec`` array
     (unit disc normals), sharing ``frame``'s cell and pbc -- the layout
-    :func:`asmcmc.potentials.calc_total_energy` and
+    :func:`asmcmc.base.potentials.calc_total_energy` and
     ``fitting_gbq.data.extract_periodic_pairs`` expect.
     """
     masses = frame.get_masses() if mass_weighted else None

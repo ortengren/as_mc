@@ -4,7 +4,7 @@ import json
 import ase
 import numpy as np
 import pytest
-from asmcmc.potentials import (
+from asmcmc.base.potentials import (
     gb,
     quadrupole,
     calc_total_energy,

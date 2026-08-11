@@ -2,7 +2,7 @@ import numpy as np
 import ase.io
 from ase import Atoms
 
-from asmcmc.utils import molecule_fragments
+from asmcmc.utils.geometry import molecule_fragments
 from anisoap.representations import EllipsoidalDensityProjection
 from anisoap.utils import ClebschGordanReal
 from anisoap.asecg import CGRep as cg
@@ -17,7 +17,7 @@ def separate_mols(frame):
     Unwrapping matters: both ``cg.get_center_of_mass`` (``mic=False``) and
     ``cg.get_quat_and_semiaxes`` (moments of inertia) read raw positions, so a
     molecule straddling a cell face would otherwise yield a centre near the
-    cell centre and meaningless principal axes. See :mod:`asmcmc.utils`.
+    cell centre and meaningless principal axes. See :mod:`asmcmc.utils.geometry`.
     """
     mols = []
     for indices, positions in molecule_fragments(frame):

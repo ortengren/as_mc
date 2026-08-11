@@ -8,7 +8,7 @@ degrees of freedom cannot be fit from it. Isolated clusters with random
 orientations fix exactly that.
 
 The labeller is Meta FAIR Chemistry's OMol-trained UMA MLIP, which clears the
-physics gate in :mod:`asmcmc.validation` first: r = 0.994 / RMSE 0.55 kcal/mol
+physics gate in :mod:`asmcmc.utils.validation` first: r = 0.994 / RMSE 0.55 kcal/mol
 against all 197 Cacelli MP2 dimer rows, all three wells bound and placed within
 ~0.1 A, having never seen that data.
 
@@ -94,9 +94,9 @@ from ase.build import molecule
 from ase.calculators.singlepoint import SinglePointCalculator
 from ase.io import read, write
 
-from asmcmc.potentials import CACELLI_POTENTIAL
-from asmcmc.uma import DEFAULT_UMA_MODEL, load_uma_calculator
-from asmcmc.utils import coarse_grain_frame
+from asmcmc.base.potentials import CACELLI_POTENTIAL
+from asmcmc.utils.uma import DEFAULT_UMA_MODEL, load_uma_calculator
+from asmcmc.utils.geometry import coarse_grain_frame
 
 # Used only to set relative amplitudes of random internal displacement; the
 # generator projects out rigid translation and rotation afterward. The g2 atom
@@ -425,7 +425,7 @@ def gbq_baseline(atoms: Atoms, potential=CACELLI_POTENTIAL) -> dict:
     """The Delta-learning baseline: this cluster's energy under GB+Q.
 
     Stored per frame so a fit can form ``E_UMA - E_GBQ`` without re-deriving
-    cluster geometry. Uses :func:`asmcmc.utils.coarse_grain_frame`, the same
+    cluster geometry. Uses :func:`asmcmc.utils.geometry.coarse_grain_frame`, the same
     atomistic-to-ellipsoid map the MC and the GB+Q fit already agree on.
 
     Returned in eV, matching the MLIP energies, and summed over the cluster's

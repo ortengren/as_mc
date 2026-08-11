@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from asmcmc.utils import (
+from asmcmc.utils.geometry import (
     coarse_grain_frame,
     disc_normal,
     molecule_fragments,

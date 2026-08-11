@@ -24,11 +24,11 @@ so the recorded series resolves the autocorrelation needed for ESS/error bars.
 Each ``{seed}`` subdir is an independent replica (its independence was injected at
 the initial condition, before equilibration — see ``npt_equilibration``), so the
 spread across a point's replicas is a meaningful error / ergodicity estimate.
-Reducing replicas to observables + error bars is ``asmcmc.replica_stats`` — kept
+Reducing replicas to observables + error bars is ``asmcmc.utils.replica_stats`` — kept
 separate so a notebook (or this module's own ``--aggregate`` CLI path) can pull it
 in without every production worker also importing pandas/matplotlib.
 
-Run:  python -m asmcmc.npt_production --num-steps N [--out-dir DIR]
+Run:  python -m asmcmc.utils.npt_production --num-steps N [--out-dir DIR]
 """
 
 import os
@@ -52,8 +52,8 @@ for _thread_var in (
 import numpy as np
 from tqdm.auto import tqdm
 
-from asmcmc.metropolis import MetropolisCalculator
-from asmcmc.npt_equilibration import find_point_dirs, plot_point_results
+from asmcmc.base.metropolis import MetropolisCalculator
+from asmcmc.utils.npt_equilibration import find_point_dirs, plot_point_results
 
 # Offset the production RNG stream off the equilibration one. Equilibration reseeds
 # the global streams with the point's seed; reusing that exact seed for production
@@ -211,7 +211,7 @@ if __name__ == "__main__":
     if args.aggregate:
         # Local import: keeps pandas/matplotlib out of every production worker's
         # process image (they're only needed for this CLI path).
-        from asmcmc.replica_stats import aggregate
+        from asmcmc.utils.replica_stats import aggregate
 
         aggregate(args.out_dir)
     else:

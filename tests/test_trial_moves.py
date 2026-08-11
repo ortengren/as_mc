@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from asmcmc.trial_moves import (
+from asmcmc.base.trial_moves import (
     calc_or_vec,
     calculate_com_move,
     calculate_quat_move,

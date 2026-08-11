@@ -35,13 +35,12 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from asmcmc.base.paths import data_path
+
 EV_TO_KCAL = 23.060541945329334
 EULER_SEQ = "zyx"
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-CACELLI_DIMER_PATH = (
-    _REPO_ROOT / "data/new_data/3648_1_supplements/abinitio.energies.txt"
-)
+CACELLI_DIMER_PATH = data_path("new_data", "3648_1_supplements", "abinitio.energies.txt")
 
 # A's disc normal: ring in the xz-plane.
 _NORMAL_A = np.array([0.0, 1.0, 0.0])

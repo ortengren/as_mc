@@ -7,7 +7,7 @@ from multiprocessing import get_context
 
 from ase.db import connect
 
-from asmcmc.npt_equilibration import (
+from asmcmc.utils.npt_equilibration import (
     point_dirname,
     _submission_order,
     equilibrate_point,
@@ -18,8 +18,8 @@ from asmcmc.npt_equilibration import (
     extend_points,
     main,
 )
-from asmcmc.metropolis import MetropolisCalculator
-from asmcmc.initialize import RandomLatticeInitializer
+from asmcmc.base.metropolis import MetropolisCalculator
+from asmcmc.base.initialize import RandomLatticeInitializer
 
 
 # ---------------------------------------------------------------------------

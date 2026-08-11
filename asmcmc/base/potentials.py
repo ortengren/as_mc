@@ -214,12 +214,14 @@ def potential_from_dict(d):
     return cls(**d)
 
 
-# Resolve the default potential relative to this file (not the cwd) so imports
-# work regardless of where the interpreter is launched. Points at the tracked
-# uniform/seed_0 fit; switch via GBQPotential.from_json(<other params.json>).
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PARAMS_PATH = _REPO_ROOT / "data/my_fitted_gbq_params.json"
-CACELLI_PARAMS_PATH = _REPO_ROOT / "data/lit_gbq_params.json"
+# Resolve the default potential relative to the package (not the cwd, and not
+# this file's depth) so imports work regardless of where the interpreter is
+# launched. Points at the tracked uniform/seed_0 fit; switch via
+# GBQPotential.from_json(<other params.json>).
+from asmcmc.base.paths import data_path
+
+DEFAULT_PARAMS_PATH = data_path("my_fitted_gbq_params.json")
+CACELLI_PARAMS_PATH = data_path("lit_gbq_params.json")
 DEFAULT_POTENTIAL = GBQPotential.from_json(DEFAULT_PARAMS_PATH)
 CACELLI_POTENTIAL = GBQPotential.from_json(CACELLI_PARAMS_PATH)
 

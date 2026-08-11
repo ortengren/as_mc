@@ -1,15 +1,15 @@
 import numpy as np
 from tqdm.auto import tqdm
-from asmcmc.config import RunConfig
-from asmcmc.initialize import Initializer, FrameInitializer, RandomLatticeInitializer
-from asmcmc.trial_moves import (
+from asmcmc.base.config import RunConfig
+from asmcmc.base.initialize import Initializer, FrameInitializer, RandomLatticeInitializer
+from asmcmc.base.trial_moves import (
     calc_or_vec,
     calculate_com_move,
     calculate_quat_move,
     calculate_vol_move,
     calculate_aniso_vol_move,
 )
-from asmcmc.potentials import Potential, calc_total_energy, DEFAULT_POTENTIAL
+from asmcmc.base.potentials import Potential, calc_total_energy, DEFAULT_POTENTIAL
 import random
 import ase
 from ase.neighborlist import NeighborList

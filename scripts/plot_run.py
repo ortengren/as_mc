@@ -1,7 +1,7 @@
 """
 plot_run.py — Render diagnostics for one run directory.
 
-Thin CLI over :mod:`asmcmc.diagnostics`; the plotting itself lives in the package
+Thin CLI over :mod:`asmcmc.utils.diagnostics`; the plotting itself lives in the package
 so a notebook can import it without an argparse entry point.
 
     python scripts/plot_run.py RUN_DIR                       # all four figures
@@ -14,7 +14,7 @@ production trajectory never clobbers the equilibration figures.
 
 import argparse
 
-from asmcmc.diagnostics import PLOTS, render
+from asmcmc.utils.diagnostics import PLOTS, render
 
 
 def main(argv=None):

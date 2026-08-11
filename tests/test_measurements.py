@@ -1,7 +1,7 @@
 import numpy as np
 import ase
 import pytest
-from asmcmc.measurements import (
+from asmcmc.utils.measurements import (
     AverageEnergy,
     AverageEnthalpy,
     RadialDistributionFunction,
@@ -18,8 +18,8 @@ from asmcmc.measurements import (
     einstein_function,
     vibrational_heat_capacity,
 )
-from asmcmc.metropolis import npt_decide_accept
-from asmcmc.potentials import calc_total_energy
+from asmcmc.base.metropolis import npt_decide_accept
+from asmcmc.base.potentials import calc_total_energy
 
 # --- AverageEnergy ---
 

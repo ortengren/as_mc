@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from asmcmc.potentials import CACELLI_POTENTIAL, GBQPotential
-from asmcmc.validation import (
+from asmcmc.base.potentials import CACELLI_POTENTIAL, GBQPotential
+from asmcmc.utils.validation import (
     DimerBenchmark,
     dimer_benchmark,
     dimer_scan,

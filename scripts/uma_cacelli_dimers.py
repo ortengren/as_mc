@@ -30,9 +30,9 @@ from pathlib import Path
 import numpy as np
 from ase.io import write
 
-from asmcmc.potentials import CACELLI_POTENTIAL
-from asmcmc.uma import DEFAULT_UMA_MODEL, load_uma_calculator
-from asmcmc.validation import (
+from asmcmc.base.potentials import CACELLI_POTENTIAL
+from asmcmc.utils.uma import DEFAULT_UMA_MODEL, load_uma_calculator
+from asmcmc.utils.validation import (
     EULER_SEQ,
     EV_TO_KCAL,
     atomistic_pair_energies,

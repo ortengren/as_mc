@@ -25,9 +25,9 @@ start by default) and relaxes to whatever volume (T, P) dictates.
 
 The serial, single-point building blocks these workers drive — ``equilibrate_point``,
 ``continue_point``, ``find_point_dirs``, ``plot_point_results``, ``point_dirname`` —
-live in ``asmcmc.equilibration`` and are re-exported here for backward compatibility.
+live in ``asmcmc.utils.equilibration`` and are re-exported here for backward compatibility.
 
-Run:  python -m asmcmc.npt_equilibration
+Run:  python -m asmcmc.utils.npt_equilibration
 """
 
 import os
@@ -51,16 +51,16 @@ for _thread_var in (
 import numpy as np
 from tqdm.auto import tqdm
 
-from asmcmc.initialize import (
+from asmcmc.base.initialize import (
     RandomLatticeInitializer,
     ColumnarLatticeInitializer,
     DEFAULT_DENSITY,
     DEFAULT_COLUMNAR_DENSITY,
 )
 
-# Single-point primitives now live in asmcmc.equilibration; re-exported here so
-# existing `from asmcmc.npt_equilibration import ...` callers keep working.
-from asmcmc.equilibration import (
+# Single-point primitives now live in asmcmc.utils.equilibration; re-exported here so
+# existing `from asmcmc.utils.npt_equilibration import ...` callers keep working.
+from asmcmc.utils.equilibration import (
     point_dirname,
     equilibrate_point,
     find_point_dirs,

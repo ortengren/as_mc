@@ -3,10 +3,10 @@ import os
 import pytest
 from ase.db import connect
 
-from asmcmc.config import RunConfig
-from asmcmc.equilibration import pressure_ramp
-from asmcmc.metropolis import MetropolisCalculator
-from asmcmc.initialize import RandomLatticeInitializer
+from asmcmc.base.config import RunConfig
+from asmcmc.utils.equilibration import pressure_ramp
+from asmcmc.base.metropolis import MetropolisCalculator
+from asmcmc.base.initialize import RandomLatticeInitializer
 
 
 def _init(seed=1):

@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 import numpy as np
 import ase
 import ase.io
 from scipy.spatial.transform import Rotation
-from asmcmc.potentials import GB_PARAMS
-from asmcmc.trial_moves import calc_or_vec
+from asmcmc.base.potentials import GB_PARAMS
+from asmcmc.base.trial_moves import calc_or_vec
+from asmcmc.base.paths import data_path
 
 # Package-default shape (from DEFAULT_POTENTIAL). Used only when no potential is
 # supplied; the geometry a config is built at must match the potential the MC
@@ -26,8 +26,7 @@ DEFAULT_COLUMNAR_DENSITY = 1.4
 # Herringbone start: the experimental benzene Pbca crystal, coarse-grained to one
 # oblate particle per molecule (built by scripts/process_cod_benzene_data.py). The
 # motif path resolves against the package so it is found regardless of cwd.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_HERRINGBONE_MOTIF = _REPO_ROOT / "data/benzene_herringbone_cg.xyz"
+DEFAULT_HERRINGBONE_MOTIF = data_path("benzene_herringbone_cg.xyz")
 # Small default jitters: a thermal wiggle giving replica independence that leaves
 # the herringbone order intact. Set both to 0 for a pristine crystal start.
 DEFAULT_HERRINGBONE_POS_JITTER = 0.1  # Angstrom

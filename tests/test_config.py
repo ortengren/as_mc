@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from asmcmc.config import RunConfig
-from asmcmc.potentials import DEFAULT_POTENTIAL, potential_from_dict
-from asmcmc.metropolis import MetropolisCalculator
+from asmcmc.base.config import RunConfig
+from asmcmc.base.potentials import DEFAULT_POTENTIAL, potential_from_dict
+from asmcmc.base.metropolis import MetropolisCalculator
 
 
 def _default_config(**overrides):

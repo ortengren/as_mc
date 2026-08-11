@@ -7,16 +7,16 @@ import pytest
 
 from ase.db import connect
 
-from asmcmc.diagnostics import (
+from asmcmc.utils.diagnostics import (
     PLOTS,
     TAIL_FRACTION,
     TAIL_MAX_FRAMES,
     load_run,
     render,
 )
-from asmcmc.measurements import RadialDistributionFunction, nematic_q_tensor
+from asmcmc.utils.measurements import RadialDistributionFunction, nematic_q_tensor
 
-from asmcmc.npt_equilibration import _evaluate_point
+from asmcmc.utils.npt_equilibration import _evaluate_point
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ def test_render_db_stem_prefixes_output(tmp_path):
     d = _point(str(tmp_path / "scan"))
     render(d, which=["energy"])
     # produce a simulation.db alongside, then render that
-    from asmcmc.npt_production import produce_point
+    from asmcmc.utils.npt_production import produce_point
 
     produce_point(d, num_steps=4 * 27, block_size=27)
     written = render(d, which=["energy"], db_name="simulation.db")

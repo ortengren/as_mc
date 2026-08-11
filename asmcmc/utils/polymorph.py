@@ -1,7 +1,7 @@
 """Pair and shell geometry for coarse-grained disc frames, and disorder control.
 
 Frame-level functions take an ``ase.Atoms`` of coarse-grained centres carrying
-unit disc normals, the layout :func:`asmcmc.utils.coarse_grain_frame` produces.
+unit disc normals, the layout :func:`asmcmc.utils.geometry.coarse_grain_frame` produces.
 Orientations may instead be passed explicitly via ``or_vecs``: ASE db rows keep
 them in ``row.data``, not in ``row.toatoms()``.
 

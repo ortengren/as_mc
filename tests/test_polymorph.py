@@ -5,7 +5,7 @@ import ase.io
 import numpy as np
 import pytest
 
-from asmcmc.polymorph import (
+from asmcmc.utils.polymorph import (
     contact_invariants,
     disorder_amplitude,
     neighbour_shell,
@@ -13,7 +13,7 @@ from asmcmc.polymorph import (
     rescale,
     thermal_jitter,
 )
-from asmcmc.utils import coarse_grain_frame
+from asmcmc.utils.geometry import coarse_grain_frame
 
 CIF = os.path.join(os.path.dirname(__file__), "..", "data", "benzene_pbca_cod_7238223.cif")
 

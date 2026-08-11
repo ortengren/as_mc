@@ -29,8 +29,8 @@ import matplotlib
 matplotlib.use("Agg")  # batch run: write figures to file, never open a window
 import matplotlib.pyplot as plt
 
-from asmcmc.initialize import FrameInitializer
-from asmcmc.metropolis import MetropolisCalculator
+from asmcmc.base.initialize import FrameInitializer
+from asmcmc.base.metropolis import MetropolisCalculator
 
 
 def point_dirname(temp, pressure):

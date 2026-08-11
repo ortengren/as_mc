@@ -2,8 +2,8 @@ import dataclasses
 
 import numpy as np
 import pytest
-from asmcmc.potentials import DEFAULT_POTENTIAL
-from asmcmc.initialize import (
+from asmcmc.base.potentials import DEFAULT_POTENTIAL
+from asmcmc.base.initialize import (
     generate_random_config,
     generate_columnar_config,
     generate_herringbone_config,
@@ -20,7 +20,7 @@ from asmcmc.initialize import (
     HerringboneLatticeInitializer,
     FrameInitializer,
 )
-from asmcmc.metropolis import MetropolisCalculator
+from asmcmc.base.metropolis import MetropolisCalculator
 
 
 # --- helpers ---
@@ -257,7 +257,7 @@ def test_columnar_no_overlaps():
 def test_columnar_default_density_is_usable():
     """At the (tight) default density the config places without overlaps and has
     finite energy — i.e. it is a usable starting frame, not a blown-up core."""
-    from asmcmc.potentials import calc_total_energy
+    from asmcmc.base.potentials import calc_total_energy
 
     f = generate_columnar_config(50, density=DEFAULT_COLUMNAR_DENSITY, seed=0)
     assert _min_center_dist(f) >= KAPPA * SIGMA0

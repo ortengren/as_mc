@@ -30,7 +30,7 @@ import ase.io
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from asmcmc.utils import coarse_grain_frame
+from asmcmc.utils.geometry import coarse_grain_frame
 
 ROOT = Path(__file__).resolve().parent.parent
 SHAPE = (2.5, 2.5, 1.0)  # ellipsoid semiaxes, as in export_ideal_crystals.py

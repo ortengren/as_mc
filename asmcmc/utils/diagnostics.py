@@ -14,9 +14,9 @@ grouped around one question:
 Nothing here needs the sampler to record anything new: acceptance rates,
 ``num_particles`` and ``vol`` are already block scalars, ``or_vec`` is already in
 ``array_data``, and the RDF/OCF accumulators already exist in
-:mod:`asmcmc.measurements`. This is assembly and plotting only.
+:mod:`asmcmc.utils.measurements`. This is assembly and plotting only.
 
-    from asmcmc.diagnostics import render
+    from asmcmc.utils.diagnostics import render
     render("results/validation/150.0_6.324209e-07/phase_check")
 
 The CLI wrapper is ``scripts/plot_run.py``.
@@ -33,12 +33,12 @@ import matplotlib
 matplotlib.use("Agg")  # batch run: write figures to file, never open a window
 import matplotlib.pyplot as plt
 
-from asmcmc.measurements import (
+from asmcmc.utils.measurements import (
     OrientationalCorrelationFunction,
     RadialDistributionFunction,
     nematic_q_tensor,
 )
-from asmcmc.metropolis import TARGET_ACC_RATE
+from asmcmc.base.metropolis import TARGET_ACC_RATE
 
 # Window of recorded frames averaged into the RDF/OCF. A single frame's g(r) is
 # too noisy at N~500 to read a phase off, so a tail is averaged rather than one

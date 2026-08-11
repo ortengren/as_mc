@@ -23,7 +23,7 @@ them to PRODUCTION (delete from EXTEND_250) if you'd rather treat them with
 replicas instead.
 
 Reuses the tested ``_continue_point`` worker + ``plot_point_results`` from
-asmcmc.npt_equilibration. All tiers share ONE spawn pool, longest job first, so
+asmcmc.utils.npt_equilibration. All tiers share ONE spawn pool, longest job first, so
 the +250k points (the long pole) start at t=0 and the workers stay busy.
 
     python extend_npt_scan.py --dry-run     # print the plan, run nothing
@@ -41,7 +41,7 @@ import ase.db
 import numpy as np
 from tqdm import tqdm
 
-from asmcmc.npt_equilibration import _continue_point, plot_point_results
+from asmcmc.utils.npt_equilibration import _continue_point, plot_point_results
 
 # Point dir names (T{temp}_P{pressure}) -> extra equilibration steps.
 EXTEND_250 = {

@@ -7,10 +7,10 @@ import numpy as np
 
 from ase.db import connect
 
-from asmcmc.npt_production import produce_point
-from asmcmc.replica_stats import replica_observables, aggregate, OBSERVABLES
+from asmcmc.utils.npt_production import produce_point
+from asmcmc.utils.replica_stats import replica_observables, aggregate, OBSERVABLES
 
-from asmcmc.npt_equilibration import _evaluate_point
+from asmcmc.utils.npt_equilibration import _evaluate_point
 
 
 # ---------------------------------------------------------------------------

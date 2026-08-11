@@ -12,10 +12,10 @@ that the state point is actually equilibrated rather than hysteretic.
 
 import numpy as np
 
-from asmcmc.initialize import RandomLatticeInitializer
-from asmcmc.potentials import CACELLI_POTENTIAL
-from asmcmc.equilibration import pressure_ramp, continue_point
-from asmcmc.metropolis import MetropolisCalculator
+from asmcmc.base.initialize import RandomLatticeInitializer
+from asmcmc.base.potentials import CACELLI_POTENTIAL
+from asmcmc.utils.equilibration import pressure_ramp, continue_point
+from asmcmc.base.metropolis import MetropolisCalculator
 
 T = 100.0  # K
 P_TARGET = 6.324209e-6  # eV / Å^3 = 10 atm

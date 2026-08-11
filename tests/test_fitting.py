@@ -2,7 +2,7 @@ import numpy as np
 import ase
 import pytest
 
-from asmcmc.potentials import gb, quadrupole, GB_PARAMS, QQ
+from asmcmc.base.potentials import gb, quadrupole, GB_PARAMS, QQ
 from asmcmc.fitting_gbq.data import gbq, extract_periodic_pairs, FitData
 from asmcmc.fitting_gbq.fit import (
     predict_per_mol,

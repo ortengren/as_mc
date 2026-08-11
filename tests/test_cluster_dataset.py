@@ -27,7 +27,7 @@ from asmcmc.cluster_dataset import (
     shard_path,
     subset_atoms,
 )
-from asmcmc.potentials import CACELLI_POTENTIAL
+from asmcmc.base.potentials import CACELLI_POTENTIAL
 
 EV_TO_KCAL = 23.060541945329334
 
@@ -280,7 +280,7 @@ def test_gbq_baseline_sums_all_trimer_pairs(reference):
     normals = out["or_vec"]
     assert normals.shape == (3, 3)
 
-    from asmcmc.utils import coarse_grain_frame
+    from asmcmc.utils.geometry import coarse_grain_frame
 
     cg = coarse_grain_frame(cluster)
     pos = cg.get_positions()

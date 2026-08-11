@@ -12,7 +12,7 @@ estimate rather than a restatement of within-chain autocorrelation.
 This is the analysis layer, built on ``measurements.TrajectoryAnalyzer`` /
 ``EffectiveSampleSize`` — deliberately separate from the parallel *drivers* in
 ``scripts/npt_scan.py`` and from the per-run-dir primitives in
-``asmcmc.npt_production``, so a notebook can import it without pulling in a process
+``asmcmc.utils.npt_production``, so a notebook can import it without pulling in a process
 pool or an argparse entry point.
 """
 
@@ -26,13 +26,13 @@ import matplotlib
 matplotlib.use("Agg")  # batch run: write figures to file, never open a window
 import matplotlib.pyplot as plt
 
-from asmcmc.config import RunConfig
-from asmcmc.measurements import (
+from asmcmc.base.config import RunConfig
+from asmcmc.utils.measurements import (
     TrajectoryAnalyzer,
     EffectiveSampleSize,
     nematic_q_tensor,
 )
-from asmcmc.equilibration import find_point_dirs
+from asmcmc.utils.equilibration import find_point_dirs
 
 # Per-frame scalar observables, as callables over a recorded frame's
 # (frame, scalar_data, array_data). Reduced per replica via EffectiveSampleSize,

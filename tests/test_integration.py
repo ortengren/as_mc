@@ -5,7 +5,7 @@ import ase
 import pytest
 from ase.db import connect
 
-from asmcmc.metropolis import (
+from asmcmc.base.metropolis import (
     MetropolisCalculator,
     MIN_VOL_DELT,
     MAX_VOL_DELT,
@@ -13,9 +13,9 @@ from asmcmc.metropolis import (
     BOLTZCONST,
     npt_decide_accept,
 )
-from asmcmc.potentials import calc_total_energy
-from asmcmc.trial_moves import calculate_vol_move
-from asmcmc.measurements import TrajectoryAnalyzer, AverageEnergy
+from asmcmc.base.potentials import calc_total_energy
+from asmcmc.base.trial_moves import calculate_vol_move
+from asmcmc.utils.measurements import TrajectoryAnalyzer, AverageEnergy
 
 
 # ---------------------------------------------------------------------------
