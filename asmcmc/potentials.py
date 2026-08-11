@@ -169,7 +169,13 @@ class GBQPotential(Potential):
     def from_json(cls, path, name=None):
         """Build from a fit ``params.json`` (the ``{value, unit}`` schema written
         by ``asmcmc.fitting``). ``name`` defaults to the path tail below the
-        ``fitting/`` directory, e.g. ``multiseed/uniform/seed_0/uniform``."""
+        ``fitting/`` directory, e.g. ``multiseed/uniform/seed_0/uniform``.
+
+        Outside a ``fitting/`` tree the name comes from the **file stem**, not
+        the parent directory: the tracked params files all sit in ``data/``, so
+        a directory-based fallback named every one of them ``"data"`` -- making
+        the name useless exactly where it matters most, as provenance stamped
+        into run configs, dataset frames and benchmark output."""
         path = Path(path)
         data = json.loads(path.read_text())
         if name is None:
@@ -177,7 +183,7 @@ class GBQPotential(Potential):
             if "fitting" in parts:
                 name = "/".join(parts[parts.index("fitting") + 1 :])
             else:
-                name = path.parent.name
+                name = path.stem
         values = {k: data[k]["value"] for k in (*_GB_PARAM_KEYS, "Q")}
         return cls(name=name, **values)
 
