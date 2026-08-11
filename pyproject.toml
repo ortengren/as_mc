@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# AniSOAP feature generation (asmcmc.driver, asmcmc.generate_cg_reps)
+# AniSOAP feature generation (asmcmc.cluster_dataset, asmcmc.generate_cg_reps)
 anisoap = [
     "anisoap",
     "metatensor",
@@ -27,5 +27,9 @@ anisoap = [
 ]
 dev = ["pytest"]
 
-[tool.setuptools]
-packages = ["asmcmc"]
+[tool.setuptools.packages.find]
+include = ["asmcmc*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -5,9 +5,6 @@ generator with a stub calculator, so the suite stays runnable from a fresh
 clone without fairchem, a model download, or a GPU.
 """
 
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 import numpy as np
 import pytest
 from ase.io import read

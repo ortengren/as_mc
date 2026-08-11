@@ -168,7 +168,7 @@ class GBQPotential(Potential):
     @classmethod
     def from_json(cls, path, name=None):
         """Build from a fit ``params.json`` (the ``{value, unit}`` schema written
-        by ``asmcmc.fitting``). ``name`` defaults to the path tail below the
+        by ``asmcmc.fitting_gbq``). ``name`` defaults to the path tail below the
         ``fitting/`` directory, e.g. ``multiseed/uniform/seed_0/uniform``.
 
         Outside a ``fitting/`` tree the name comes from the **file stem**, not

@@ -1,15 +1,15 @@
 """Runner / CLI for the GBQ fit: data -> fit -> artifacts + plots.
 
-Ties together :mod:`asmcmc.fitting.data` (dataset build), :mod:`asmcmc.fitting.fit`
-(``differential_evolution`` global fit), :mod:`asmcmc.fitting.report` (metrics +
-JSON + markdown) and :mod:`asmcmc.fitting.plots` (diagnostic PNGs).
+Ties together :mod:`asmcmc.fitting_gbq.data` (dataset build), :mod:`asmcmc.fitting_gbq.fit`
+(``differential_evolution`` global fit), :mod:`asmcmc.fitting_gbq.report` (metrics +
+JSON + markdown) and :mod:`asmcmc.fitting_gbq.plots` (diagnostic PNGs).
 
 Two weighting variants are fit on the *same* train/test split so they are
 directly comparable: ``uniform`` (equal weight on every frame, the production
 objective) and ``boltzmann`` (near-equilibrium-weighted, kept as a reference).
 Each writes to its own subdirectory of the output root.
 
-Run with ``python -m asmcmc.fitting.run``.
+Run with ``python -m asmcmc.fitting_gbq.run``.
 """
 
 import argparse
@@ -191,7 +191,7 @@ def build_parser():
     silences the tqdm bar (e.g. for non-interactive logs).
     """
     p = argparse.ArgumentParser(
-        prog="python -m asmcmc.fitting.run",
+        prog="python -m asmcmc.fitting_gbq.run",
         description="Fit the GB+quadrupole potential and write artifacts + plots.",
     )
     p.add_argument(

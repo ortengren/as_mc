@@ -1,7 +1,8 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from asmcmc.potentials import potential_from_dict
 
 import json
+import warnings
 from pathlib import Path
 
 
@@ -48,7 +49,20 @@ class RunConfig:
 
     @classmethod
     def load(cls, path):
-        return cls(**json.loads(Path(path).read_text()))
+        raw = json.loads(Path(path).read_text())
+        known = {f.name for f in fields(cls)}
+        unknown = set(raw) - known
+        if unknown:
+            # A run_config.json can outlive the RunConfig fields it was written
+            # with (e.g. the pre-revert `moves_per_vol` sampler knob). Drop what
+            # this version doesn't know rather than failing the whole resume —
+            # but say so, since it is provenance loss.
+            warnings.warn(
+                f"{path}: dropping unknown RunConfig field(s) {sorted(unknown)}",
+                stacklevel=2,
+            )
+            raw = {k: v for k, v in raw.items() if k in known}
+        return cls(**raw)
 
     def build_potential(self):
         return potential_from_dict(self.potential)

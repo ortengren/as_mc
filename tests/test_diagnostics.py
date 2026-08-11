@@ -1,9 +1,6 @@
 """Run-directory diagnostics: the loader's reductions and the four figures."""
 
-import sys, os, math
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+import os, math
 
 import numpy as np
 import pytest

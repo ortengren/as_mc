@@ -45,14 +45,14 @@ for a in "${ALPHAS[@]}"; do
     if [ "$(awk -v a="$a" 'BEGIN{print (a==0)?1:0}')" -eq 1 ]; then
         # Unweighted reference: uniform weighting (alpha is ignored here).
         echo "=== uniform (unweighted) fit ==="
-        "$PYTHON" -m asmcmc.fitting.run \
+        "$PYTHON" -m asmcmc.fitting_gbq.run \
             --weighting uniform \
             "${DE_OPTS[@]}" \
             --cache-dir "$CACHE_DIR" \
             --out-dir "${SCAN_DIR}/uniform"
     else
         echo "=== boltzmann fit, alpha=${a} ==="
-        "$PYTHON" -m asmcmc.fitting.run \
+        "$PYTHON" -m asmcmc.fitting_gbq.run \
             --weighting boltzmann --alpha "$a" \
             "${DE_OPTS[@]}" \
             --cache-dir "$CACHE_DIR" \

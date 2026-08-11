@@ -47,7 +47,7 @@ CAMPAIGN_DIR="results/fitting/multiseed/${CAMPAIGN}"
 for s in "${FIT_SEEDS[@]}"; do
     out_dir="${CAMPAIGN_DIR}/seed_${s}"
     echo "--- ${WEIGHTING} fit, fit-seed=${s} -> ${out_dir} ---"
-    "$PYTHON" -m asmcmc.fitting.run \
+    "$PYTHON" -m asmcmc.fitting_gbq.run \
         "${WEIGHT_OPTS[@]}" \
         --split-seed 0 --fit-seed "$s" \
         "${DE_OPTS[@]}" \

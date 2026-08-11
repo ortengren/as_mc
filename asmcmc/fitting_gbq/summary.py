@@ -1,6 +1,6 @@
 """Cross-run summary plots for the GBQ fit campaign.
 
-Where :mod:`asmcmc.fitting.plots` makes per-fit diagnostics (one fitted ``theta``
+Where :mod:`asmcmc.fitting_gbq.plots` makes per-fit diagnostics (one fitted ``theta``
 -> a few figures, written inside ``fit_variant``), this module is the *cross-run*
 analogue: it scans the ``results/fitting/`` campaign tree produced by
 ``scripts/run_fits.sh`` (``alpha_scan/alpha_<value>/`` + ``alpha_scan/uniform/``)
@@ -9,7 +9,7 @@ seed-reproducibility repeats), rebuilds the dataset once from the shared cache
 (``results/fitting/cache/``), recomputes per-frame predictions/weights for each
 fit, and reduces the campaign to a handful of comparison figures.
 
-Run with ``python -m asmcmc.fitting.summary``.
+Run with ``python -m asmcmc.fitting_gbq.summary``.
 """
 
 import glob

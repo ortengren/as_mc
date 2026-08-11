@@ -13,10 +13,6 @@ production trajectory never clobbers the equilibration figures.
 """
 
 import argparse
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from asmcmc.diagnostics import PLOTS, render
 

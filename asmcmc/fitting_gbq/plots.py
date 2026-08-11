@@ -148,7 +148,7 @@ def write_plots(out_dir, theta, data, train_idx=None, test_idx=None, pred=None):
     """Write all diagnostic PNGs for a fitted ``theta`` to ``out_dir``.
 
     Predicts once (or reuses ``pred``) and threads the arrays through every
-    figure -- the plotting analogue of :func:`asmcmc.fitting.report.write_artifacts`.
+    figure -- the plotting analogue of :func:`asmcmc.fitting_gbq.report.write_artifacts`.
     Each Figure is closed after saving so a batch run does not accumulate open
     figures. Returns ``{name: path}`` for the files written.
     """
