@@ -1,0 +1,35 @@
+# container_image = osdf:///chtc/staging/anisoap_qe.sif
+# container_image = file:///home/alin62/anisoap_qe2.sif
+
+# Container Image in terms of initialdir
+container_image = ../../as_mc_image.sif 
+
+initialdir = workspace
+error =  $(hash)/err.err
+output =  $(hash)/out.out
+log = $(hash)/log.log
+
+# Not in terms of the initialdir, but from the cwd where condor_submit is called
+executable = run.sh
+arguments = $(hash)
+#executable = /bin/hostname
+
+# These are in terms of the initialdir (i.e., workspace)
+transfer_input_files =  ../.signac, ../project.py, $(hash), ../../data, ../../asmcmc
+transfer_output_files = workspace/$(hash)
+
+# requirements = (HasCHTCStaging == true)
+# requirements = (HasChtcSoftware == true)
+
+
+# Make sure you request enough disk for the container image in addition to your other input files
+request_cpus = 1
+request_memory = 4GB
+retry_request_memory = 16GB
+request_disk = 4GB      
+
+max_materialize = 1500
+max_idle = 500
+
+#
+queue hash from workspace.txt

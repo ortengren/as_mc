@@ -1,0 +1,11 @@
+log = $(job_name).log
+
+transfer_input_files = .
+
++IsBuildJob = True
+
+request_cpus = 8
+request_memory = 16GB
+request_disk = 30GB
+
+queue

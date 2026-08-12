@@ -1,0 +1,10 @@
+Bootstrap: docker
+From: python:3.12-slim
+
+%files
+    # Copies the pyproject.toml from your host machine into the container
+    pyproject.toml .
+
+%post
+    # Upgrade pip and install the dependencies globally inside the container
+    pip install -e .

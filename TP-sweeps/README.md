@@ -21,4 +21,9 @@ Note: an eligible job is one whose preconditions are met and whose postcondition
 
 
 # For CHTC:
-* tbd.
+* I included an apptainer definition file in the parent folder to build the container to use for htc.
+* Follow the instructions here to build: https://chtc.cs.wisc.edu/uw-research-computing/apptainer-build#the-apptainer-container-image
+* `workspace.txt` is populated with `get_signac_jobs.py`, which either lists all job ids, or you can filter
+* The `run.sub` and `run.sh` contains code that runs every job listed in `workspace.txt`
+* I find that the HTC run seems much slower (10 min/31 min/2 min) than on my local mac (3 min/9 min/1 min) for T=250, P=1atm. Timing is for (equilibriation/production/analysis)
+  * therefore you only reap the benefits of parallelism if you run >3-4 jobs, which hopefully is the case most of the time.
