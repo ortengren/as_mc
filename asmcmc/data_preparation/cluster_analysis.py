@@ -106,10 +106,20 @@ def pair_records(frames, potential=CACELLI_POTENTIAL):
     Keys: ``r``, ``a_i``, ``a_j``, ``b`` (the pair geometry), ``e_uma`` and
     ``e_gbq`` (interaction energies, eV), ``delta`` (``e_uma - e_gbq``, the
     Delta-learning target), plus provenance ``n_molecules`` (2 = sampled as a
-    dimer, 3 = extracted from a trimer), ``shard``, ``config_index``.
+    dimer, 3 = extracted from a trimer), ``shard``, ``config_index``,
+    ``log_q`` and ``seeded``.
 
     Geometry comes from the stored ``molecular_com``/``or_vec``, so no frame is
     re-coarse-grained and the numbers are exactly the ones the generator used.
+
+    **``log_q`` is a frame-level quantity, broadcast here for convenience, and
+    is a valid pair proposal density only where ``seeded`` is True.** The motif
+    mixture proposes the (0, 1) pair; in a dimer that *is* the whole cluster, so
+    the density is exact. A trimer's 0-2 and 1-2 pairs are incidental -- their
+    marginal proposal density is an integral with no closed form -- so weighting
+    every pair by ``exp(-log_q)`` would be wrong. Filter on ``seeded`` first.
+    ``NaN`` for campaigns that recorded no density (``orientation_sampling`` was
+    ``"uniform"``).
 
     Trimers requiring ``decomposition="full"`` is not checked defensively: a
     campaign run with ``monomers`` has no pair energies to unpack and raises a
@@ -118,6 +128,7 @@ def pair_records(frames, potential=CACELLI_POTENTIAL):
     r, a_i, a_j, b = [], [], [], []
     e_uma, e_gbq = [], []
     n_mol, shard, config_index = [], [], []
+    log_q, seeded = [], []
 
     for frame in frames:
         com = np.asarray(frame.info["molecular_com"], dtype=float)
@@ -141,6 +152,11 @@ def pair_records(frames, potential=CACELLI_POTENTIAL):
         n_mol.append(np.full(count, int(frame.info["n_molecules"])))
         shard.append(np.full(count, int(frame.info.get("shard", -1))))
         config_index.append(np.full(count, int(frame.info.get("config_index", -1))))
+        log_q.append(np.full(count, float(frame.info.get("log_q", np.nan))))
+        # The motif mixture proposes the (0, 1) pair and nothing else.
+        seeded.append(
+            np.array([set(p) == {0, 1} for p in pairs]) & ("log_q" in frame.info)
+        )
 
     def cat(chunks, dtype=float):
         if not chunks:
@@ -157,9 +173,106 @@ def pair_records(frames, potential=CACELLI_POTENTIAL):
         "n_molecules": cat(n_mol, int),
         "shard": cat(shard, int),
         "config_index": cat(config_index, int),
+        "log_q": cat(log_q),
+        "seeded": cat(seeded, bool),
     }
     records["delta"] = records["e_uma"] - records["e_gbq"]
     return records
+
+
+def frame_records(frames):
+    """Per-frame proposal provenance -- the granularity ``log_q`` actually has.
+
+    Keys: ``log_q``, ``proposal_component``, ``n_molecules``. Use this, not
+    ``pair_records``, for anything that reweights whole configurations.
+    """
+    return {
+        "log_q": np.array(
+            [float(f.info.get("log_q", np.nan)) for f in frames], dtype=float
+        ),
+        "proposal_component": np.array(
+            [str(f.info.get("proposal_component", "")) for f in frames]
+        ),
+        "n_molecules": np.array(
+            [int(f.info["n_molecules"]) for f in frames], dtype=int
+        ),
+    }
+
+
+def weight_diagnostics(log_q):
+    """How concentrated a recorded proposal is, relative to flat.
+
+    **Descriptive, not a pass/fail gate.** ``w ∝ 1/q`` reweights toward a target
+    that is uniform over the whole configuration ball, which is not a target
+    anyone wants here -- it would put nearly all its mass at large separation,
+    exactly where the proposal deliberately does not look. A low
+    ``ess_fraction`` therefore says the proposal is far from uniform, which is
+    the entire point of motif seeding, not evidence that it is misweighted. For
+    an actual acceptance criterion use :func:`reweighting_ess` against a target
+    census you would really fit to.
+
+    ``p99_over_p50`` rather than max-over-median: when most weights sit at the
+    maximum (a bottom-heavy proposal), the median *is* the max and the naive
+    ratio reads 1.0 while the ESS is well below 1.
+
+    Returns ``NaN`` for a campaign that recorded no density.
+    """
+    log_q = np.asarray(log_q, dtype=float)
+    finite = log_q[np.isfinite(log_q)]
+    if len(finite) == 0:
+        return {
+            "n": 0,
+            "ess_fraction": float("nan"),
+            "p99_over_p50": float("nan"),
+            "log_q_range": float("nan"),
+        }
+
+    # Shift before exponentiating: log_q spans tens of nats, so exp overflows.
+    weights = np.exp(-(finite - finite.max()))
+    ess = weights.sum() ** 2 / np.sum(weights**2)
+    p99, p50 = np.percentile(weights, [99, 50])
+    return {
+        "n": int(len(finite)),
+        "ess_fraction": float(ess / len(finite)),
+        "p99_over_p50": float(p99 / p50),
+        "log_q_range": float(finite.max() - finite.min()),
+    }
+
+
+def reweighting_ess(records, target_r, edges=None):
+    """ESS fraction of reweighting a campaign's pairs to a target radial census.
+
+    **This is the criterion that means something**: it asks whether the campaign
+    can be reweighted to a distribution you would actually fit against -- the
+    separations an MC run really visits -- and how many effective samples
+    survive. Unlike :func:`weight_diagnostics` it needs no recorded density, so
+    it is comparable across campaigns sampled by different proposals.
+
+    Support, not shape, is what can make this collapse: a campaign that never
+    sampled a shell the target occupies gets zero weight there and no
+    reweighting can recover it.
+    """
+    edges = np.asarray(
+        edges if edges is not None else np.linspace(3.4, 15.0, 24), dtype=float
+    )
+    campaign_counts, _ = np.histogram(records["r"], bins=edges)
+    target_counts, _ = np.histogram(np.asarray(target_r, dtype=float), bins=edges)
+
+    inside = (records["r"] >= edges[0]) & (records["r"] <= edges[-1])
+    if not inside.any() or campaign_counts.sum() == 0 or target_counts.sum() == 0:
+        return float("nan")
+
+    p_campaign = campaign_counts / campaign_counts.sum()
+    p_target = target_counts / target_counts.sum()
+    index = np.clip(np.digitize(records["r"][inside], edges) - 1, 0, len(edges) - 2)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        weights = np.where(
+            campaign_counts[index] > 0, p_target[index] / p_campaign[index], 0.0
+        )
+    if weights.sum() == 0:
+        return 0.0
+    return float(weights.sum() ** 2 / np.sum(weights**2) / len(weights))
 
 
 def gb_invariants(records):
@@ -356,12 +469,36 @@ def _min_intermolecular_distance(frame):
     return best
 
 
-def _com_signature(frame, decimals=4):
-    """Sorted inter-COM distances: invariant under the rigid motions and the
-    molecule relabelling that a duplicate configuration would differ by."""
+def _configuration_signature(frame, decimals=4):
+    """A fingerprint identifying a cluster up to rigid motion and relabelling.
+
+    Per pair: separation plus the ``(|a_i|, |a_j|, |b|)`` invariants, sorted
+    over pairs. Rotation-, inversion- and relabelling-invariant, which is what
+    "the same configuration" has to mean here.
+
+    **Orientation is included deliberately.** An earlier version fingerprinted
+    inter-centre distances alone, which for a dimer is a *single* number: with
+    141 dimers concentrated by motif sampling into a narrow radial band, two
+    unrelated configurations collide at 1e-4 A resolution with ~30% probability,
+    and the check duly reported a phantom duplicate on the first motif campaign.
+    Four invariants per pair make coincidence negligible while a genuine
+    duplicate still matches exactly.
+    """
     com = np.asarray(frame.info["molecular_com"], dtype=float)
+    u = _normals(frame)
     i, j = np.triu_indices(len(com), k=1)
-    return (len(com),) + tuple(np.sort(np.round(np.linalg.norm(com[j] - com[i], axis=1), decimals)))
+
+    disp = com[j] - com[i]
+    r = np.linalg.norm(disp, axis=1)
+    r_hat = disp / np.where(r > 0, r, 1.0)[:, None]
+    a_i = np.abs(np.einsum("pk,pk->p", r_hat, u[i]))
+    a_j = np.abs(np.einsum("pk,pk->p", r_hat, u[j]))
+    b = np.abs(np.einsum("pk,pk->p", u[i], u[j]))
+
+    per_pair = np.round(
+        np.stack([r, np.minimum(a_i, a_j), np.maximum(a_i, a_j), b], axis=1), decimals
+    )
+    return (len(com),) + tuple(sorted(map(tuple, per_pair.tolist())))
 
 
 def qa_report(frames, config=None, potential=CACELLI_POTENTIAL):
@@ -391,7 +528,7 @@ def qa_report(frames, config=None, potential=CACELLI_POTENTIAL):
         n_trimers += n_mol == 3
 
         ids.append((int(frame.info.get("shard", -1)), int(frame.info.get("config_index", -1))))
-        signatures.append(_com_signature(frame))
+        signatures.append(_configuration_signature(frame))
         monomer_energies.extend(np.atleast_1d(frame.info["monomer_energies"]).tolist())
 
         distance = _min_intermolecular_distance(frame)

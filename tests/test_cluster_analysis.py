@@ -11,6 +11,9 @@ import pytest
 from asmcmc.base.potentials import CACELLI_POTENTIAL
 from asmcmc.data_preparation.cluster_analysis import (
     COFACIAL,
+    _configuration_signature,
+    frame_records,
+    weight_diagnostics,
     EV_TO_KCAL,
     FAR_SLIPPED,
     PARALLEL_DISPLACED,
@@ -22,6 +25,7 @@ from asmcmc.data_preparation.cluster_analysis import (
     pair_records,
     qa_report,
     radial_profile,
+    reweighting_ess,
     stack_coordinates,
     three_body_records,
 )
@@ -409,3 +413,159 @@ def test_pass_rate_is_reproducible_and_shaped_like_its_input():
 def test_unknown_orientation_mode_is_rejected():
     with pytest.raises(ValueError, match="unknown orientations"):
         hard_core_pass_rate([4.0], orientations="herringbone")
+
+
+# --- proposal density provenance ---------------------------------------------
+
+
+def test_pair_records_marks_only_the_seeded_pair(campaign):
+    """log_q is the density of the whole cluster, and the mixture proposes only
+    the (0,1) pair -- so a trimer's other two pairs must not be marked usable."""
+    frames, _ = campaign
+    for frame in frames:
+        frame.info["log_q"] = -7.5
+
+    records = pair_records(frames)
+    n_dimers = sum(f.info["n_molecules"] == 2 for f in frames)
+    n_trimers = sum(f.info["n_molecules"] == 3 for f in frames)
+
+    # one seeded pair per cluster, whatever its size
+    assert records["seeded"].sum() == n_dimers + n_trimers
+    assert np.all(records["log_q"] == -7.5)
+    # ... and the incidental trimer pairs are exactly the rest
+    assert (~records["seeded"]).sum() == 2 * n_trimers
+
+
+def test_log_q_is_nan_for_a_campaign_that_recorded_none(campaign):
+    """A uniform campaign has no proposal density; it must read as missing
+    rather than as some default that would silently weight wrong."""
+    frames, _ = campaign
+    records = pair_records(frames)
+    assert np.all(np.isnan(records["log_q"]))
+    assert not records["seeded"].any()
+
+
+def test_frame_records_are_per_frame_not_per_pair(campaign):
+    frames, _ = campaign
+    for i, frame in enumerate(frames):
+        frame.info["log_q"] = -float(i)
+        frame.info["proposal_component"] = "stacked_tight"
+
+    records = frame_records(frames)
+    assert len(records["log_q"]) == len(frames)
+    assert np.array_equal(records["log_q"], -np.arange(len(frames), dtype=float))
+    assert set(records["proposal_component"]) == {"stacked_tight"}
+
+
+def test_weight_diagnostics_are_perfect_for_a_flat_proposal():
+    """Identical densities mean identical weights: nothing is lost reweighting."""
+    stats = weight_diagnostics(np.full(500, -3.2))
+    assert stats["ess_fraction"] == pytest.approx(1.0)
+    assert stats["p99_over_p50"] == pytest.approx(1.0)
+    assert stats["log_q_range"] == pytest.approx(0.0)
+
+
+def test_ess_catches_a_lone_dominating_weight_that_the_robust_ratio_misses():
+    """Both statistics are reported because neither alone is sufficient.
+
+    One configuration proposed far more rarely than the rest dominates the
+    reweighted sample. ESS sees it; ``p99_over_p50`` is a robust quantile ratio
+    and deliberately does not, which is exactly why it is not reported alone.
+    """
+    log_q = np.concatenate([np.full(999, 0.0), [-25.0]])
+    stats = weight_diagnostics(log_q)
+
+    assert stats["ess_fraction"] < 0.01
+    assert stats["log_q_range"] == pytest.approx(25.0)
+    assert stats["p99_over_p50"] == pytest.approx(1.0)
+
+
+def test_weight_diagnostics_survive_large_log_q():
+    """exp(-log_q) overflows without the shift; the ESS must stay finite."""
+    stats = weight_diagnostics(np.linspace(-800, -600, 400))
+    assert np.isfinite(stats["ess_fraction"])
+    assert 0.0 < stats["ess_fraction"] <= 1.0
+
+
+def test_weight_diagnostics_on_no_density_is_nan():
+    stats = weight_diagnostics(np.full(10, np.nan))
+    assert stats["n"] == 0
+    assert np.isnan(stats["ess_fraction"])
+
+
+# --- duplicate detection -----------------------------------------------------
+
+
+def test_a_genuine_duplicate_is_caught(campaign):
+    frames, config = campaign
+    # The frame itself, not a .copy() -- copying drops the SinglePointCalculator
+    # and qa_report's energy check would raise before reaching the duplicate.
+    frames.append(frames[0])
+    report = qa_report(frames, config)
+    assert report.duplicate_signatures == 1
+    assert any("duplicate configurations" in p for p in report.problems)
+
+
+def test_matching_centre_distance_alone_is_not_a_duplicate():
+    """The regression this fingerprint exists for.
+
+    A distance-only signature is a *single number* for a dimer, so two unrelated
+    configurations collide at 1e-4 A with high probability once motif sampling
+    concentrates separations into a narrow band -- and the first motif campaign
+    duly reported a phantom duplicate. Same separation, different orientations,
+    is a different configuration.
+    """
+    same_distance = 4.0
+    a = _dimer([0.0, 0.0, same_distance])
+    b = _dimer([0.0, 0.0, same_distance], u_b=[1.0, 0.0, 0.0])
+    assert np.isclose(
+        np.linalg.norm(np.asarray(a.info["molecular_com"])[1]),
+        np.linalg.norm(np.asarray(b.info["molecular_com"])[1]),
+    )
+    assert _configuration_signature(a) != _configuration_signature(b)
+
+
+def test_the_signature_ignores_rigid_motion_and_relabelling():
+    """It must still catch a true duplicate that was merely rotated."""
+    frame = _dimer([0.0, 0.0, 4.0], u_a=[0.0, 0.0, 1.0], u_b=[1.0, 0.0, 0.0])
+
+    rotated = frame.copy()
+    turn = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    rotated.info["molecular_com"] = np.asarray(frame.info["molecular_com"]) @ turn.T
+    rotated.info["or_vec"] = np.asarray(frame.info["or_vec"]) @ turn.T
+
+    assert _configuration_signature(frame) == _configuration_signature(rotated)
+
+
+def test_reweighting_ess_is_perfect_when_campaign_matches_target():
+    """Nothing to correct means nothing is lost."""
+    frames = [_dimer([0.0, 0.0, d]) for d in np.linspace(4.0, 14.0, 200)]
+    records = pair_records(frames)
+    assert reweighting_ess(records, records["r"]) == pytest.approx(1.0, abs=0.02)
+
+
+def test_reweighting_ess_falls_when_the_target_sits_where_sampling_is_thin():
+    """A campaign concentrated away from its target pays for the correction."""
+    frames = [_dimer([0.0, 0.0, d]) for d in np.concatenate(
+        [np.linspace(4.0, 5.0, 190), np.linspace(12.0, 14.0, 10)]
+    )]
+    records = pair_records(frames)
+    target = np.linspace(12.0, 14.0, 500)  # all target mass where only 10 pairs sit
+    assert reweighting_ess(records, target) < 0.2
+
+
+def test_reweighting_ess_is_zero_without_overlapping_support():
+    """The failure reweighting cannot fix: a region that was never sampled."""
+    frames = [_dimer([0.0, 0.0, d]) for d in np.linspace(4.0, 5.0, 60)]
+    records = pair_records(frames)
+    assert reweighting_ess(records, np.linspace(12.0, 14.0, 200)) == 0.0
+
+
+def test_weight_diagnostics_spread_survives_a_bottom_heavy_proposal():
+    """Most weights at the maximum is exactly where max-over-median reads 1.0 and
+    hides a real spread; the p99/p50 form must not."""
+    log_q = np.concatenate([np.full(900, 0.0), np.full(100, -9.0)])
+    stats = weight_diagnostics(log_q)
+    assert stats["p99_over_p50"] > 1e3
+    assert stats["log_q_range"] == pytest.approx(9.0)
+    assert stats["ess_fraction"] < 0.2

@@ -5,6 +5,8 @@ generator with a stub calculator, so the suite stays runnable from a fresh
 clone without fairchem, a model download, or a GPU.
 """
 
+from dataclasses import asdict
+
 import numpy as np
 import pytest
 from ase.io import read
@@ -624,3 +626,61 @@ def test_motif_campaign_stamps_provenance(stub_uma, tmp_path):
     for frame in dataset_frames(tmp_path):
         assert frame.info["orientation_sampling"] == "motif"
         assert np.isfinite(frame.info["log_q"])
+
+
+# --- progress reporting -------------------------------------------------------
+
+
+def test_progress_queue_counts_every_configuration(stub_uma, tmp_path):
+    """The bar is only useful if it is honest: the posted total must equal the
+    configurations actually generated, or a long run reads as stalled or as
+    finished early."""
+    import queue
+
+    reported = queue.Queue()
+    result = generate_shard(
+        out_dir=str(tmp_path), shard=0, n_configs=7, seed=3,
+        settings_dict=asdict(SamplingSettings()), model="stub", device="cpu",
+        decomposition="monomers", trimer_fraction=0.5, flush_every=2,
+        progress_queue=reported,
+    )
+
+    total = 0
+    while not reported.empty():
+        total += reported.get_nowait()
+    assert result["written"] == 7
+    assert total == 7
+
+
+def test_progress_queue_reports_frames_already_on_disk(stub_uma, tmp_path):
+    """A resumed campaign must start its bar where the data does. A completed
+    shard returns immediately, so it has to post its count before returning."""
+    import queue
+
+    common = dict(
+        out_dir=str(tmp_path), shard=0, seed=3,
+        settings_dict=asdict(SamplingSettings()), model="stub", device="cpu",
+        decomposition="monomers", trimer_fraction=0.5, flush_every=2,
+    )
+    generate_shard(n_configs=5, **common)
+
+    resumed = queue.Queue()
+    result = generate_shard(n_configs=5, progress_queue=resumed, **common)
+
+    total = 0
+    while not resumed.empty():
+        total += resumed.get_nowait()
+    assert result["skipped"]
+    assert total == 5, "a skipped shard still has to account for its frames"
+
+
+def test_drain_returns_everything_queued_without_blocking():
+    import queue
+
+    from asmcmc.data_preparation.cluster_dataset import _drain
+
+    q = queue.Queue()
+    for n in (1, 1, 3, 5):
+        q.put(n)
+    assert _drain(q) == 10
+    assert _drain(q) == 0  # empty, and must not hang

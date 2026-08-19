@@ -75,10 +75,11 @@ for _thread_var in (
     os.environ.setdefault(_thread_var, "1")
 
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, wait
 from dataclasses import asdict, dataclass
 from multiprocessing import get_context
 from pathlib import Path
+from queue import Empty
 from typing import Sequence
 
 import numpy as np
@@ -86,6 +87,7 @@ from ase import Atoms
 from ase.build import molecule
 from ase.calculators.singlepoint import SinglePointCalculator
 from ase.io import read, write
+from tqdm import tqdm
 
 from asmcmc.base.potentials import CACELLI_POTENTIAL
 from asmcmc.utils.uma import DEFAULT_UMA_MODEL, load_uma_calculator
@@ -794,17 +796,28 @@ def generate_shard(
     trimer_fraction: float,
     flush_every: int,
     progress: bool = False,
+    progress_queue=None,
 ) -> dict:
     """Generate one shard, appending incrementally so a crash loses ~nothing.
 
     Takes ``settings_dict`` rather than a ``SamplingSettings`` so the payload
     pickles cleanly into a spawned worker.
+
+    Progress is reported one of two ways because the two call paths differ.
+    ``progress_queue`` (a manager queue) is for the pooled path: a spawned
+    worker cannot draw to the parent's terminal without shards fighting over
+    the same lines, so it posts counts and the parent owns the single bar.
+    ``progress`` alone drives a local bar for the in-process single-shard path.
     """
     out_dir = Path(out_dir)
     settings = SamplingSettings(**settings_dict)
     path = shard_path(out_dir, shard)
 
     done = shard_count(path)
+    # Frames already on disk still count toward the campaign, so a resumed run's
+    # bar starts where the data does rather than at zero.
+    if progress_queue is not None and done:
+        progress_queue.put(min(done, n_configs))
     if done >= n_configs:
         return {"shard": shard, "written": 0, "total": done, "skipped": True}
 
@@ -832,6 +845,20 @@ def generate_shard(
         if buffer:
             write(path, buffer, append=True)
             buffer = []
+
+    # disable=None silences the bar whenever stderr is not a terminal, so pytest
+    # and piped runs stay clean without a flag.
+    local_bar = (
+        tqdm(
+            total=n_configs,
+            initial=done,
+            unit="cfg",
+            desc=f"shard {shard:02d}",
+            disable=None,
+        )
+        if progress and progress_queue is None
+        else None
+    )
 
     attempt = 0
     while done + written < n_configs:
@@ -874,22 +901,29 @@ def generate_shard(
             written += 1
             attempt = 0
 
+            # Per configuration, not per flush: a 5000-config campaign flushes
+            # every 10, and a bar that only moved every tenth would read as
+            # stalled for minutes at a time.
+            if progress_queue is not None:
+                progress_queue.put(1)
+            elif local_bar is not None:
+                local_bar.update(1)
+
             if len(buffer) >= flush_every:
                 flush()
-                if progress:
-                    print(
-                        f"  shard {shard:02d}: {done + written}/{n_configs}",
-                        flush=True,
-                    )
         except (RuntimeError, ValueError, FloatingPointError) as exc:
             failures += 1
             attempt += 1  # re-salt the seed; the same stream would fail identically
             print(f"shard {shard:02d} skipping attempt: {exc}", file=sys.stderr)
             if failures > max(1000, 10 * n_configs):
                 flush()
+                if local_bar is not None:
+                    local_bar.close()
                 raise RuntimeError("Too many failed sample attempts.") from exc
 
     flush()
+    if local_bar is not None:
+        local_bar.close()
     return {
         "shard": shard,
         "written": written,
@@ -977,22 +1011,54 @@ def main(
     cpu_count_lim = 1 if os.cpu_count() is None else os.cpu_count() / 2
     num_workers = min(max_workers, cpu_count_lim, n_shards)
     results = []
-    # spawn (not the Linux-default fork): forking a process that has already
-    # started BLAS/torch threads can deadlock the child.
-    with ProcessPoolExecutor(
-        max_workers=num_workers, mp_context=get_context("spawn")
-    ) as pool:
-        futures = {pool.submit(generate_shard, **job): job["shard"] for job in jobs}
-        for future in as_completed(futures):
-            res = future.result()
-            results.append(res)
-            state = "skipped (complete)" if res["skipped"] else f"+{res['written']}"
-            print(
-                f"shard {res['shard']:02d}: {state}, {res['total']} frames",
-                flush=True,
-            )
+    context = get_context("spawn")
+
+    # A manager queue rather than a plain mp.Queue: ProcessPoolExecutor pickles
+    # its arguments, and a raw queue refuses that ("should only be shared
+    # through inheritance"). The proxy pickles fine.
+    with context.Manager() as manager:
+        queue = manager.Queue()
+        # spawn (not the Linux-default fork): forking a process that has already
+        # started BLAS/torch threads can deadlock the child.
+        with ProcessPoolExecutor(
+            max_workers=num_workers, mp_context=context
+        ) as pool:
+            futures = {
+                pool.submit(generate_shard, **job, progress_queue=queue): job["shard"]
+                for job in jobs
+            }
+            pending = set(futures)
+            with tqdm(
+                total=n_configs, unit="cfg", desc="clusters", disable=None
+            ) as bar:
+                while pending:
+                    # Short timeout so the bar keeps moving while shards run;
+                    # draining between waits is what keeps the queue bounded.
+                    finished, pending = wait(pending, timeout=0.5)
+                    bar.update(_drain(queue))
+                    for future in finished:
+                        results.append(future.result())
+                bar.update(_drain(queue))
+
+    for res in sorted(results, key=lambda r: r["shard"]):
+        state = "skipped (complete)" if res["skipped"] else f"+{res['written']}"
+        print(f"shard {res['shard']:02d}: {state}, {res['total']} frames", flush=True)
 
     return sorted(results, key=lambda r: r["shard"])
+
+
+def _drain(progress_queue) -> int:
+    """Total of everything currently queued, without blocking.
+
+    Catches only ``Empty``: a broader except would swallow a dead manager
+    connection and leave the bar silently frozen while the run continued.
+    """
+    total = 0
+    while True:
+        try:
+            total += progress_queue.get_nowait()
+        except Empty:
+            return total
 
 
 def dataset_frames(out_dir) -> list[Atoms]:
