@@ -93,22 +93,15 @@ from asmcmc.base.potentials import CACELLI_POTENTIAL
 from asmcmc.utils.uma import DEFAULT_UMA_MODEL, load_uma_calculator
 from asmcmc.utils.geometry import coarse_grain_frame
 
-# Used only to set relative amplitudes of random internal displacement; the
-# generator projects out rigid translation and rotation afterward. The g2 atom
-# order is fixed: C0..C5 around the ring, H6..H11 bonded to C0..C5.
-BOND_PAIRS = (
-    (0, 1),
-    (1, 2),
-    (2, 3),
-    (3, 4),
-    (4, 5),
-    (5, 0),  # aromatic ring, 1.395 A
-    (0, 6),
-    (1, 7),
-    (2, 8),
-    (3, 9),
-    (4, 10),
-    (5, 11),  # C-H, 1.087 A
+# proposals imports nothing from this package at module scope -- it reaches the
+# classifier's thresholds through a deferred import -- so this direction is safe
+# and the old function-body import is no longer needed.
+from asmcmc.data_preparation.proposals import (
+    MOTIFS,
+    RadialProposal,
+    UNIFORM,
+    draw_motif,
+    rotation_to_normal,
 )
 
 RADIAL_SAMPLINGS = ("volume-uniform", "mixture")
@@ -121,26 +114,24 @@ class SamplingSettings:
 
     ``max_com_distance`` matches ``MetropolisCalculator``'s ``nl_radius`` and
     the AniSOAP descriptor cutoff -- see the module docstring on why the 9 A
-    that spans the dimer wells is not enough.
+    that spans the dimer wells is not enough. It bounds the ``uniform`` motif;
+    the four named motifs live inside ``cluster_analysis.WELL_RANGE`` by
+    definition and are unaffected by it.
 
     ``trimer_max_com_distance`` bounds the *third* molecule's placement
     separately. Under volume-uniform sampling ~79% of placements land beyond
     9 A, where the three-body term is numerically zero; tightening this one
     number concentrates the trimer budget on geometries that carry three-body
-    physics without touching the dimer sampling. **Measured caveat:** it is not
-    what limits three-body sampling -- the hard core is (see
-    ``orientation_sampling``) -- and it also sets where trimer-derived *pair*
-    labels land, which is most of them. Tighten it only deliberately.
+    physics without touching the dimer sampling. **Measured caveat:** it also
+    sets where trimer-derived *pair* labels land, which is most of them.
+    Tighten it only deliberately.
 
-    ``orientation_sampling`` chooses how orientations are proposed.
-    ``"uniform"`` is the original behaviour and remains the default, so an
-    existing campaign stays reproducible bit-for-bit. ``"motif"`` proposes
-    position and orientation **jointly** from
-    :func:`asmcmc.data_preparation.proposals.default_mixture` -- at 3.6 A a
-    uniform proposal clears the hard core ~3% of the time against ~86% for a
-    cofacial-seeded one, so under ``"uniform"`` most of the short-range budget
-    is spent on rejections. Motif runs additionally stamp ``log_q`` on every
-    frame.
+    ``trimer_fraction`` lives here rather than on the campaign because it
+    decides geometry: it is the probability that a configuration is a trimer
+    rather than a dimer.
+
+    Monomers are always rigid -- see the module docstring for why, and note that
+    the flexible path was removed rather than left dormant.
     """
 
     min_com_distance: float = 3.4
@@ -148,27 +139,53 @@ class SamplingSettings:
     trimer_max_com_distance: float = 15.0
     min_atom_distance: float = 2.4
     radial_sampling: str = "volume-uniform"
-    orientation_sampling: str = "uniform"
-    uniform_weight: float = 0.40
-    rigid: bool = True
-    vibration_rms: float = 0.05
-    vibration_max_atom: float = 0.10
     compact_probability: float = 0.70
+    trimer_fraction: float = 0.70
     max_placement_attempts: int = 500
 
+    def __post_init__(self):
+        """Validate here, not at four scattered call sites.
 
-def random_rotation_matrix(rng: np.random.Generator) -> np.ndarray:
-    """Uniform random rotation in SO(3), generated from a unit quaternion."""
-    q = rng.normal(size=4)
-    q /= np.linalg.norm(q)
-    w, x, y, z = q
-    return np.array(
-        [
-            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-        ]
-    )
+        A frozen dataclass is the one place every construction path goes
+        through, so a setting cannot reach the generator unchecked.
+        """
+        if self.radial_sampling not in RADIAL_SAMPLINGS:
+            raise ValueError(
+                f"radial_sampling must be one of {RADIAL_SAMPLINGS}, "
+                f"got {self.radial_sampling!r}"
+            )
+        if not self.min_com_distance < self.max_com_distance:
+            raise ValueError("min_com_distance must be below max_com_distance")
+        if not 0.0 <= self.trimer_fraction <= 1.0:
+            raise ValueError("trimer_fraction must be in [0, 1]")
+        if not 0.0 <= self.compact_probability <= 1.0:
+            raise ValueError("compact_probability must be in [0, 1]")
+        if self.max_placement_attempts < 1:
+            raise ValueError("max_placement_attempts must be positive")
+
+    def radial(self):
+        """The :class:`~asmcmc.data_preparation.proposals.RadialProposal` these imply."""
+        return RadialProposal(
+            lo=self.min_com_distance,
+            hi=self.max_com_distance,
+            mode=self.radial_sampling,
+            compact_probability=self.compact_probability,
+        )
+
+    def trimer_radial(self):
+        """As :meth:`radial`, capped at ``trimer_max_com_distance``.
+
+        The third molecule gets its own ceiling. The previous motif path ignored
+        this setting entirely -- it reached into the mixture's uniform component,
+        whose ceiling came from ``max_com_distance`` -- so a campaign that asked
+        for a tighter trimer never got one.
+        """
+        return RadialProposal(
+            lo=self.min_com_distance,
+            hi=self.trimer_max_com_distance,
+            mode=self.radial_sampling,
+            compact_probability=self.compact_probability,
+        )
 
 
 def center_of_mass(positions: np.ndarray, masses: np.ndarray) -> np.ndarray:
@@ -188,79 +205,6 @@ def inertia_tensor(
     return np.sum(masses[:, None, None] * (r2[:, None, None] * eye - rr), axis=0)
 
 
-def remove_rigid_components(
-    displacement: np.ndarray, positions: np.ndarray, masses: np.ndarray
-) -> np.ndarray:
-    """Project mass-weighted rigid translation and infinitesimal rotation out
-    of a Cartesian displacement."""
-    disp = displacement.copy()
-    total_mass = masses.sum()
-
-    # Remove center-of-mass translation.
-    disp -= np.sum(masses[:, None] * disp, axis=0) / total_mass
-
-    com = center_of_mass(positions, masses)
-    r = positions - com
-
-    # Find the infinitesimal rotation omega minimizing
-    # sum_i m_i |disp_i - omega x r_i|^2.
-    inertia = inertia_tensor(positions, masses, com)
-    angular_rhs = np.sum(np.cross(r, masses[:, None] * disp), axis=0)
-    omega = np.linalg.pinv(inertia, rcond=1e-12) @ angular_rhs
-    disp -= np.cross(omega[None, :], r)
-
-    # Numerical cleanup of translation.
-    disp -= np.sum(masses[:, None] * disp, axis=0) / total_mass
-    return disp
-
-
-def vibrate_monomer(
-    reference: Atoms,
-    rng: np.random.Generator,
-    target_rms: float,
-    max_atom_displacement: float,
-) -> Atoms:
-    """Add a small internal distortion. Heavy atoms move less than hydrogens,
-    and rigid translation/rotation are projected out."""
-    mol = reference.copy()
-    masses = mol.get_masses()
-    positions = mol.get_positions()
-
-    # Approximately mass-weighted random vibration. Add a correlated component
-    # along bonds so bond stretches and bends are represented.
-    disp = rng.normal(size=positions.shape) / np.sqrt(masses[:, None])
-
-    for i, j in BOND_PAIRS:
-        direction = positions[j] - positions[i]
-        direction /= np.linalg.norm(direction)
-        amplitude = rng.normal()
-        disp[i] -= 0.5 * amplitude * direction / math.sqrt(masses[i])
-        disp[j] += 0.5 * amplitude * direction / math.sqrt(masses[j])
-
-    disp = remove_rigid_components(disp, positions, masses)
-
-    rms = math.sqrt(np.mean(np.sum(disp**2, axis=1)))
-    if rms > 0:
-        # Draw a half-normal amplitude around the requested RMS.
-        requested = min(
-            abs(rng.normal(loc=target_rms, scale=0.35 * target_rms)),
-            2.0 * target_rms,
-        )
-        disp *= requested / rms
-
-    largest = np.max(np.linalg.norm(disp, axis=1))
-    if largest > max_atom_displacement:
-        disp *= max_atom_displacement / largest
-
-    mol.set_positions(positions + disp)
-
-    # Preserve the original COM exactly before cluster placement.
-    old_com = center_of_mass(positions, masses)
-    new_com = center_of_mass(mol.get_positions(), masses)
-    mol.translate(old_com - new_com)
-    return mol
-
-
 def build_reference_benzene() -> Atoms:
     """Idealized D6h benzene from ASE's g2 set (C-C 1.395 A, C-H 1.087 A)."""
     mol = molecule("C6H6")
@@ -270,71 +214,11 @@ def build_reference_benzene() -> Atoms:
     return mol
 
 
-def sample_radius(
-    rng: np.random.Generator,
-    settings: SamplingSettings,
-    max_distance: float | None = None,
-) -> float:
-    """Draw one centre-of-mass separation.
-
-    ``volume-uniform`` samples uniformly in r^3 over the whole range, so the
-    configuration density per unit volume is flat and the shell occupancy
-    matches what a bulk pair census looks like. ``mixture`` instead spends
-    ``compact_probability`` of its mass on the dimer wells (3.4-6 A) -- denser
-    where the cohesive energy lives, at the cost of a shape that has to be
-    chosen rather than derived.
-    """
-    hi = settings.max_com_distance if max_distance is None else max_distance
-    lo = settings.min_com_distance
-    if hi <= lo:
-        raise ValueError(f"max_com_distance {hi} must exceed min {lo}")
-
-    if (
-        settings.radial_sampling == "mixture"
-        and rng.random() < settings.compact_probability
-    ):
-        # Truncated normal spanning benzene's dimer wells: the sandwich and
-        # parallel-displaced minima near 3.9 A and the T-shaped one near 5.0 A.
-        for _ in range(100):
-            r = rng.normal(loc=4.70, scale=0.60)
-            if lo <= r <= min(6.0, hi):
-                return float(r)
-    return float((lo**3 + rng.random() * (hi**3 - lo**3)) ** (1.0 / 3.0))
-
-
-def random_unit_vector(rng: np.random.Generator) -> np.ndarray:
-    v = rng.normal(size=3)
-    return v / np.linalg.norm(v)
-
-
 def minimum_inter_molecular_distance(
     positions_a: np.ndarray, positions_b: np.ndarray
 ) -> float:
     delta = positions_a[:, None, :] - positions_b[None, :, :]
     return float(np.sqrt(np.min(np.sum(delta * delta, axis=-1))))
-
-
-ORIENTATION_SAMPLINGS = ("uniform", "motif")
-
-
-def build_proposal(settings: SamplingSettings):
-    """The motif mixture implied by ``settings``.
-
-    Lives here rather than in :mod:`asmcmc.data_preparation.proposals` so that
-    module never imports this one -- ``make_cluster`` depends on the proposals,
-    not the other way round.
-    """
-    from asmcmc.data_preparation.proposals import RadialProposal, default_mixture
-
-    return default_mixture(
-        radial=RadialProposal(
-            lo=settings.min_com_distance,
-            hi=settings.max_com_distance,
-            mode=settings.radial_sampling,
-            compact_probability=settings.compact_probability,
-        ),
-        uniform_weight=settings.uniform_weight,
-    )
 
 
 def _place(reference: Atoms, rotation: np.ndarray, target_com: np.ndarray) -> Atoms:
@@ -345,55 +229,6 @@ def _place(reference: Atoms, rotation: np.ndarray, target_com: np.ndarray) -> At
     pos -= center_of_mass(pos, masses)
     mol.set_positions(pos + target_com)
     return mol
-
-
-def _motif_placement(n_molecules, reference, rng, settings, proposal):
-    """One motif-seeded attempt: molecules, their centres, and ``log q``.
-
-    Only the (0, 1) pair is motif-seeded; a trimer's third molecule is placed by
-    the original scheme. Its density is the **anchor mixture** -- ``make_cluster``
-    picks anchor 0 or 1 with probability 1/2 and which it used is not
-    recoverable from the stored frame, so both terms are summed.
-    """
-    from asmcmc.data_preparation.proposals import rotation_to_normal
-
-    u0, u1, r_vec, component = proposal.draw(rng, 1)
-    log_q = float(proposal.log_density(u0, u1, r_vec)[0])
-
-    normals = [u0[0], u1[0]]
-    coms = [np.zeros(3), r_vec[0]]
-
-    if n_molecules == 3:
-        radial = proposal.components[-1].radial
-        anchor = 0 if rng.random() < 0.5 else 1
-        direction = rng.normal(size=3)
-        direction /= np.linalg.norm(direction)
-        distance = float(radial.sample(rng, 1)[0])
-        third = coms[anchor] + distance * direction
-
-        separations = np.array([np.linalg.norm(third - c) for c in coms])
-        # 1/2 from the anchor choice, 1/(4 pi d^2) from a uniform direction.
-        density = float(
-            np.sum(0.5 * radial.pdf(separations) / (4.0 * np.pi * separations**2))
-        )
-        if density <= 0.0:
-            return None
-        log_q += float(np.log(density)) - float(np.log(4.0 * np.pi))  # u2 uniform
-
-        normals.append(_uniform_normal(rng))
-        coms.append(third)
-
-    spins = rng.uniform(0.0, 2.0 * np.pi, size=n_molecules)
-    rotations = rotation_to_normal(np.asarray(normals), spins)
-    molecules = [
-        _place(reference, rotations[k], coms[k]) for k in range(n_molecules)
-    ]
-    return molecules, log_q, int(component[0])
-
-
-def _uniform_normal(rng: np.random.Generator) -> np.ndarray:
-    v = rng.normal(size=3)
-    return v / np.linalg.norm(v)
 
 
 def _clash_free(molecules, min_atom_distance: float) -> bool:
@@ -433,119 +268,93 @@ def make_cluster(
     reference: Atoms,
     rng: np.random.Generator,
     settings: SamplingSettings,
-    proposal=None,
+    motif: str,
 ) -> Atoms:
-    """Generate one non-periodic dimer or trimer with rejection of hard clashes.
+    """One non-periodic dimer or trimer seeded on ``motif``, free of hard clashes.
 
-    Under ``settings.orientation_sampling == "motif"`` the mixture component is
-    redrawn on **every** attempt, including after a clash rejection. That is what
-    makes the recorded ``log_q`` usable: with a single top-level rejection the
-    realised density is ``q(x)*1[no clash]/Z`` for one global ``Z``, which
-    cancels from every relative weight. Retrying inside a component would leave
-    per-component normalisations that do not.
+    The motif fixes the (0, 1) pair. A trimer's third molecule is placed
+    isotropically about either of the first two, so the motif is a statement
+    about the seeded contact rather than about the whole cluster -- which is why
+    a trimer's other two pairs are incidental and land wherever they land.
+
+    The geometry is redrawn in full on every attempt, motif included, so a
+    rejection cannot bias the realised distribution toward whichever corner of
+    the motif happens to clear the hard core most easily.
     """
     if n_molecules not in (2, 3):
         raise ValueError("Only dimers and trimers are supported.")
 
-    if settings.orientation_sampling == "motif":
-        if not settings.rigid:
-            # Vibration perturbs the realised normal away from the proposed one,
-            # so the stored log_q would describe a geometry that is not quite the
-            # one written out. Refuse rather than record a subtly wrong density.
-            raise ValueError(
-                "orientation_sampling='motif' requires rigid=True: a vibrated "
-                "monomer's normal differs from the proposed one, which would "
-                "make the recorded log_q wrong."
-            )
-        proposal = proposal or build_proposal(settings)
-        for _ in range(settings.max_placement_attempts):
-            placed = _motif_placement(n_molecules, reference, rng, settings, proposal)
-            if placed is None:
-                continue
-            molecules, log_q, component = placed
-            if _clash_free(molecules, settings.min_atom_distance):
-                return _assemble(
-                    molecules,
-                    {"log_q": log_q, "proposal_component": proposal.names[component]},
-                )
-        raise RuntimeError(
-            "Failed to place a clash-free cluster under motif sampling. Consider "
-            "reducing --min-atom-distance or widening the motif windows."
-        )
-
     for _ in range(settings.max_placement_attempts):
-        monomers: list[Atoms] = []
-        target_coms = [np.zeros(3)]
+        u0, u1, r_vec = draw_motif(motif, rng, settings.radial())
+        normals = [u0, u1]
+        coms = [np.zeros(3), r_vec]
 
-        if n_molecules == 2:
-            target_coms.append(sample_radius(rng, settings) * random_unit_vector(rng))
-        else:
-            # Place molecule 2 relative to molecule 1.
-            c2 = sample_radius(
-                rng, settings, settings.trimer_max_com_distance
-            ) * random_unit_vector(rng)
+        if n_molecules == 3:
+            anchor = coms[0] if rng.random() < 0.5 else coms[1]
+            direction = _isotropic_normal(rng)
+            distance = float(settings.trimer_radial().sample(rng, 1)[0])
+            coms.append(anchor + distance * direction)
+            # Its own orientation is independent of where it was placed.
+            normals.append(_isotropic_normal(rng))
 
-            # Place molecule 3 relative to either molecule 1 or 2. This samples
-            # triangular, chain-like, and partially dissociated trimers.
-            anchor = np.zeros(3) if rng.random() < 0.5 else c2
-            c3 = anchor + sample_radius(
-                rng, settings, settings.trimer_max_com_distance
-            ) * random_unit_vector(rng)
-            target_coms.extend([c2, c3])
+        spins = rng.uniform(0.0, 2.0 * np.pi, size=n_molecules)
+        rotations = rotation_to_normal(np.asarray(normals), spins)
+        molecules = [_place(reference, rotations[k], coms[k]) for k in range(n_molecules)]
 
-        valid = True
-        for target_com in target_coms:
-            if settings.rigid:
-                mol = reference.copy()
-            else:
-                mol = vibrate_monomer(
-                    reference,
-                    rng,
-                    target_rms=settings.vibration_rms,
-                    max_atom_displacement=settings.vibration_max_atom,
-                )
-            rotation = random_rotation_matrix(rng)
-            pos = mol.get_positions() @ rotation.T
-
-            masses = mol.get_masses()
-            pos -= center_of_mass(pos, masses)
-            pos += target_com
-            mol.set_positions(pos)
-
-            for previous in monomers:
-                if (
-                    minimum_inter_molecular_distance(
-                        mol.get_positions(), previous.get_positions()
-                    )
-                    < settings.min_atom_distance
-                ):
-                    valid = False
-                    break
-            if not valid:
-                break
-            monomers.append(mol)
-
-        if valid:
-            cluster = monomers[0].copy()
-            molecule_id = np.zeros(len(monomers[0]), dtype=np.int32)
-            for mol_index, mol in enumerate(monomers[1:], start=1):
-                cluster += mol
-                molecule_id = np.concatenate(
-                    [molecule_id, np.full(len(mol), mol_index, dtype=np.int32)]
-                )
-
-            # Recenter the entire cluster for numerical convenience.
-            cluster.translate(-cluster.get_center_of_mass())
-            cluster.set_pbc(False)
-            cluster.set_cell(np.zeros((3, 3)))
-            cluster.arrays["molecule_id"] = molecule_id
-            cluster.info.update({"charge": 0, "spin": 1, "n_molecules": n_molecules})
-            return cluster
+        if _clash_free(molecules, settings.min_atom_distance):
+            return _assemble(molecules, {"motif": motif})
 
     raise RuntimeError(
-        "Failed to place a clash-free cluster. Consider reducing "
-        "--min-atom-distance or --min-com-distance."
+        f"Failed to place a clash-free {motif!r} cluster in "
+        f"{settings.max_placement_attempts} attempts. Consider reducing "
+        "--min-atom-distance."
     )
+
+
+def _isotropic_normal(rng: np.random.Generator) -> np.ndarray:
+    v = rng.normal(size=3)
+    return v / np.linalg.norm(v)
+
+
+def motif_plan(seed0: int, n_configs: int, quotas: dict) -> np.ndarray:
+    """One motif label per configuration index, honouring ``quotas`` exactly.
+
+    Composition is decided here, once, rather than emerging from a sampling
+    density -- so a campaign that asks for 30% cofacial gets 30% cofacial, and
+    the number is checkable before any MLIP time is spent.
+
+    Counts come from largest-remainder apportionment, so they sum to
+    ``n_configs`` exactly with no motif rounded away. The shuffle is seeded from
+    ``seed0`` alone, which makes the label at index ``i`` a pure function of the
+    campaign: shard ``k`` reads its own slice, and a resumed shard reproduces
+    the labels it had before.
+    """
+    if not quotas:
+        raise ValueError("at least one motif quota is required")
+    unknown = set(quotas) - set(MOTIFS)
+    if unknown:
+        raise ValueError(
+            f"unknown motif(s) {sorted(unknown)}; expected from {list(MOTIFS)}"
+        )
+    shares = {m: float(w) for m, w in quotas.items() if float(w) > 0.0}
+    if not shares:
+        raise ValueError("motif quotas must include at least one positive share")
+    if min(shares.values()) < 0.0:
+        raise ValueError("motif quotas must be non-negative")
+
+    total = sum(shares.values())
+    exact = {m: n_configs * w / total for m, w in shares.items()}
+    counts = {m: int(math.floor(v)) for m, v in exact.items()}
+    # Hand out the remaining slots to the largest fractional parts.
+    order = sorted(exact, key=lambda m: (-(exact[m] - counts[m]), m))
+    for m in order[: n_configs - sum(counts.values())]:
+        counts[m] += 1
+
+    plan = np.array(
+        [m for motif, k in counts.items() for m in [motif] * k], dtype=object
+    )
+    np.random.default_rng(seed0).shuffle(plan)
+    return plan
 
 
 def molecule_indices(atoms: Atoms) -> list[np.ndarray]:
@@ -793,7 +602,7 @@ def generate_shard(
     model: str,
     device: str,
     decomposition: str,
-    trimer_fraction: float,
+    motifs: Sequence[str],
     flush_every: int,
     progress: bool = False,
     progress_queue=None,
@@ -802,6 +611,10 @@ def generate_shard(
 
     Takes ``settings_dict`` rather than a ``SamplingSettings`` so the payload
     pickles cleanly into a spawned worker.
+
+    ``motifs`` is this shard's slice of :func:`motif_plan` -- one label per
+    configuration, in index order, so a resumed shard picks up the same labels
+    it would have generated had it never stopped.
 
     Progress is reported one of two ways because the two call paths differ.
     ``progress_queue`` (a manager queue) is for the pooled path: a spawned
@@ -824,14 +637,8 @@ def generate_shard(
     reference = build_reference_benzene()
     calculator = load_uma_calculator(model, device=device)
 
-    # Built once per shard: the mixture parses the Cacelli reference file and
-    # runs a quadrature per concentration, neither of which belongs per-cluster.
-    proposal = (
-        build_proposal(settings) if settings.orientation_sampling == "motif" else None
-    )
-
     rigid_monomer_energy = None
-    if settings.rigid and decomposition != "none":
+    if decomposition != "none":
         # One evaluation for the whole shard: every molecule is a rotated copy
         # of this geometry and the energy is rotation-invariant.
         rigid_monomer_energy = evaluate_energy_forces(reference.copy(), calculator)[0]
@@ -864,9 +671,9 @@ def generate_shard(
     while done + written < n_configs:
         index = done + written
         rng = config_rng(seed, index, attempt)
-        n_molecules = 3 if rng.random() < trimer_fraction else 2
+        n_molecules = 3 if rng.random() < settings.trimer_fraction else 2
         try:
-            cluster = make_cluster(n_molecules, reference, rng, settings, proposal)
+            cluster = make_cluster(n_molecules, reference, rng, settings, motifs[index])
             energy, forces = evaluate_energy_forces(cluster, calculator)
             net_force, torque = molecular_force_and_torque(cluster, forces)
             info = {
@@ -886,9 +693,8 @@ def generate_shard(
                 "generator_seed": seed,
                 "mlip_model": model,
                 "mlip_task": "omol",
-                "rigid_monomers": bool(settings.rigid),
+                "rigid_monomers": True,
                 "radial_sampling": settings.radial_sampling,
-                "orientation_sampling": settings.orientation_sampling,
                 "energy_units": "eV",
                 "force_units": "eV/Angstrom",
                 "torque_units": "eV",
@@ -947,33 +753,36 @@ def main(
     model: str = DEFAULT_UMA_MODEL,
     device: str = "cpu",
     decomposition: str = "full",
-    trimer_fraction: float = 0.5,
+    quotas: dict | None = None,
     flush_every: int = 10,
     max_workers: int = 4,
 ) -> list[dict]:
     """Run a sharded, resumable generation campaign.
+
+    ``quotas`` maps motif name to a share of the campaign; shares are
+    normalised, so ``{"cofacial": 1, "uniform": 1}`` and
+    ``{"cofacial": 0.5, "uniform": 0.5}`` mean the same thing. The default is
+    the pre-motif behaviour: everything uniform.
 
     Idempotent: a shard already holding its target count is skipped, so
     re-running the same command finishes an interrupted campaign.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    settings = settings or SamplingSettings()
-
-    if settings.radial_sampling not in RADIAL_SAMPLINGS:
-        raise ValueError(
-            f"radial_sampling must be one of {RADIAL_SAMPLINGS}, "
-            f"got {settings.radial_sampling!r}"
-        )
-    if settings.orientation_sampling not in ORIENTATION_SAMPLINGS:
-        raise ValueError(
-            f"orientation_sampling must be one of {ORIENTATION_SAMPLINGS}, "
-            f"got {settings.orientation_sampling!r}"
-        )
+    settings = settings or SamplingSettings()  # validates itself
+    quotas = quotas or {UNIFORM: 1.0}
 
     n_shards = n_shards or min(max_workers, os.cpu_count() or 1)
     n_shards = max(1, min(n_shards, n_configs))
     sizes = _shard_sizes(n_configs, n_shards)
+
+    # Decided up front so the manifest can state the composition the campaign
+    # will actually have, rather than the one it was asked for.
+    plan = motif_plan(seed0, n_configs, quotas)
+    bounds = np.concatenate([[0], np.cumsum(sizes)])
+    shard_motifs = [
+        [str(m) for m in plan[bounds[k] : bounds[k + 1]]] for k in range(n_shards)
+    ]
 
     config = {
         "n_configs": n_configs,
@@ -982,7 +791,10 @@ def main(
         "seed0": seed0,
         "model": model,
         "decomposition": decomposition,
-        "trimer_fraction": trimer_fraction,
+        "quotas": {str(k): float(v) for k, v in quotas.items()},
+        "motif_counts": {
+            m: int(np.sum(plan == m)) for m in MOTIFS if int(np.sum(plan == m))
+        },
         "settings": asdict(settings),
     }
     config_path = out_dir / CONFIG_NAME
@@ -999,7 +811,7 @@ def main(
             model=model,
             device=device,
             decomposition=decomposition,
-            trimer_fraction=trimer_fraction,
+            motifs=shard_motifs[k],
             flush_every=flush_every,
         )
         for k in range(n_shards)
@@ -1074,6 +886,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         prog="python -m asmcmc.data_preparation.cluster_dataset",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    # Geometry defaults are read off the dataclass rather than restated, so the
+    # two cannot drift -- the previous parser hard-coded nine literals that were
+    # already written down in SamplingSettings.
+    default_settings = SamplingSettings()
+
     parser.add_argument("--n-configs", type=int, default=500)
     parser.add_argument("--out-dir", type=Path, default=Path("results/clusters/pilot"))
     parser.add_argument("--n-shards", type=int, default=None)
@@ -1081,12 +898,6 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_UMA_MODEL)
     parser.add_argument("--device", default="cpu", choices=("cuda", "cpu"))
     parser.add_argument("--max-workers", type=int, default=4)
-    parser.add_argument(
-        "--trimer-fraction",
-        type=float,
-        default=0.5,
-        help="Probability that a generated configuration is a trimer.",
-    )
     parser.add_argument(
         "--decomposition",
         choices=("none", "monomers", "full"),
@@ -1096,58 +907,72 @@ def parse_args(argv=None) -> argparse.Namespace:
             "energies; full: also trimer pair and three-body energies."
         ),
     )
-    parser.add_argument(
+
+    quota = parser.add_argument_group(
+        "motif quotas",
+        "Share of the campaign seeded on each contact motif. Shares are "
+        "normalised, so they need not sum to 1. With none given the campaign is "
+        "entirely uniform, which is the pre-motif behaviour.",
+    )
+    for motif in MOTIFS:
+        quota.add_argument(
+            f"--{motif.lower().replace('-', '-')}",
+            type=float,
+            default=None,
+            dest=f"quota_{motif.lower().replace('-', '_')}",
+            metavar="SHARE",
+            help=f"Share of configurations seeded on the {motif} contact.",
+        )
+
+    geometry = parser.add_argument_group("geometry")
+    geometry.add_argument(
         "--radial-sampling",
         choices=RADIAL_SAMPLINGS,
-        default="volume-uniform",
+        default=default_settings.radial_sampling,
         help=(
-            "volume-uniform: flat in r^3 over the whole range. mixture: "
-            "concentrate compact-probability of the mass on the 3.4-6 A wells."
+            "Applies to the uniform motif. volume-uniform: flat in r^3 over the "
+            "whole range. mixture: concentrate compact-probability of the mass "
+            "on the 3.4-6 A wells."
         ),
     )
-    parser.add_argument(
-        "--orientation-sampling",
-        choices=ORIENTATION_SAMPLINGS,
-        default="uniform",
-        help=(
-            "uniform: random SO(3) per molecule (the original behaviour). "
-            "motif: propose position and orientation jointly from cofacial / "
-            "slipped / T-shaped components plus a defensive uniform one, and "
-            "stamp log_q on every frame. Requires --rigid (the default)."
-        ),
-    )
-    parser.add_argument(
-        "--uniform-weight",
+    geometry.add_argument(
+        "--compact-probability",
         type=float,
-        default=0.40,
-        help="Mixture weight of the defensive uniform component under "
-        "--orientation-sampling motif. Lowering it sharpens the proposal but "
-        "widens the importance weights; check the realised spread before doing so.",
+        default=default_settings.compact_probability,
+        help="Mass placed on the wells under --radial-sampling mixture.",
     )
-    parser.add_argument("--min-com-distance", type=float, default=3.4)
-    parser.add_argument(
+    geometry.add_argument(
+        "--trimer-fraction",
+        type=float,
+        default=default_settings.trimer_fraction,
+        help="Probability that a generated configuration is a trimer.",
+    )
+    geometry.add_argument(
+        "--min-com-distance", type=float, default=default_settings.min_com_distance
+    )
+    geometry.add_argument(
         "--max-com-distance",
         type=float,
-        default=15.0,
+        default=default_settings.max_com_distance,
         help="Matches MetropolisCalculator's nl_radius and the AniSOAP cutoff.",
     )
-    parser.add_argument(
+    geometry.add_argument(
         "--trimer-max-com-distance",
         type=float,
-        default=15.0,
+        default=default_settings.trimer_max_com_distance,
         help="Separate ceiling for trimer placement; tighten to concentrate "
         "the trimer budget where three-body terms are non-zero.",
     )
-    parser.add_argument("--min-atom-distance", type=float, default=2.4)
-    parser.add_argument(
-        "--no-rigid",
-        dest="rigid",
-        action="store_false",
-        help="Vibrate each monomer instead of using the rigid reference. Costs "
-        "~2x the MLIP calls; a rigid-ellipsoid model cannot fit the difference.",
+    geometry.add_argument(
+        "--min-atom-distance", type=float, default=default_settings.min_atom_distance
     )
-    parser.add_argument("--vibration-rms", type=float, default=0.05)
-    parser.add_argument("--vibration-max-atom", type=float, default=0.10)
+    geometry.add_argument(
+        "--max-placement-attempts",
+        type=int,
+        default=default_settings.max_placement_attempts,
+        help="Clash-rejection budget per configuration.",
+    )
+
     parser.add_argument(
         "--flush-every",
         type=int,
@@ -1157,28 +982,37 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def quotas_from_args(args) -> dict:
+    """The ``{motif: share}`` map implied by the ``--<motif>`` flags."""
+    quotas = {}
+    for motif in MOTIFS:
+        value = getattr(args, f"quota_{motif.lower().replace('-', '_')}")
+        if value is not None:
+            quotas[motif] = value
+    return quotas
+
+
 def cli(argv=None) -> None:
     args = parse_args(argv)
 
     if args.n_configs <= 0:
         raise SystemExit("--n-configs must be positive.")
-    if not 0.0 <= args.trimer_fraction <= 1.0:
-        raise SystemExit("--trimer-fraction must be between 0 and 1.")
-    if args.min_com_distance >= args.max_com_distance:
-        raise SystemExit("--min-com-distance must be less than --max-com-distance.")
 
-    settings = SamplingSettings(
-        min_com_distance=args.min_com_distance,
-        max_com_distance=args.max_com_distance,
-        trimer_max_com_distance=args.trimer_max_com_distance,
-        min_atom_distance=args.min_atom_distance,
-        radial_sampling=args.radial_sampling,
-        orientation_sampling=args.orientation_sampling,
-        uniform_weight=args.uniform_weight,
-        rigid=args.rigid,
-        vibration_rms=args.vibration_rms,
-        vibration_max_atom=args.vibration_max_atom,
-    )
+    # SamplingSettings validates its own fields; surface that as a CLI error
+    # rather than a traceback.
+    try:
+        settings = SamplingSettings(
+            min_com_distance=args.min_com_distance,
+            max_com_distance=args.max_com_distance,
+            trimer_max_com_distance=args.trimer_max_com_distance,
+            min_atom_distance=args.min_atom_distance,
+            radial_sampling=args.radial_sampling,
+            compact_probability=args.compact_probability,
+            trimer_fraction=args.trimer_fraction,
+            max_placement_attempts=args.max_placement_attempts,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
 
     results = main(
         n_configs=args.n_configs,
@@ -1189,7 +1023,7 @@ def cli(argv=None) -> None:
         model=args.model,
         device=args.device,
         decomposition=args.decomposition,
-        trimer_fraction=args.trimer_fraction,
+        quotas=quotas_from_args(args) or None,
         flush_every=args.flush_every,
         max_workers=args.max_workers,
     )

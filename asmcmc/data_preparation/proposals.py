@@ -1,39 +1,41 @@
-"""Motif-seeded joint proposals for benzene pair geometry.
+"""One geometry generator per contact motif.
 
-``cluster_dataset.make_cluster`` draws orientations uniformly and then rejects
-clashes. At close approach that is almost all rejection: at 3.6 A only ~3% of
-random-orientation placements clear a 2.4 A hard core, against ~86% for a
-cofacial-seeded one (measured by ``cluster_analysis.hard_core_pass_rate``).
-Reshaping the *radial* proposal cannot fix that -- the extra short-range draws
-are simply rejected and redrawn -- because the hard core couples position to
-orientation. So they have to be proposed together, which is what this module
-does.
+``make_cluster`` used to draw orientations uniformly and reject clashes. At close
+approach that is almost all rejection: at 3.6 A only ~3% of random-orientation
+placements clear a 2.4 A hard core, against ~86% for a cofacial-seeded one
+(measured by ``cluster_analysis.hard_core_pass_rate``). Reshaping the *radial*
+proposal cannot fix that -- the extra short-range draws are simply rejected and
+redrawn -- because the hard core couples position to orientation. So position and
+orientation have to be proposed together, which is what this module does.
 
-**Every component is a normalised density over ``(u0, u1, r_vec)`` that can be
-evaluated at an arbitrary configuration**, not only at the one it drew. That is
-what makes a mixture density well defined, and it is what lets a campaign record
-its own ``log_q`` so a downstream fit can reweight to whatever target it wants
-long after the MLIP budget is spent.
+**A generator per motif, and the campaign asks for a quota of each.** Composition
+is then a stated fact of a campaign rather than an emergent property of a
+sampling density, which is what lets a coverage problem be fixed by asking for
+more of the motif that is short.
 
-**No latent variables.** The obvious way to write a stacked proposal -- draw a
-common axis ``n``, then put both normals near it -- makes ``n`` latent, so
-``q(x) = int q(x|n) p(n) dn`` has no closed form and any recorded density would
-be wrong. Everything here is instead conditioned on **molecule 0's own normal**,
-which the stored frame carries, so the density factorises exactly::
+**Reversal, recorded deliberately.** An earlier version of this module fused
+cofacial and parallel-displaced into a single ``StackedProposal`` spanning both,
+arguing that the Cacelli minima "differ only by slip (0.0 A vs 1.6 A at
+essentially the same stacking height), so splitting them into discrete labels
+invents a boundary the physics does not have". That argument is overturned here
+on evidence, not taste: ``cluster_analysis.motif_masks`` already cuts on exactly
+that boundary, and the first AniSOAP Delta-learning sweep found the fit error
+concentrated on one side of it -- every one of 64 hyperparameter points
+over-bound the cofacial stack while leaving parallel-displaced almost exact. A
+boundary you can measure error across is one you can also sample across.
 
-    q(u0, u1, r_vec) = (1/4pi) * p(u1 | u0) * p(r_vec | u0, u1)
+**Generators and the classifier must agree.** Each ``draw_*`` returns a pair that
+:func:`classify_pair` -- which applies ``cluster_analysis``'s own cuts -- labels
+as that motif, verified per draw rather than hoped for. The previous components
+did not have this property: they measured stacking height and slip about
+molecule 0's normal while the classifier measures them about the *more aligned*
+normal of the pair, and their radial windows spilled outside ``WELL_RANGE`` at
+both ends, so a large share of every component's draws was classified as nothing
+at all.
 
-The pair is treated as *ordered* -- molecule 0 is the reference -- because that
-is how the generator emits it. Do not symmetrise.
-
-**Spin is factored out.** Rotating a molecule about its own disc normal is a
-real degree of freedom of the atomistic structure but does not move
-``(u0, u1, r_vec)``. Every component draws it uniformly, so it contributes the
-same constant to all of them and cancels from the mixture. ``log_q`` is
-therefore a density over the coarse-grained coordinates only.
-
-Motif geometry is **derived** from the Cacelli ab initio minima rather than
-hardcoded -- see :func:`motif_reference`.
+**Spin is a free degree of freedom.** Rotating a molecule about its own disc
+normal moves the atoms but not ``(u0, u1, r_vec)``, so every generator leaves it
+to the caller to draw uniformly.
 """
 
 from __future__ import annotations
@@ -42,7 +44,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
-from scipy.special import logsumexp
 from scipy.stats import norm
 
 LOG_4PI = float(np.log(4.0 * np.pi))
@@ -50,15 +51,35 @@ LOG_4PI = float(np.log(4.0 * np.pi))
 # The reference benzene from ``build_reference_benzene`` lies in the xy-plane.
 REFERENCE_NORMAL = np.array([0.0, 0.0, 1.0])
 
+# Motif names. These mirror ``cluster_analysis``'s constants rather than importing
+# them, so this module stays a leaf that nothing in data_preparation has to be
+# loaded before -- ``cluster_analysis`` imports ``cluster_dataset``, which imports
+# this, so an import the other way would close a cycle. The numeric cuts are *not*
+# duplicated (see :func:`_motif_cuts`), and a test pins these four strings against
+# the classifier's.
+COFACIAL = "cofacial"
+T_SHAPED = "T-shaped"
+PARALLEL_DISPLACED = "parallel-displaced"
+FAR_SLIPPED = "far-slipped"
+UNIFORM = "uniform"
+
+MOTIFS = (COFACIAL, PARALLEL_DISPLACED, T_SHAPED, FAR_SLIPPED, UNIFORM)
+
+# Draws are kept this far inside every classifier cut. The classifier measures
+# slip about the pair's more-aligned normal, which need not be molecule 0's, so a
+# draw placed exactly on a boundary can land on either side of it; a margin makes
+# the round trip robust instead of marginal.
+_MARGIN = 0.05
+
 
 @lru_cache(maxsize=1)
 def motif_reference():
     """``{family: (r, b, a_i, a_j)}`` at each Cacelli family's energy minimum.
 
     Read from the ab initio set through :mod:`asmcmc.utils.validation` so the
-    numbers this module is tuned against are the same ones
-    ``dimer_benchmark`` scores a potential on, rather than a second copy that
-    can drift. Cached because it parses a file.
+    numbers this module is tuned against are the same ones ``dimer_benchmark``
+    scores a potential on, rather than a second copy that can drift. Cached
+    because it parses a file.
 
     For the record, the values it returns: cofacial ``r=3.90, a=1.000``;
     parallel-displaced ``r=3.85, a=0.909`` (stacking height 3.5 A, slip 1.6 A);
@@ -81,6 +102,25 @@ def motif_reference():
             float(r_hat @ data.uhat2[best]),
         )
     return out
+
+
+@lru_cache(maxsize=1)
+def _motif_cuts():
+    """The classifier's own thresholds, imported once and cached.
+
+    Deferred so this module imports nothing from ``data_preparation`` at module
+    scope. There is exactly one definition of every number here -- the
+    generators sample inside these cuts, and :func:`classify_pair` applies them.
+    """
+    from asmcmc.data_preparation import cluster_analysis as ca
+
+    return {
+        "well": ca.WELL_RANGE,
+        "cofacial_max_slip": ca.COFACIAL_MAX_SLIP,
+        "displaced_max_slip": ca.DISPLACED_MAX_SLIP,
+        "parallel_min_b": ca.PARALLEL_MIN_B,
+        "t_max_b": ca.T_MAX_B,
+    }
 
 
 # --- geometry helpers --------------------------------------------------------
@@ -156,70 +196,13 @@ def _skew(v):
     )
 
 
-# --- the two building-block densities ----------------------------------------
-
-
-class AxialConcentration:
-    """Density on the sphere depending only on ``t = u . v``, as ``exp(kappa t^2)``.
-
-    ``kappa > 0`` concentrates near the poles (``|t| -> 1``, aligned),
-    ``kappa < 0`` near the equator (``t -> 0``, perpendicular), ``kappa = 0`` is
-    uniform. The ``t^2`` makes it **even in t**, which is required: a disc
-    normal is defined only up to sign, so a density that distinguished ``u``
-    from ``-u`` would assign two different numbers to one physical geometry.
-
-    Normalised over the sphere (``2 pi int_-1^1 f dt = 1``) by Gauss-Legendre
-    quadrature rather than the ``erfi`` closed form -- exact to machine
-    precision for an integrand this smooth, and one fewer special function to
-    get wrong. The linear grid is only for inverse-CDF sampling, where its
-    accuracy requirement is much weaker.
-    """
-
-    def __init__(self, kappa, n_grid=8001, n_quadrature=256):
-        self.kappa = float(kappa)
-        # Shift the exponent before exponentiating so large kappa cannot overflow.
-        self._shift = max(self.kappa, 0.0)
-
-        nodes, quad_weights = np.polynomial.legendre.leggauss(n_quadrature)
-        self._integral = float(
-            quad_weights @ np.exp(self.kappa * nodes**2 - self._shift)
-        )
-        self.log_norm = float(np.log(2.0 * np.pi) + np.log(self._integral) + self._shift)
-
-        self._t = np.linspace(-1.0, 1.0, n_grid)
-        weight = np.exp(self.kappa * self._t**2 - self._shift)
-        cdf = np.concatenate(
-            [[0.0], np.cumsum(0.5 * (weight[1:] + weight[:-1]) * np.diff(self._t))]
-        )
-        self._cdf = cdf / cdf[-1]
-
-    def log_pdf(self, t):
-        """Log density **on the sphere** at a point with ``u . v = t``."""
-        t = np.clip(np.asarray(t, dtype=float), -1.0, 1.0)
-        return self.kappa * t**2 - self.log_norm
-
-    def sample_cosine(self, rng, size):
-        return np.interp(rng.random(size), self._cdf, self._t)
-
-    def sample_direction(self, rng, axis):
-        """Draw unit vectors around ``axis`` (shape ``(n, 3)``) from this density."""
-        axis = np.atleast_2d(np.asarray(axis, dtype=float))
-        t = self.sample_cosine(rng, len(axis))
-        e1, e2 = orthonormal_basis(axis)
-        azimuth = rng.uniform(0.0, 2.0 * np.pi, size=len(axis))
-        return np.sqrt(np.clip(1.0 - t**2, 0.0, None))[:, None] * _in_plane(
-            e1, e2, azimuth
-        ) + t[:, None] * axis
-
-
 @dataclass(frozen=True)
 class RadialProposal:
-    """The existing ``sample_radius`` behaviour, as an evaluable density.
+    """Centre-centre separations: volume-uniform, or concentrated on the wells.
 
-    Mirrors ``cluster_dataset.sample_radius`` so the defensive uniform component
-    reproduces exactly what the current generator does. The 100-attempt retry
-    loop there falls through to volume-uniform if every draw misses the window;
-    that happens with probability ~1e-160 and is ignored here.
+    The single radial sampler in the package -- ``cluster_dataset.sample_radius``
+    was a second copy of this, kept in sync by hand, and is gone. ``pdf`` exists
+    so ``sample`` can be checked against the density it claims to draw from.
     """
 
     lo: float = 3.4
@@ -274,253 +257,195 @@ class RadialProposal:
         return out
 
 
-# --- pair proposal components ------------------------------------------------
+# --- classification ----------------------------------------------------------
 
 
-class PairProposal:
-    """A normalised density over ``(u0, u1, r_vec)`` that can also draw from itself."""
+def pair_invariants(u0, u1, r_vec):
+    """``(r, |b|, a_hi, a_lo, height, slip)`` for one pair.
 
-    name = "pair"
-
-    def draw(self, rng, size):
-        raise NotImplementedError
-
-    def log_density(self, u0, u1, r_vec):
-        raise NotImplementedError
-
-
-@dataclass(frozen=True)
-class StackedProposal(PairProposal):
-    """Near-parallel discs, parameterised by stacking height and slip.
-
-    Deliberately **one continuous family** rather than separate cofacial and
-    parallel-displaced components: the Cacelli minima differ only by slip
-    (0.0 A vs 1.6 A at essentially the same stacking height), so splitting them
-    into discrete labels invents a boundary the physics does not have. Two
-    instances with different ``slip_max`` cover the tight and the far-slipped
-    regions with independent mixture weights.
-
-    ``r_vec`` is built in cylindrical coordinates about ``u0``: height
-    ``h = r_vec . u0``, slip ``s = |r_vec - h u0|``, azimuth uniform. The
-    Jacobian is ``d3r = s ds dphi dh``, so the Lebesgue density carries a
-    ``1/(2 pi s)``. Drawing ``s`` uniformly *in area* (``p(s) = 2s/s_max^2``)
-    cancels that ``s`` exactly, which is what keeps the density finite on the
-    axis -- a slip density that did not vanish at ``s = 0`` would diverge there.
+    The classifier's coordinates exactly: ``a_hi``/``a_lo`` are the sorted
+    absolute projections of the two normals onto ``r_hat`` (absolute because a
+    disc normal is defined only up to sign, sorted because the pair is
+    unordered), and height/slip resolve the separation about the **more aligned**
+    normal -- not about ``u0``.
     """
-
-    kappa_align: float = 12.0
-    height_min: float = 3.2
-    height_max: float = 5.5
-    slip_max: float = 2.0
-    name: str = "stacked"
-
-    @property
-    def _alignment(self):
-        return _axial(self.kappa_align)
-
-    def draw(self, rng, size):
-        u0 = _uniform_sphere(rng, size)
-        u1 = self._alignment.sample_direction(rng, u0)
-
-        e1, e2 = orthonormal_basis(u0)
-        height = rng.uniform(self.height_min, self.height_max, size=size)
-        height *= np.where(rng.random(size) < 0.5, -1.0, 1.0)
-        # sqrt makes this uniform over the disc of radius slip_max.
-        slip = self.slip_max * np.sqrt(rng.random(size))
-        azimuth = rng.uniform(0.0, 2.0 * np.pi, size=size)
-
-        r_vec = height[:, None] * u0 + slip[:, None] * _in_plane(e1, e2, azimuth)
-        return u0, u1, r_vec
-
-    def log_density(self, u0, u1, r_vec):
-        height = np.einsum("ni,ni->n", r_vec, u0)
-        slip = np.linalg.norm(r_vec - height[:, None] * u0, axis=1)
-
-        supported = (
-            (np.abs(height) >= self.height_min)
-            & (np.abs(height) <= self.height_max)
-            & (slip <= self.slip_max)
-        )
-        # p_h * p_s / (2 pi s) with p_h = 1/(2 dh) and p_s = 2s/s_max^2: the slip
-        # cancels and what remains is flat over the cylinder.
-        log_position = -np.log(
-            2.0 * (self.height_max - self.height_min)
-        ) - np.log(np.pi * self.slip_max**2)
-
-        value = (
-            -LOG_4PI
-            + self._alignment.log_pdf(np.einsum("ni,ni->n", u0, u1))
-            + log_position
-        )
-        return np.where(supported, value, -np.inf)
+    r = float(np.linalg.norm(r_vec))
+    if r == 0.0:
+        return 0.0, 1.0, 1.0, 1.0, 0.0, 0.0
+    r_hat = np.asarray(r_vec, dtype=float) / r
+    abs_b = abs(float(np.dot(u0, u1)))
+    proj = sorted((abs(float(np.dot(r_hat, u0))), abs(float(np.dot(r_hat, u1)))))
+    a_lo, a_hi = proj
+    height = r * a_hi
+    slip = r * float(np.sqrt(max(1.0 - a_hi**2, 0.0)))
+    return r, abs_b, a_hi, a_lo, height, slip
 
 
-@dataclass(frozen=True)
-class TShapedProposal(PairProposal):
-    """One disc edge-on to the other: normals perpendicular, separation along
-    the second normal.
+def classify_pair(u0, u1, r_vec):
+    """The motif ``cluster_analysis.motif_masks`` would label this pair, or ``None``.
 
-    Matches the Cacelli T-shaped minimum (``b = 0``, ``a_i = 0``, ``a_j = 1``).
-    Its radial window starts at 4.2 A because a T contact is geometrically
-    impossible much below that -- the edge-on ring runs into the face -- which
-    is why it needs a window of its own rather than sharing the stacked one.
+    ``None`` is a real outcome, not a failure: the cuts are not a partition, and
+    the band ``0.35 <= |b| <= 0.8`` belongs to no motif.
     """
+    cuts = _motif_cuts()
+    lo, hi = cuts["well"]
+    r, abs_b, _, a_lo, _, slip = pair_invariants(u0, u1, r_vec)
 
-    kappa_perp: float = -12.0
-    kappa_axis: float = 12.0
-    r_min: float = 4.2
-    r_max: float = 6.5
-    name: str = "t_shaped"
-
-    @property
-    def _perpendicular(self):
-        return _axial(self.kappa_perp)
-
-    @property
-    def _axis(self):
-        return _axial(self.kappa_axis)
-
-    def draw(self, rng, size):
-        u0 = _uniform_sphere(rng, size)
-        u1 = self._perpendicular.sample_direction(rng, u0)
-        r_hat = self._axis.sample_direction(rng, u1)
-        r = rng.uniform(self.r_min, self.r_max, size=size)
-        return u0, u1, r[:, None] * r_hat
-
-    def log_density(self, u0, u1, r_vec):
-        r = np.linalg.norm(r_vec, axis=1)
-        supported = (r >= self.r_min) & (r <= self.r_max) & (r > 0)
-        safe_r = np.where(r > 0, r, 1.0)
-        r_hat = r_vec / safe_r[:, None]
-
-        # d3r = r^2 dr dOmega, hence the -2 log r.
-        value = (
-            -LOG_4PI
-            + self._perpendicular.log_pdf(np.einsum("ni,ni->n", u0, u1))
-            + self._axis.log_pdf(np.einsum("ni,ni->n", r_hat, u1))
-            - np.log(self.r_max - self.r_min)
-            - 2.0 * np.log(safe_r)
-        )
-        return np.where(supported, value, -np.inf)
+    if not (lo <= r < hi):
+        return None
+    if abs_b > cuts["parallel_min_b"]:
+        if slip < cuts["cofacial_max_slip"]:
+            return COFACIAL
+        if slip <= cuts["displaced_max_slip"]:
+            return PARALLEL_DISPLACED
+        return FAR_SLIPPED
+    if abs_b < cuts["t_max_b"] and a_lo < cuts["t_max_b"]:
+        return T_SHAPED
+    return None
 
 
-@dataclass(frozen=True)
-class UniformProposal(PairProposal):
-    """The current generator: both normals uniform, direction uniform, radius
-    from ``RadialProposal``.
+# --- one generator per motif -------------------------------------------------
 
-    **Keep this in any mixture.** It is what guarantees support everywhere, and
-    support is the one property reweighting cannot restore -- a target density
-    can always be recovered from a badly *shaped* proposal, never from a region
-    that was never sampled. It also bounds the importance weights.
+
+def _unit(rng):
+    v = rng.normal(size=3)
+    return v / np.linalg.norm(v)
+
+
+def _at_cosine(rng, axis, cosine):
+    """A unit vector making the given cosine with ``axis``, azimuth uniform."""
+    e1, e2 = orthonormal_basis(np.asarray(axis, dtype=float)[None])
+    phi = rng.uniform(0.0, 2.0 * np.pi)
+    perp = np.cos(phi) * e1[0] + np.sin(phi) * e2[0]
+    return cosine * np.asarray(axis, dtype=float) + np.sqrt(
+        max(1.0 - cosine**2, 0.0)
+    ) * perp
+
+
+def _stacked(rng, r, slip):
+    """A near-parallel pair at a given separation and lateral offset.
+
+    Both normals are placed near a common direction and ``r_vec`` is built from
+    the requested slip, so ``|r_vec| = r`` exactly and the classifier -- which
+    resolves about whichever normal is more aligned -- recovers the slip that was
+    asked for whenever that normal is ``u0``. When it is ``u1`` instead the
+    realised slip is slightly *smaller*, which is why the bands carry a margin
+    and why :func:`draw_motif` verifies rather than assumes.
     """
+    cuts = _motif_cuts()
+    u0 = _unit(rng)
+    # Uniform across the parallel band rather than concentrated at |b| = 1: the
+    # aim is coverage of the motif, not a peak at its centre.
+    cosine = rng.uniform(cuts["parallel_min_b"] + _MARGIN, 1.0)
+    u1 = _at_cosine(rng, u0, cosine * (1.0 if rng.random() < 0.5 else -1.0))
 
-    radial: RadialProposal = RadialProposal()
-    name: str = "uniform"
-
-    def draw(self, rng, size):
-        u0 = _uniform_sphere(rng, size)
-        u1 = _uniform_sphere(rng, size)
-        r_hat = _uniform_sphere(rng, size)
-        r = self.radial.sample(rng, size)
-        return u0, u1, r[:, None] * r_hat
-
-    def log_density(self, u0, u1, r_vec):
-        r = np.linalg.norm(r_vec, axis=1)
-        supported = r > 0
-        safe_r = np.where(supported, r, 1.0)
-        with np.errstate(divide="ignore"):
-            value = (
-                -3.0 * LOG_4PI
-                + self.radial.log_pdf(safe_r)
-                - 2.0 * np.log(safe_r)
-            )
-        return np.where(supported, value, -np.inf)
+    e1, e2 = orthonormal_basis(u0[None])
+    phi = rng.uniform(0.0, 2.0 * np.pi)
+    height = np.sqrt(max(r * r - slip * slip, 0.0))
+    height *= 1.0 if rng.random() < 0.5 else -1.0
+    r_vec = height * u0 + slip * (np.cos(phi) * e1[0] + np.sin(phi) * e2[0])
+    return u0, u1, r_vec
 
 
-@dataclass(frozen=True)
-class MixtureProposal:
-    """Weighted mixture of :class:`PairProposal` components.
-
-    The component is redrawn on every attempt, including after a hard-core
-    rejection. That matters for the recorded density: with a single top-level
-    rejection the realised density is ``q(x) * 1[no clash] / Z`` for one global
-    ``Z``, which cancels from every *relative* weight. Retrying inside a
-    component would instead leave per-component normalisations that do not
-    cancel and would have to be estimated from rejection counts.
-    """
-
-    components: tuple
-    weights: tuple
-
-    def __post_init__(self):
-        if len(self.components) != len(self.weights):
-            raise ValueError("components and weights must have equal length")
-        if len(self.components) == 0:
-            raise ValueError("a mixture needs at least one component")
-        if min(self.weights) < 0:
-            raise ValueError("weights must be non-negative")
-        if not np.isclose(sum(self.weights), 1.0):
-            raise ValueError(f"weights must sum to 1, got {sum(self.weights)}")
-
-    @property
-    def names(self):
-        return tuple(c.name for c in self.components)
-
-    def draw(self, rng, size=1):
-        """``(u0, u1, r_vec, component_index)``, each of length ``size``."""
-        which = rng.choice(len(self.components), size=size, p=np.asarray(self.weights))
-        u0 = np.empty((size, 3))
-        u1 = np.empty((size, 3))
-        r_vec = np.empty((size, 3))
-        for k, component in enumerate(self.components):
-            picked = np.flatnonzero(which == k)
-            if len(picked) == 0:
-                continue
-            a, b, c = component.draw(rng, len(picked))
-            u0[picked], u1[picked], r_vec[picked] = a, b, c
-        return u0, u1, r_vec, which
-
-    def log_density(self, u0, u1, r_vec):
-        u0 = np.atleast_2d(np.asarray(u0, dtype=float))
-        u1 = np.atleast_2d(np.asarray(u1, dtype=float))
-        r_vec = np.atleast_2d(np.asarray(r_vec, dtype=float))
-
-        terms = np.stack(
-            [c.log_density(u0, u1, r_vec) for c in self.components], axis=0
-        )
-        log_weights = np.log(np.asarray(self.weights))[:, None]
-        return logsumexp(terms + log_weights, axis=0)
+def draw_cofacial(rng, radial=None):
+    """Face-to-face: parallel normals, almost no lateral offset."""
+    cuts = _motif_cuts()
+    lo, hi = cuts["well"]
+    # sqrt keeps the offset uniform over the disc it is drawn from.
+    slip = (cuts["cofacial_max_slip"] - _MARGIN) * np.sqrt(rng.random())
+    return _stacked(rng, rng.uniform(lo + _MARGIN, hi - _MARGIN), slip)
 
 
-def default_mixture(radial=None, uniform_weight=0.40):
-    """The recommended mixture: tight stack, wide stack, T-shaped, uniform.
-
-    Weights are a starting point to be tuned on a small pilot, not an optimum.
-    ``uniform_weight`` is the defensive share -- lowering it sharpens the
-    proposal but widens the importance weights, so check the realised weight
-    spread before reducing it.
-    """
-    remainder = 1.0 - uniform_weight
-    if not 0.0 < uniform_weight <= 1.0:
-        raise ValueError("uniform_weight must be in (0, 1]")
-
-    components = (
-        StackedProposal(slip_max=2.0, name="stacked_tight"),
-        StackedProposal(slip_max=5.0, height_max=6.0, name="stacked_wide"),
-        TShapedProposal(),
-        UniformProposal(radial=radial or RadialProposal()),
+def draw_parallel_displaced(rng, radial=None):
+    """Parallel normals slipped sideways -- benzene's deepest dimer well."""
+    cuts = _motif_cuts()
+    lo, hi = cuts["well"]
+    slip = rng.uniform(
+        cuts["cofacial_max_slip"] + _MARGIN, cuts["displaced_max_slip"] - _MARGIN
     )
-    weights = (0.35 * remainder, 0.25 * remainder, 0.40 * remainder, uniform_weight)
-    return MixtureProposal(components=components, weights=weights)
+    # r > slip always holds here: slip stays under 3 A and the well starts at 3.4.
+    return _stacked(rng, rng.uniform(lo + _MARGIN, hi - _MARGIN), slip)
 
 
-@lru_cache(maxsize=8)
-def _axial(kappa):
-    """Cached: building one costs an 8001-point quadrature."""
-    return AxialConcentration(kappa)
+def draw_far_slipped(rng, radial=None):
+    """Parallel normals, slipped past the displaced band -- nearly coplanar.
+
+    Kept as its own motif because it is where the GB+Q baseline is worst
+    (Delta rms 2.0 kcal/mol against parallel-displaced's 0.45), so it is the
+    region a correction has most to learn from. The separation is drawn from the
+    upper well only: at the bottom of the well a slip this large puts the two
+    rings edge-to-edge inside the hard core, and every such draw would be
+    rejected downstream.
+    """
+    cuts = _motif_cuts()
+    _, hi = cuts["well"]
+    r = rng.uniform(4.0, hi - _MARGIN)
+    slip = rng.uniform(cuts["displaced_max_slip"] + _MARGIN, r - _MARGIN)
+    return _stacked(rng, r, slip)
 
 
-def _uniform_sphere(rng, size):
-    v = rng.normal(size=(size, 3))
-    return v / np.linalg.norm(v, axis=1, keepdims=True)
+def draw_t_shaped(rng, radial=None):
+    """Edge-on contact: normals perpendicular, separation along the second normal.
+
+    The radial floor is 4.2 A because a T contact is geometrically impossible
+    much below that -- the edge-on ring runs into the face.
+    """
+    cuts = _motif_cuts()
+    _, hi = cuts["well"]
+    u0 = _unit(rng)
+    perpendicular = rng.uniform(-(cuts["t_max_b"] - _MARGIN), cuts["t_max_b"] - _MARGIN)
+    u1 = _at_cosine(rng, u0, perpendicular)
+    # Separation close to u1 makes a_j large and a_i small, which is what the
+    # classifier's a_lo < 0.35 asks for.
+    axial = rng.uniform(0.9, 1.0) * (1.0 if rng.random() < 0.5 else -1.0)
+    r_hat = _at_cosine(rng, u1, axial)
+    return u0, u1, rng.uniform(4.2, hi - _MARGIN) * r_hat
+
+
+def draw_uniform(rng, radial=None):
+    """Everything uniform, separation from ``radial``.
+
+    **Keep a share of this in any campaign.** It is what gives the dataset
+    support outside the well region at all -- the motif generators are confined
+    to ``WELL_RANGE`` by construction, and no amount of reweighting recovers a
+    region that was never sampled.
+    """
+    radial = radial or RadialProposal()
+    return _unit(rng), _unit(rng), float(radial.sample(rng, 1)[0]) * _unit(rng)
+
+
+MOTIF_DRAWS = {
+    COFACIAL: draw_cofacial,
+    PARALLEL_DISPLACED: draw_parallel_displaced,
+    T_SHAPED: draw_t_shaped,
+    FAR_SLIPPED: draw_far_slipped,
+    UNIFORM: draw_uniform,
+}
+
+
+def draw_motif(motif, rng, radial=None, max_attempts=64):
+    """``(u0, u1, r_vec)`` for one pair of the requested motif.
+
+    Verified against :func:`classify_pair` and redrawn on a miss, so the campaign
+    a caller asks for is the campaign the analysis will report. ``UNIFORM`` is
+    exempt: it is deliberately unconstrained and most of its draws classify as no
+    motif at all.
+    """
+    try:
+        draw = MOTIF_DRAWS[motif]
+    except KeyError:
+        raise ValueError(
+            f"unknown motif {motif!r}; expected one of {', '.join(MOTIFS)}"
+        ) from None
+
+    if motif == UNIFORM:
+        return draw(rng, radial)
+
+    for _ in range(max_attempts):
+        u0, u1, r_vec = draw(rng, radial)
+        if classify_pair(u0, u1, r_vec) == motif:
+            return u0, u1, r_vec
+    raise RuntimeError(
+        f"{motif!r} generator failed to produce a configuration its own "
+        f"classifier accepts in {max_attempts} attempts."
+    )

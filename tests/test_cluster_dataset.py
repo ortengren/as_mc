@@ -5,6 +5,7 @@ generator with a stub calculator, so the suite stays runnable from a fresh
 clone without fairchem, a model download, or a GPU.
 """
 
+import json
 from dataclasses import asdict
 
 import numpy as np
@@ -13,7 +14,6 @@ from ase.io import read
 
 from asmcmc.data_preparation.cluster_dataset import (
     CONFIG_NAME,
-    build_proposal,
     SamplingSettings,
     build_reference_benzene,
     center_of_mass,
@@ -25,11 +25,20 @@ from asmcmc.data_preparation.cluster_dataset import (
     generate_shard,
     main,
     make_cluster,
+    molecular_geometry_metadata,
     molecule_indices,
-    sample_radius,
+    motif_plan,
     shard_count,
     shard_path,
     subset_atoms,
+)
+from asmcmc.data_preparation.cluster_analysis import motif_masks
+from asmcmc.data_preparation.proposals import (
+    COFACIAL,
+    MOTIFS,
+    PARALLEL_DISPLACED,
+    T_SHAPED,
+    UNIFORM,
 )
 from asmcmc.base.potentials import CACELLI_POTENTIAL
 
@@ -84,7 +93,7 @@ def test_volume_uniform_is_flat_in_r_cubed():
     volume is flat and shell occupancy matches a bulk pair census."""
     s = SamplingSettings(radial_sampling="volume-uniform")
     rng = np.random.default_rng(0)
-    r = np.array([sample_radius(rng, s) for _ in range(40_000)])
+    r = s.radial().sample(rng, 40_000)
 
     assert r.min() >= s.min_com_distance
     assert r.max() <= s.max_com_distance
@@ -112,16 +121,14 @@ def test_mixture_sampling_concentrates_on_the_wells():
     """The alternative shape stays reachable, and actually differs."""
     s = SamplingSettings(radial_sampling="mixture", compact_probability=0.7)
     rng = np.random.default_rng(0)
-    r = np.array([sample_radius(rng, s) for _ in range(20_000)])
+    r = s.radial().sample(rng, 20_000)
     assert np.mean(r < 6.0) > 0.65
 
 
 def test_trimer_ceiling_is_honoured():
     s = SamplingSettings(trimer_max_com_distance=6.0)
     rng = np.random.default_rng(0)
-    r = np.array(
-        [sample_radius(rng, s, s.trimer_max_com_distance) for _ in range(2_000)]
-    )
+    r = s.trimer_radial().sample(rng, 2_000)
     assert r.max() <= 6.0
 
 
@@ -129,7 +136,7 @@ def test_trimer_ceiling_is_honoured():
 
 @pytest.mark.parametrize("n_mol", [2, 3])
 def test_cluster_shape_and_labelling(reference, n_mol):
-    cluster = make_cluster(n_mol, reference, config_rng(3, 0), SamplingSettings())
+    cluster = make_cluster(n_mol, reference, config_rng(3, 0), SamplingSettings(), UNIFORM)
 
     assert len(cluster) == 12 * n_mol
     assert int(cluster.info["n_molecules"]) == n_mol
@@ -149,7 +156,7 @@ def test_no_cluster_violates_the_hard_core(reference):
     """min_atom_distance is a rejection criterion, not a suggestion."""
     s = SamplingSettings(min_atom_distance=2.0)
     for k in range(25):
-        cluster = make_cluster(2 + k % 2, reference, config_rng(5, k), s)
+        cluster = make_cluster(2 + k % 2, reference, config_rng(5, k), s, UNIFORM)
         pos = cluster.get_positions()
         ids = cluster.arrays["molecule_id"]
         for a in range(int(ids.max()) + 1):
@@ -161,12 +168,12 @@ def test_no_cluster_violates_the_hard_core(reference):
 
 
 def test_rigid_monomers_are_the_reference_up_to_rotation(reference):
-    """The point of rigid=True: one monomer energy is valid for every molecule.
+    """Why monomers are rigid: one monomer energy is valid for every molecule.
 
     That is only true if each molecule is a *rigid rotation* of the reference,
     which this pins via the (rotation-invariant) sorted internal distances.
     """
-    cluster = make_cluster(3, reference, config_rng(7, 0), SamplingSettings(rigid=True))
+    cluster = make_cluster(3, reference, config_rng(7, 0), SamplingSettings(), UNIFORM)
     ref_d = np.sort(reference.get_all_distances().ravel())
     for block in molecule_indices(cluster):
         mol = cluster[block]
@@ -175,31 +182,19 @@ def test_rigid_monomers_are_the_reference_up_to_rotation(reference):
         )
 
 
-def test_no_rigid_actually_distorts(reference):
-    cluster = make_cluster(2, reference, config_rng(7, 0), SamplingSettings(rigid=False))
-    ref_d = np.sort(reference.get_all_distances().ravel())
-    moved = [
-        not np.allclose(
-            np.sort(cluster[b].get_all_distances().ravel()), ref_d, atol=1e-6
-        )
-        for b in molecule_indices(cluster)
-    ]
-    assert all(moved)
-
-
 def test_config_rng_is_reproducible_and_index_dependent(reference):
     """Per-configuration seeding is what makes resume exact."""
-    a = make_cluster(2, reference, config_rng(11, 4), SamplingSettings())
-    b = make_cluster(2, reference, config_rng(11, 4), SamplingSettings())
-    c = make_cluster(2, reference, config_rng(11, 5), SamplingSettings())
+    a = make_cluster(2, reference, config_rng(11, 4), SamplingSettings(), UNIFORM)
+    b = make_cluster(2, reference, config_rng(11, 4), SamplingSettings(), UNIFORM)
+    c = make_cluster(2, reference, config_rng(11, 5), SamplingSettings(), UNIFORM)
     np.testing.assert_allclose(a.get_positions(), b.get_positions())
     assert not np.allclose(a.get_positions(), c.get_positions())
 
 
 def test_retry_salt_changes_the_stream(reference):
     """A failed placement must not be retried from an identical stream."""
-    a = make_cluster(2, reference, config_rng(11, 4, 0), SamplingSettings())
-    b = make_cluster(2, reference, config_rng(11, 4, 1), SamplingSettings())
+    a = make_cluster(2, reference, config_rng(11, 4, 0), SamplingSettings(), UNIFORM)
+    b = make_cluster(2, reference, config_rng(11, 4, 1), SamplingSettings(), UNIFORM)
     assert not np.allclose(a.get_positions(), b.get_positions())
 
 
@@ -208,7 +203,7 @@ def test_retry_salt_changes_the_stream(reference):
 def test_decomposition_algebra_is_exact(reference):
     """interaction = E_cluster - sum E_mono, and the trimer 3-body identity."""
     calc = StubCalculator()
-    cluster = make_cluster(3, reference, config_rng(13, 0), SamplingSettings())
+    cluster = make_cluster(3, reference, config_rng(13, 0), SamplingSettings(), UNIFORM)
     e_cluster = -0.1 * len(cluster)
 
     out = energy_decomposition(cluster, calc, e_cluster, mode="full")
@@ -225,7 +220,7 @@ def test_decomposition_algebra_is_exact(reference):
 
 def test_rigid_monomer_energy_skips_the_per_molecule_calls(reference):
     """The cost saving is real: passing the constant makes zero monomer calls."""
-    cluster = make_cluster(3, reference, config_rng(13, 1), SamplingSettings())
+    cluster = make_cluster(3, reference, config_rng(13, 1), SamplingSettings(), UNIFORM)
 
     calc = StubCalculator()
     energy_decomposition(cluster, calc, -1.0, mode="monomers")
@@ -240,12 +235,12 @@ def test_rigid_monomer_energy_skips_the_per_molecule_calls(reference):
 
 
 def test_decomposition_none_is_empty(reference):
-    cluster = make_cluster(2, reference, config_rng(13, 2), SamplingSettings())
+    cluster = make_cluster(2, reference, config_rng(13, 2), SamplingSettings(), UNIFORM)
     assert energy_decomposition(cluster, StubCalculator(), -1.0, mode="none") == {}
 
 
 def test_subset_atoms_selects_whole_molecules(reference):
-    cluster = make_cluster(3, reference, config_rng(13, 3), SamplingSettings())
+    cluster = make_cluster(3, reference, config_rng(13, 3), SamplingSettings(), UNIFORM)
     sub = subset_atoms(cluster, [0, 2])
     assert len(sub) == 24
     assert sub.info["charge"] == 0 and sub.info["spin"] == 1
@@ -278,7 +273,7 @@ def test_gbq_baseline_matches_a_direct_pair_energy(reference):
 
 
 def test_gbq_baseline_sums_all_trimer_pairs(reference):
-    cluster = make_cluster(3, reference, config_rng(17, 0), SamplingSettings())
+    cluster = make_cluster(3, reference, config_rng(17, 0), SamplingSettings(), UNIFORM)
     out = gbq_baseline(cluster)
     com = cluster.info.get("molecular_com")
     normals = out["or_vec"]
@@ -358,8 +353,8 @@ def test_frames_are_written_incrementally(stub_uma, tmp_path):
     they are produced."""
     generate_shard(
         out_dir=tmp_path, shard=0, n_configs=6, seed=1,
-        settings_dict=SamplingSettings().__dict__, model="stub", device="cpu",
-        decomposition="monomers", trimer_fraction=0.5, flush_every=2,
+        settings_dict=asdict(SamplingSettings(trimer_fraction=0.5)), model="stub", device="cpu",
+        decomposition="monomers", motifs=[UNIFORM] * 64, flush_every=2,
     )
     path = shard_path(tmp_path, 0)
     assert path.exists()
@@ -383,15 +378,15 @@ def test_resume_completes_a_partial_shard(stub_uma, tmp_path):
     remainder and never repeats a config_index."""
     generate_shard(
         out_dir=tmp_path, shard=0, n_configs=3, seed=1,
-        settings_dict=SamplingSettings().__dict__, model="stub", device="cpu",
-        decomposition="monomers", trimer_fraction=0.5, flush_every=1,
+        settings_dict=asdict(SamplingSettings(trimer_fraction=0.5)), model="stub", device="cpu",
+        decomposition="monomers", motifs=[UNIFORM] * 64, flush_every=1,
     )
     assert shard_count(shard_path(tmp_path, 0)) == 3
 
     res = generate_shard(
         out_dir=tmp_path, shard=0, n_configs=8, seed=1,
-        settings_dict=SamplingSettings().__dict__, model="stub", device="cpu",
-        decomposition="monomers", trimer_fraction=0.5, flush_every=1,
+        settings_dict=asdict(SamplingSettings(trimer_fraction=0.5)), model="stub", device="cpu",
+        decomposition="monomers", motifs=[UNIFORM] * 64, flush_every=1,
     )
     assert res["written"] == 5 and res["total"] == 8
 
@@ -404,8 +399,8 @@ def test_resume_reproduces_the_uninterrupted_run(stub_uma, tmp_path):
     """Per-config seeding means an interrupted campaign is byte-identical to
     one that ran straight through -- the property a shard-wide RNG loses."""
     kw = dict(
-        settings_dict=SamplingSettings().__dict__, model="stub", device="cpu",
-        decomposition="monomers", trimer_fraction=0.5, flush_every=1,
+        settings_dict=asdict(SamplingSettings(trimer_fraction=0.5)), model="stub", device="cpu",
+        decomposition="monomers", motifs=[UNIFORM] * 64, flush_every=1,
     )
     generate_shard(out_dir=tmp_path, shard=0, n_configs=2, seed=9, **kw)
     generate_shard(out_dir=tmp_path, shard=0, n_configs=5, seed=9, **kw)
@@ -423,8 +418,8 @@ def test_resume_reproduces_the_uninterrupted_run(stub_uma, tmp_path):
 
 def test_different_shard_seeds_give_different_configurations(stub_uma, tmp_path):
     kw = dict(
-        settings_dict=SamplingSettings().__dict__, model="stub", device="cpu",
-        decomposition="monomers", trimer_fraction=0.5, flush_every=4,
+        settings_dict=asdict(SamplingSettings(trimer_fraction=0.5)), model="stub", device="cpu",
+        decomposition="monomers", motifs=[UNIFORM] * 64, flush_every=4,
     )
     generate_shard(out_dir=tmp_path, shard=0, n_configs=2, seed=100, **kw)
     generate_shard(out_dir=tmp_path, shard=1, n_configs=2, seed=101, **kw)
@@ -438,8 +433,8 @@ def test_shard_count_tolerates_a_torn_final_frame(stub_uma, tmp_path):
     that frame, not the whole shard."""
     generate_shard(
         out_dir=tmp_path, shard=0, n_configs=4, seed=1,
-        settings_dict=SamplingSettings().__dict__, model="stub", device="cpu",
-        decomposition="monomers", trimer_fraction=0.5, flush_every=4,
+        settings_dict=asdict(SamplingSettings(trimer_fraction=0.5)), model="stub", device="cpu",
+        decomposition="monomers", motifs=[UNIFORM] * 64, flush_every=4,
     )
     path = shard_path(tmp_path, 0)
     lines = path.read_text().splitlines()
@@ -455,7 +450,6 @@ def test_campaign_stamps_a_config(stub_uma, tmp_path):
     cfg = json.loads((tmp_path / CONFIG_NAME).read_text())
     assert cfg["n_configs"] == 4
     assert cfg["settings"]["max_com_distance"] == 15.0
-    assert cfg["settings"]["rigid"] is True
     assert cfg["settings"]["radial_sampling"] == "volume-uniform"
 
 
@@ -486,149 +480,144 @@ def test_saved_frames_carry_the_training_targets(stub_uma, tmp_path):
         assert np.isfinite(delta)
 
 
-# --- motif-seeded orientation sampling ---------------------------------------
+# --- motif quotas ------------------------------------------------------------
 
 
-def _motif_settings(**kw):
-    return SamplingSettings(orientation_sampling="motif", **kw)
+def test_motif_plan_honours_the_quotas_exactly():
+    """Composition is decided, not sampled.
 
-
-def test_uniform_sampling_still_reproduces_the_pilot(reference):
-    """Golden value: config 0 of shard 0 of ``results/cluster_pilot/``.
-
-    Motif seeding is opt-in precisely so this keeps holding. If adding it had
-    perturbed the default rng stream, the shipped 500-frame campaign would have
-    become unreproducible from the tree and the resume tests would be silently
-    meaningless. The constants below were read off the stored frame, so this
-    does not depend on the (gitignored) campaign being present.
+    The whole point of quotas over a mixture density: asking for 30% cofacial
+    gets exactly 30% cofacial, checkable before any MLIP time is spent. Largest
+    remainder means the counts sum to n_configs with nothing rounded away.
     """
-    settings = SamplingSettings(
-        radial_sampling="mixture", min_atom_distance=2.4, compact_probability=0.70
+    quotas = {COFACIAL: 0.3, PARALLEL_DISPLACED: 0.2, T_SHAPED: 0.2, UNIFORM: 0.3}
+    plan = motif_plan(seed0=7, n_configs=1000, quotas=quotas)
+
+    assert len(plan) == 1000
+    for motif, share in quotas.items():
+        assert int(np.sum(plan == motif)) == int(round(share * 1000))
+
+
+def test_motif_plan_normalises_unnormalised_shares():
+    """Shares are relative, so counts must not depend on their scale."""
+    a = motif_plan(3, 200, {COFACIAL: 1, UNIFORM: 3})
+    b = motif_plan(3, 200, {COFACIAL: 0.25, UNIFORM: 0.75})
+    assert np.array_equal(a, b)
+    assert int(np.sum(a == COFACIAL)) == 50
+
+
+def test_motif_plan_is_a_pure_function_of_the_campaign():
+    """A shard reads its own slice, so resume depends on this being stable."""
+    quotas = {COFACIAL: 0.5, UNIFORM: 0.5}
+    assert np.array_equal(
+        motif_plan(11, 64, quotas), motif_plan(11, 64, quotas)
     )
-    rng = config_rng(20260731, 0, 0)
-    n_molecules = 3 if rng.random() < 0.7 else 2
-    assert n_molecules == 2
-
-    cluster = make_cluster(n_molecules, reference, rng, settings)
-
-    assert cluster.get_positions()[0] == pytest.approx(
-        [-2.64232989, -5.70378909, 2.21335699], abs=1e-7
+    assert not np.array_equal(
+        motif_plan(11, 64, quotas), motif_plan(12, 64, quotas)
     )
-    coms = np.asarray(
-        [
-            center_of_mass(cluster.get_positions()[ids], cluster.get_masses()[ids])
-            for ids in molecule_indices(cluster)
-        ]
+
+
+def test_motif_plan_rejects_an_unknown_motif():
+    with pytest.raises(ValueError, match="unknown motif"):
+        motif_plan(0, 10, {"herringbone": 1.0})
+
+
+def test_every_motif_survives_a_full_campaign(reference):
+    """Generated clusters carry the motif they were asked for, and the seeded
+    pair really classifies as it -- the round trip, end to end through
+    ``make_cluster`` rather than only through the generator."""
+    from asmcmc.data_preparation.cluster_analysis import pair_records
+
+    for motif in MOTIFS:
+        if motif == UNIFORM:
+            continue
+        cluster = make_cluster(2, reference, config_rng(5, 0), SamplingSettings(), motif)
+        assert cluster.info["motif"] == motif
+
+        cluster.info["interaction_energy"] = 0.0
+        cluster.info["gbq_interaction_energy"] = 0.0
+        cluster.info.update(gbq_baseline(cluster))
+        cluster.info.update(molecular_geometry_metadata(cluster))
+        records = pair_records([cluster])
+        assert motif_masks(records)[motif][0]
+
+
+def test_a_campaign_records_the_composition_it_realised(stub_uma, tmp_path):
+    """The manifest states counts, not just the request -- that number is the
+    one the coverage problem is about."""
+    _run(tmp_path, 8, quotas={COFACIAL: 0.5, UNIFORM: 0.5})
+    cfg = json.loads((tmp_path / CONFIG_NAME).read_text())
+
+    assert cfg["motif_counts"] == {COFACIAL: 4, UNIFORM: 4}
+    assert cfg["quotas"] == {COFACIAL: 0.5, UNIFORM: 0.5}
+
+    motifs = [f.info["motif"] for f in dataset_frames(tmp_path)]
+    assert sorted(motifs) == sorted([COFACIAL] * 4 + [UNIFORM] * 4)
+
+
+def test_a_default_campaign_is_entirely_uniform(stub_uma, tmp_path):
+    """The pre-motif behaviour is still what you get by not asking."""
+    _run(tmp_path, 4)
+    cfg = json.loads((tmp_path / CONFIG_NAME).read_text())
+    assert cfg["motif_counts"] == {UNIFORM: 4}
+
+
+def test_seeding_cofacial_actually_moves_the_census(stub_uma, tmp_path):
+    """The measured effect the restructure exists for.
+
+    **A quota is per configuration; the census is per pair.** A trimer
+    contributes three pairs of which only the seeded one carries the requested
+    motif, so a fully-seeded campaign lands at ``1 / (1 + 2 * trimer_fraction)``,
+    not at 1. Both limits are pinned here because the gap between them is
+    exactly the thing that would otherwise be misread as the seeding failing.
+    """
+    from asmcmc.data_preparation.cluster_analysis import pair_records
+
+    def cofacial_share(directory, n, **kw):
+        # "full": a trimer's three pair labels come from its per-pair energies,
+        # which only that mode computes, and pair_records needs them.
+        _run(directory, n, decomposition="full", **kw)
+        records = pair_records(dataset_frames(directory))
+        return float(motif_masks(records)[COFACIAL].mean())
+
+    # Dimers only: every pair in the campaign is a seeded pair.
+    dimers_only = cofacial_share(
+        tmp_path / "dimers",
+        16,
+        quotas={COFACIAL: 1.0},
+        settings=SamplingSettings(trimer_fraction=0.0),
     )
-    assert np.linalg.norm(coms[1] - coms[0]) == pytest.approx(11.007058, abs=1e-5)
-    # The default path carries no proposal metadata at all.
-    assert "log_q" not in cluster.info
+    assert dimers_only == pytest.approx(1.0)
+
+    # With trimers, diluted by the incidental pairs they bring with them.
+    fraction = 0.7
+    mixed = cofacial_share(
+        tmp_path / "mixed",
+        48,
+        quotas={COFACIAL: 1.0},
+        settings=SamplingSettings(trimer_fraction=fraction),
+    )
+    assert mixed == pytest.approx(1.0 / (1.0 + 2.0 * fraction), abs=0.12)
+
+    plain = cofacial_share(tmp_path / "plain", 48)
+    assert mixed > 10 * max(plain, 1e-3)
 
 
-def test_motif_clusters_record_a_finite_log_q(reference):
-    for n_mol in (2, 3):
-        cluster = make_cluster(n_mol, reference, config_rng(7, n_mol), _motif_settings())
-        assert np.isfinite(cluster.info["log_q"])
-        assert cluster.info["proposal_component"] in {
-            "stacked_tight",
-            "stacked_wide",
-            "t_shaped",
-            "uniform",
-        }
-        assert int(cluster.info["n_molecules"]) == n_mol
-
-
-def test_motif_log_q_matches_the_mixture_for_a_dimer(reference):
-    """The stamped density must be the mixture evaluated at the geometry that
-    was actually written out -- not at the one that was proposed."""
-    from asmcmc.utils.geometry import coarse_grain_frame
-
-    settings = _motif_settings()
-    proposal = build_proposal(settings)
-    cluster = make_cluster(2, reference, config_rng(11, 3), settings, proposal)
-
-    cg = coarse_grain_frame(cluster)
-    normals = np.asarray(cg.arrays["or_vec"])
-    com = cg.get_positions()
-    recomputed = proposal.log_density(
-        normals[0:1], normals[1:2], (com[1] - com[0])[None, :]
-    )[0]
-    assert recomputed == pytest.approx(cluster.info["log_q"], abs=1e-6)
-
-
-def test_motif_trimer_density_sums_over_both_anchors(reference):
-    """The third molecule is placed from anchor 0 or 1 with equal probability and
-    the stored frame does not say which, so both terms must contribute."""
-    settings = _motif_settings()
-    proposal = build_proposal(settings)
-    radial = proposal.components[-1].radial
-
-    coms = [np.zeros(3), np.array([0.0, 0.0, 4.0])]
-    third = np.array([0.0, 0.0, 9.0])  # 9.0 from molecule 0, 5.0 from molecule 1
-    separations = np.array([np.linalg.norm(third - c) for c in coms])
-
-    both = float(np.sum(0.5 * radial.pdf(separations) / (4 * np.pi * separations**2)))
-    single = float(0.5 * radial.pdf(separations[:1])[0] / (4 * np.pi * separations[0] ** 2))
-    assert both > single * 1.5, "one anchor term alone would understate the density"
-
-
-def test_motif_reaches_close_contacts_the_uniform_path_rarely_does(reference):
-    """The whole point: motif seeding converts attempts into short-range samples."""
-    from asmcmc.utils.geometry import coarse_grain_frame
-
-    def closest(settings, n=60, seed0=0):
-        out = []
-        for i in range(n):
-            cluster = make_cluster(2, reference, config_rng(seed0, i), settings)
-            com = coarse_grain_frame(cluster).get_positions()
-            out.append(np.linalg.norm(com[1] - com[0]))
-        return np.asarray(out)
-
-    motif = closest(_motif_settings(uniform_weight=0.1))
-    uniform = closest(SamplingSettings())
-
-    # Measured over 150 draws: uniform puts 2.7% of pairs inside 5 A with a
-    # median separation of 12.0 A; motif puts 36.7% inside 5 A at a median of
-    # 5.3 A. Asserted loosely enough to survive the 60-draw sample here.
-    assert np.mean(motif < 5.0) > 5 * np.mean(uniform < 5.0)
-    assert np.mean(motif < 5.0) > 0.20
-    assert np.median(motif) < 0.6 * np.median(uniform)
-
-
-def test_motif_refuses_flexible_monomers(reference):
-    """A vibrated monomer's realised normal is not the proposed one, so log_q
-    would describe a geometry that was never written."""
-    with pytest.raises(ValueError, match="requires rigid=True"):
-        make_cluster(2, reference, config_rng(1, 1), _motif_settings(rigid=False))
-
-
-def test_cli_rejects_an_unknown_orientation_sampling(tmp_path):
-    with pytest.raises(ValueError, match="orientation_sampling must be one of"):
-        main(
-            n_configs=1,
-            out_dir=tmp_path,
-            n_shards=1,
-            settings=SamplingSettings(orientation_sampling="nonsense"),
-            max_workers=1,
+def test_the_trimer_ceiling_is_honoured_under_motif_seeding(reference):
+    """Regression: the previous motif path reached into the mixture's uniform
+    component for the third molecule, whose ceiling came from
+    ``max_com_distance``, so a tighter trimer ceiling was silently ignored."""
+    settings = SamplingSettings(trimer_max_com_distance=6.0)
+    for k in range(12):
+        cluster = make_cluster(3, reference, config_rng(31, k), settings, COFACIAL)
+        coms = np.asarray(
+            [
+                center_of_mass(cluster.get_positions()[ids], cluster.get_masses()[ids])
+                for ids in molecule_indices(cluster)
+            ]
         )
-
-
-def test_motif_campaign_stamps_provenance(stub_uma, tmp_path):
-    """A campaign has to say how it was sampled, or its log_q cannot be interpreted."""
-    main(
-        n_configs=4,
-        out_dir=tmp_path,
-        n_shards=1,
-        decomposition="monomers",
-        settings=SamplingSettings(orientation_sampling="motif"),
-        max_workers=1,
-    )
-    for frame in dataset_frames(tmp_path):
-        assert frame.info["orientation_sampling"] == "motif"
-        assert np.isfinite(frame.info["log_q"])
-
-
-# --- progress reporting -------------------------------------------------------
+        # The third molecule was placed against one of the first two.
+        assert min(np.linalg.norm(coms[2] - coms[0]), np.linalg.norm(coms[2] - coms[1])) <= 6.0
 
 
 def test_progress_queue_counts_every_configuration(stub_uma, tmp_path):
@@ -641,7 +630,7 @@ def test_progress_queue_counts_every_configuration(stub_uma, tmp_path):
     result = generate_shard(
         out_dir=str(tmp_path), shard=0, n_configs=7, seed=3,
         settings_dict=asdict(SamplingSettings()), model="stub", device="cpu",
-        decomposition="monomers", trimer_fraction=0.5, flush_every=2,
+        decomposition="monomers", motifs=[UNIFORM] * 64, flush_every=2,
         progress_queue=reported,
     )
 
@@ -660,7 +649,7 @@ def test_progress_queue_reports_frames_already_on_disk(stub_uma, tmp_path):
     common = dict(
         out_dir=str(tmp_path), shard=0, seed=3,
         settings_dict=asdict(SamplingSettings()), model="stub", device="cpu",
-        decomposition="monomers", trimer_fraction=0.5, flush_every=2,
+        decomposition="monomers", motifs=[UNIFORM] * 64, flush_every=2,
     )
     generate_shard(n_configs=5, **common)
 

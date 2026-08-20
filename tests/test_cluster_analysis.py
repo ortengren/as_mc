@@ -29,7 +29,11 @@ from asmcmc.data_preparation.cluster_analysis import (
     stack_coordinates,
     three_body_records,
 )
-from asmcmc.data_preparation.cluster_dataset import build_reference_benzene, main
+from asmcmc.data_preparation.cluster_dataset import (
+    SamplingSettings,
+    build_reference_benzene,
+    main,
+)
 
 from test_cluster_dataset import StubCalculator  # noqa: F401  (shared stub)
 
@@ -50,7 +54,7 @@ def campaign(tmp_path, stub_uma):
         out_dir=tmp_path,
         n_shards=1,
         decomposition="full",
-        trimer_fraction=0.5,
+        settings=SamplingSettings(trimer_fraction=0.5),
         max_workers=1,
     )
     return load_campaign(tmp_path)
