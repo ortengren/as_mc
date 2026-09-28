@@ -83,7 +83,8 @@ volume-dependent and changes sign near 120 Å³:
 | V (Å³/molecule) | E_herringbone − E_slipped-parallel |
 |---|---|
 | 96.5 (MC) | +2.26 |
-| 123.6 (experimental cell) | −0.14 |
+| 116.0 (experiment) | +0.18 |
+| 123.6 (the COD cif's cell) | −0.14 |
 | 193.5 (DFT training cells) | −0.46 |
 
 GBQIII therefore gets the ordering right at the density of the DFT data and wrong
