@@ -11,10 +11,8 @@ state point for exactly that.
 count runs 64 to 490 over the default grid); the third sets how much of the far
 field the correction can see at all. The ellipsoid semiaxes and the radial
 gaussian width are held at the ``Hypers`` defaults: they describe the *particle*
-rather than the basis, and the legacy GFRE study
-(``data/anisoap_data/benzenes/hyperparameter_tuning/gfre.py``) tuned them
-unsupervised against atomistic SOAP, which is a different objective from
-Delta-skill and worth keeping separate from it.
+rather than the basis, and the AniSOAP paper tuned them unsupervised (against
+atomistic SOAP), which is a different objective from Delta-skill.
 
 **Three things are built once, before the loop**, because the alternative
 silently changes what is being measured:

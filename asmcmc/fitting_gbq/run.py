@@ -27,7 +27,7 @@ from asmcmc.fitting_gbq.fit import (
 from asmcmc.fitting_gbq.report import write_artifacts
 from asmcmc.fitting_gbq.plots import write_plots
 
-DEFAULT_DATA = "data/xyz_files/ellipsoids_with_axes_and_energies.xyz"
+DEFAULT_DATA = "data/benzene_crystals/ellipsoids_with_axes_and_energies.xyz"
 # Lattice-sum cutoff (Angstrom); matches the MC neighbour radius (nl_radius=15).
 DEFAULT_CUTOFF = 15.0
 DEFAULT_OUT = "results/fit_gb"

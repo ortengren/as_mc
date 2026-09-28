@@ -20,10 +20,9 @@ results/*
 results/fitting/cache/
 
 # Bulk / generated data (kept on disk, not in VCS)
-data/xyz_files/duped_benzenes.xyz
-data/xyz_files/duped_ellipsoids_with_axes.xyz
-data/xyz_files/ellipsoids_with_axes.xyz
-data/xyz_files/two_ells_with_axes.xyz
+data/benzene_crystals/duped_benzenes.xyz
+data/benzene_crystals/duped_ellipsoids_with_axes.xyz
+data/benzene_crystals/ellipsoids_with_axes.xyz
 
 # Literature and references
 literature/

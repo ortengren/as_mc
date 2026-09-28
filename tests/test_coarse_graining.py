@@ -14,8 +14,8 @@ from asmcmc.mc.trial_moves import quat_to_or_vec
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 PBCA_CIF = _REPO_ROOT / "data/benzene_pbca_cod_7238223.cif"
-BENZENES_XYZ = _REPO_ROOT / "data/anisoap_data/benzenes/benzenes.xyz"
-ELLIPSOIDS_XYZ = _REPO_ROOT / "data/anisoap_data/benzenes/ellipsoids.xyz"
+BENZENES_XYZ = _REPO_ROOT / "data/benzene_crystals/benzenes.xyz"
+ELLIPSOIDS_XYZ = _REPO_ROOT / "data/benzene_crystals/ellipsoids.xyz"
 
 
 def _benzene_ring(centre=(0.0, 0.0, 0.0), normal="z"):
@@ -90,7 +90,7 @@ def test_pbca_crystal_maps_to_four_distinct_ellipsoids():
 
 @pytest.mark.skipif(
     not (BENZENES_XYZ.exists() and ELLIPSOIDS_XYZ.exists()),
-    reason="anisoap_data drop not present",
+    reason="data/benzene_crystals not present",
 )
 def test_mapping_reproduces_the_reference_ellipsoid_file():
     atomistic = ase.io.read(BENZENES_XYZ, ":20")
