@@ -13,11 +13,12 @@ to them, so they reward leaving GBQIII unchanged. The verdict is
 (dense rays through the three wells), not a held-out test set.
 
 Geometry convention (supplement README): molecule A sits at the origin with its
-ring in the xz-plane, so its disc normal is +y; each row gives molecule B's centre
-of mass (X, Y, Z) and Euler angles (alpha, beta, gamma) in degrees. The README
-does not name the Euler sequence; :data:`EULER_SEQ` is scipy's extrinsic ``"zyx"``,
-under which the (0, 90, 90) rows form the T-shaped family. ``docs/findings.md``
-records which rows the convention leaves ambiguous.
+ring in the xz-plane and two C-H bonds on the z-axis, so its disc normal is +y;
+each row gives molecule B's centre of mass (X, Y, Z) and Euler angles (alpha,
+beta, gamma) in degrees. The README does not name the Euler sequence.
+:data:`EULER_SEQ` is the proper z-y-z convention (scipy's intrinsic ``"ZYZ"``),
+the only standard reading consistent with every angle-carrying row;
+``docs/findings.md`` §3 gives the evidence.
 
 The atomistic helpers at the end rebuild the same rows as 24-atom dimers, so an
 ASE calculator (UMA) can be scored through :func:`score_energies` too; that is
@@ -37,7 +38,7 @@ from asmcmc.delta_learning.uma import frame_energy
 from asmcmc.mc.potentials import CACELLI_POTENTIAL
 from asmcmc.units import EV_TO_KCAL
 
-EULER_SEQ = "zyx"
+EULER_SEQ = "ZYZ"
 
 CACELLI_DIMER_PATH = data_path("cacelli_2004_dimers", "abinitio.energies.txt")
 UMA_DIMER_PATH = data_path("uma_dimers", "dimer_energies.csv")

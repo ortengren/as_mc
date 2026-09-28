@@ -16,7 +16,7 @@ AniSOAP correction.
   the energies well but makes the stacked dimer repulsive. So the current work is a
   **Δ-learning correction**: ridge regression on AniSOAP descriptors, trained on
   dimers labelled by the UMA machine-learned potential. The best model so far
-  improves the dimer-well error by 21% (0.436 → 0.346 kcal/mol). It is not yet used
+  improves the dimer-well error by 23% (0.465 → 0.359 kcal/mol). It is not yet used
   in MC.
 
 The reasoning and the numbers behind all of this are in
@@ -154,8 +154,8 @@ refitting.
 figures.
 
 **Regenerating the UMA dimer reference:** `python scripts/uma_cacelli_dimers.py`,
-which writes `data/uma_dimers/`. It takes a few minutes on CPU; first read the
-Euler-convention issue in `docs/findings.md`.
+which writes `data/uma_dimers/`. It takes about two minutes on CPU. How the
+supplement's Euler angles are read is explained in `docs/findings.md` §3.
 
 Other scripts: `export_xyz.py` (a run's db as extended XYZ, for OVITO) and
 `build_herringbone_motif.py` (coarse-grain a Pbca cif into the starting motif).

@@ -27,10 +27,10 @@ files marked *local only*, which are large and gitignored.
 | `uma_dimers/dimer_energies.csv` | UMA (`uma-s-1p1`) interaction energies at those 197 geometries, plus the MP2 and GBQIII values: the reference `dimer_benchmark` scores against. |
 | `uma_dimers/family_curves.csv` | Dense UMA and GBQIII scans through the cofacial, parallel-displaced and T-shaped wells, plotted by `notebooks/uma_vs_cacelli.ipynb`. |
 
-Both `uma_dimers` files are written by `scripts/uma_cacelli_dimers.py`. The
-committed ones were generated with a different reading of the supplement's Euler
-angles than the code now uses, which matters for 18 of the 197 rows; see
-"Known issues" in `docs/findings.md`.
+Both `uma_dimers` files are written by `scripts/uma_cacelli_dimers.py`, which
+reads the supplement's Euler angles as proper z-y-z angles (`docs/findings.md`
+§3). `tests/test_dimer_benchmark.py` checks that the tracked files match the
+geometry the code builds.
 
 ## DFT benzene crystals (`benzene_crystals/`)
 

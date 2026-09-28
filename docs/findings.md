@@ -71,6 +71,44 @@ through all three wells (cofacial, parallel-displaced, T-shaped). Its verdict is
 `stacking_bound` check only asks whether the cofacial stack is bound at all, and
 it passes models that make the wells worse.
 
+**Reading the dimer geometries.** The supplement gives molecule B's orientation as
+three Euler angles (α, β, γ) but does not name the convention. The code reads them
+as proper z-y-z angles (`dimer_benchmark.EULER_SEQ = "ZYZ"`, scipy's intrinsic
+form). This is the only standard reading consistent with all 53 rows that carry
+angles; the other 144 rows are pure translations. The supplement's own energies
+decide it:
+
+- The four `(90, 90, 0)` rows along y repeat the energies of the `(0, 90, 90)`
+  T-shaped rows along z (−2.27956 at 5 Å in both), so each pair is one dimer seen
+  from two frames. Only proper Euler sequences (z-y-z, x-y-x, …) make them
+  congruent.
+- The `(0, 0, 90)` rows along z lie on a repulsive wall (+3.6 at 6.5 Å), like the
+  in-plane rows at the same distance (+3.7). The rotation by γ must therefore turn
+  B about the C–H bond it points at A, which keeps the head-on H···H contact.
+- The `(90, 90, 90)` rows must not clash. Readings that put their atoms 1.3 Å
+  apart, such as extrinsic z-y-x, give +75 in UMA where MP2 gives +25.
+
+Rebuilding the 24-atom dimers under every scipy convention and scoring them with
+UMA against MP2 gives the same answer. For scale, UMA's error on the 144
+angle-free rows, where no convention is involved, is 0.37:
+
+| UMA − MP2 RMSE (kcal/mol) | `"ZYZ"` | `"ZXY"` | `"zyx"` |
+|---|---|---|---|
+| `(0, 0, 90)`, 13 rows | 0.20 | 1.22 | 1.32 |
+| `(90, 90, 90)`, 5 rows | 1.51 | 1.51 | 23.0 |
+| `(90, 90, 0)`, 4 rows | 0.57 | 0.19 | 0.19 |
+| all 53 angle-carrying rows | 0.64 | 0.86 | 7.12 |
+
+The `(90, 90, 0)` line is not a counter-example. Under `"ZYZ"` those rows are the
+T-shaped dimer, and they inherit UMA's T-shape error (0.55 on the T-shaped rows
+themselves); the other readings build a different dimer that happens to sit closer
+to MP2. GBQIII cannot settle the question: a uniaxial model misses the
+`(0, 0, 90)` wall under every reading. `tests/test_dimer_benchmark.py` pins the
+three geometric checks. Benchmark numbers computed before 28 September 2026 mixed
+`"zyx"` geometry with UMA labels built under `"ZXY"`. Settling the reading moved
+the baseline well RMSE from 0.436 to 0.465 and left the ranking of the 64 sweep
+points essentially unchanged (rank correlation 0.98).
+
 ## 4. The wrong crystal: polymorph ordering
 
 MC under GBQIII is not failing to equilibrate. It finds GBQIII's global minimum,
@@ -102,7 +140,7 @@ it reproduces their MP2 energies well:
 
 | Model vs MP2 | r (all 197) | RMSE (all) | r (157 attractive) | RMSE (attractive) |
 |---|---|---|---|---|
-| UMA | 0.994 | 0.55 | 0.995 | 0.27 |
+| UMA | 0.996 | 0.46 | 0.996 | 0.27 |
 | GBQIII | 0.915 | 1.67 | 0.971 | 0.21 |
 
 MP2 cannot be the target, because GBQIII was fitted to those rows: on the
@@ -119,7 +157,7 @@ Against UMA, every GBQIII well is too shallow, so a correct Δ deepens all three
 | parallel-displaced | −3.07 at 3.94 Å | −2.49 at 3.99 Å |
 | T-shaped | −2.81 at 5.00 Å | −1.94 at 5.08 Å |
 
-The baseline to beat is GBQIII's well RMSE against UMA: **0.436**.
+The baseline to beat is GBQIII's well RMSE against UMA: **0.465**.
 
 **UMA's 6 Å horizon.** UMA returns exactly zero interaction when no atom pair is
 within 6 Å (its graph cutoff), because the two molecules are then disconnected
@@ -142,8 +180,8 @@ physics, not statistics (see `model.py`'s docstring):
   64 to 490.
 
 **Results so far** (the 64-point sweep over `max_angular` × `max_radial` ×
-`cutoff_radius`, on `results/cluster_train`): 63/64 points improve on GBQIII. The
-best, `l9-n6-rc12`, reaches a well RMSE of **0.346** (−21%). All three grid axes
+`cutoff_radius`, on `results/cluster_train`): 64/64 points improve on GBQIII. The
+best, `l9-n6-rc12`, reaches a well RMSE of **0.359** (−23%). All three grid axes
 are still improving at the grid's edge, so the optimum has not been found. The
 correction is not yet used in MC.
 
@@ -176,31 +214,17 @@ benchmark, but it matters for MC.
 
 ## 7. Next steps
 
-1. Settle the Euler convention (below), regenerate the UMA reference, and re-score
-   the sweep with `--regate`.
-2. Generate a new campaign with the current generator (3.0–5.5 Å window), widen the
+1. Generate a new campaign with the current generator (3.0–5.5 Å window), widen the
    hyperparameter grid, and score on repeated splits.
-3. MC integration: the sampler only supports pair potentials (see `Potential`). A
+2. MC integration: the sampler only supports pair potentials (see `Potential`). A
    many-body AniSOAP energy needs a per-particle energy hook. Measure the per-move
    descriptor cost early, then apply the static polymorph test (§4) and the 100 K
    herringbone protocol.
-4. The (T, P) × potential sweep, using the signac/CHTC harness on
+3. The (T, P) × potential sweep, using the signac/CHTC harness on
    `signac-flow-htc-impl`.
 
 ## Known issues
 
-- **Euler convention of the dimer reference.** The supplement does not name its
-  Euler sequence. The code uses scipy's extrinsic `"zyx"`, but the committed
-  `data/uma_dimers` files were generated with `"ZXY"`. The two readings differ for
-  18 of the 197 rows: the 13 `(0, 0, 90)` rows and the 5 `(90, 90, 90)` rows. The
-  effect on the baseline is small (well RMSE 0.436 → 0.437), and the evidence is
-  split:
-  - `"zyx"` fits GBQIII-vs-MP2 better on the `(90, 90, 90)` rows.
-  - `"ZXY"` avoids a 1.3 Å atom clash in the atomistic reconstruction of those
-    rows.
-  - Neither explains the `(0, 0, 90)` rows.
-
-  Decide, then run `python scripts/uma_cacelli_dimers.py`.
 - **Resuming is only reproducible for numeric run-directory names.**
   `continue_equilibration` reseeds from the directory name; a non-numeric name
   falls back to `hash()`, which varies between Python processes. The herringbone

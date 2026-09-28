@@ -1,3 +1,4 @@
+import csv
 import importlib.util
 from pathlib import Path
 
@@ -330,6 +331,69 @@ def test_euler_seq_threads_through_to_geometry(data):
         for k in np.where(~ang0)[0]
     )
     assert moved > 0
+
+
+# --- the Euler convention, pinned by the supplement's own energies ---
+
+
+def _contacts(frame):
+    """Sorted A-B atom-atom distances, per element pair: equal for congruent dimers."""
+    pos = frame.get_positions()
+    sym = np.array(frame.get_chemical_symbols())
+    a, b = slice(0, 12), slice(12, 24)
+    out = []
+    for pair in (("C", "C"), ("C", "H"), ("H", "H")):
+        d = []
+        for s1, s2 in {pair, pair[::-1]}:
+            pa, pb = pos[a][sym[a] == s1], pos[b][sym[b] == s2]
+            d.append(np.linalg.norm(pa[:, None] - pb[None], axis=-1).ravel())
+        out.append(np.sort(np.concatenate(d)))
+    return np.concatenate(out)
+
+
+def _row(data, euler, r):
+    match = np.all(data.euler_deg == euler, axis=1) & np.all(np.isclose(data.r, r), axis=1)
+    assert match.sum() == 1
+    return int(np.argmax(match))
+
+
+def test_repeated_t_shape_energies_rebuild_the_same_dimer(frames, data):
+    """The supplement gives (90, 90, 0) along y the energies of (0, 90, 90) along z
+    (-2.27956 kcal/mol at 5 A in both), so the two must be one dimer seen from two
+    frames. Only proper Euler sequences such as z-y-z make them congruent."""
+    for dist in (4.5, 5.0, 6.0, 7.0):
+        i = _row(data, [0, 90, 90], [0, 0, dist])
+        j = _row(data, [90, 90, 0], [0, dist, 0])
+        assert data.energy_kcal[i] == pytest.approx(data.energy_kcal[j], abs=2e-3)
+        assert np.allclose(_contacts(frames[i]), _contacts(frames[j]), atol=1e-6)
+
+
+def test_gamma_turns_b_about_the_c_h_bond_it_points_at_a(frames, data):
+    """(0, 0, 90) along z keeps the head-on H...H contact of the in-plane (0, 0, 0)
+    row at the same distance: MP2 puts both on a repulsive wall at 6.5 A."""
+    turned = _row(data, [0, 0, 90], [0, 0, 6.5])
+    in_plane = _row(data, [0, 0, 0], [0, 0, 6.5])
+    assert data.energy_kcal[turned] > 3.0 and data.energy_kcal[in_plane] > 3.0
+    assert _contacts(frames[turned]).min() == pytest.approx(_contacts(frames[in_plane]).min())
+
+
+def test_no_rebuilt_dimer_has_an_atom_clash(frames):
+    """The closest contact in the set is that head-on H...H (1.54 A). Readings that
+    go below it put atoms 1.3 A apart in rows MP2 calls only +25 kcal/mol."""
+    closest = min(_contacts(f).min() for f in frames)
+    assert closest == pytest.approx(1.535, abs=1e-3)
+
+
+def test_uma_reference_was_built_on_the_current_geometry(uma_data):
+    """The tracked CSV's GBQIII column matches GBQIII on the loader's normals, so the
+    reference was generated under the current ``EULER_SEQ``."""
+    with open(UMA_DIMER_PATH, newline="") as fh:
+        csv_gbq = np.array([float(row["e_gbq_kcal"]) for row in csv.DictReader(fh)])
+    gbq = (
+        CACELLI_POTENTIAL.pair_energy(uma_data.uhat1, uma_data.uhat2, uma_data.r)
+        * EV_TO_KCAL
+    )
+    assert np.allclose(csv_gbq, gbq, atol=1e-5)
 
 
 # --- scoring precomputed energies ---
