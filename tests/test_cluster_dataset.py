@@ -269,9 +269,8 @@ def _run(tmp_path, n_configs, **kw):
     multi-shard runs through a **spawned** ProcessPoolExecutor, and a
     monkeypatched ``load_uma_calculator`` does not survive that boundary -- the
     child re-imports the real module and would quietly load real UMA, turning
-    these into slow MLIP tests. The pool wrapper itself is the same pattern
-    ``test_npt_equilibration.py`` already exercises; what is specific here is
-    the shard plan, tested directly in ``test_shard_plan_*`` below.
+    these into slow MLIP tests. The shard plan the pool would execute is
+    tested directly in ``test_shard_plan_*`` below.
     """
     return main(
         n_configs=n_configs,

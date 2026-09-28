@@ -1,4 +1,5 @@
 import os
+import random
 
 import numpy as np
 import ase
@@ -13,8 +14,10 @@ from asmcmc.base.metropolis import (
     BOLTZCONST,
     npt_decide_accept,
 )
+from asmcmc.base.initialize import RandomLatticeInitializer
 from asmcmc.base.potentials import calc_total_energy
 from asmcmc.base.trial_moves import calculate_vol_move
+from asmcmc.utils.equilibration import continue_point
 from asmcmc.utils.measurements import TrajectoryAnalyzer, AverageEnergy
 
 
@@ -585,3 +588,73 @@ def test_equilibrate_is_reentrant(four_particle_frame, tmp_path):
     assert metro.step_count == 100
     metro.equilibrate(num_steps=200, block_size=50, buffer_size=10)  # 100 more, not 200
     assert metro.step_count == 200
+
+
+# ---------------------------------------------------------------------------
+# continue_point: resume a finished equilibration in place
+# ---------------------------------------------------------------------------
+
+
+def _finished_equilibration(output_dir, seed, num_steps=4 * 27):
+    """A 27-particle equilibration run dir, seeded so repeated builds match."""
+    random.seed(seed)
+    np.random.seed(seed)
+    metro = MetropolisCalculator(
+        temp=300.0,
+        pressure=0.0,
+        initializer=RandomLatticeInitializer(n_particles=27, density=0.3, seed=seed),
+        output_dir=output_dir,
+    )
+    metro.equilibrate(num_steps=num_steps, block_size=27, progress=False)
+
+
+def _last_row(output_dir):
+    with connect(os.path.join(output_dir, "equilibration.db")) as db:
+        return db.get(db.count())
+
+
+def test_continue_point_appends_and_advances_steps(tmp_path):
+    """The db grows, the step axis advances past the original target, and the
+    write-once run_config.json is preserved."""
+    output_dir = str(tmp_path / "run" / "1")
+    _finished_equilibration(output_dir, seed=1)
+
+    with connect(os.path.join(output_dir, "equilibration.db")) as db:
+        n_before = db.count()
+    step_before = _last_row(output_dir).step
+    with open(os.path.join(output_dir, "run_config.json")) as f:
+        config_before = f.read()
+
+    assert continue_point(output_dir, extra_steps=4 * 27, block_size=27) == output_dir
+
+    with connect(os.path.join(output_dir, "equilibration.db")) as db:
+        assert db.count() > n_before
+    assert _last_row(output_dir).step >= step_before + 4 * 27
+    with open(os.path.join(output_dir, "run_config.json")) as f:
+        assert f.read() == config_before
+
+
+def test_continue_point_resets_vol_delt(tmp_path):
+    """vol_delt=X overrides the carried volume width before resuming. The short
+    extension stays under one tuning window, so the reset value is recorded."""
+    output_dir = str(tmp_path / "run" / "1")
+    _finished_equilibration(output_dir, seed=1)
+    reset_to = round(_last_row(output_dir).vol_delta + 0.123, 6)
+
+    continue_point(output_dir, extra_steps=4 * 27, block_size=27, vol_delt=reset_to)
+
+    assert _last_row(output_dir).vol_delta == reset_to
+
+
+def test_continue_point_deterministic(tmp_path):
+    """Continuing the same run by the same budget reproduces the same state."""
+
+    def run(dirname):
+        output_dir = str(tmp_path / dirname / "7")
+        _finished_equilibration(output_dir, seed=7)
+        continue_point(output_dir, extra_steps=4 * 27, block_size=27)
+        return _last_row(output_dir)
+
+    a, b = run("a"), run("b")
+    assert a.total_energy == b.total_energy
+    assert a.vol == b.vol

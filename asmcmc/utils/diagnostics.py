@@ -1,25 +1,15 @@
-"""
-diagnostics.py — Read one run directory and render what it says about the run.
+"""Render what one run directory's db says about the run.
 
-``state_point.plot_point_results`` answers *has this converged* (energy and volume
-vs step). This module answers *what phase did it settle into, and was it sampled
-properly* — the question a validation run is actually asking. Four figures, each
-grouped around one question:
+Four figures, each answering one question:
 
-    structure.png    RDF g(r) + orientational correlation, tail-averaged
-    phase.png        nematic order S + density vs cycle
+    structure.png    tail-averaged RDF g(r) + orientational correlation: which phase?
+    phase.png        nematic order S + density vs cycle: when did it settle?
     acceptance.png   position / orientation / volume acceptance vs cycle
-    energy.png       total energy vs cycle
+    energy.png       energy per particle vs cycle: has it converged?
 
-Nothing here needs the sampler to record anything new: acceptance rates,
-``num_particles`` and ``vol`` are already block scalars, ``or_vec`` is already in
-``array_data``, and the RDF/OCF accumulators already exist in
-:mod:`asmcmc.utils.measurements`. This is assembly and plotting only.
-
-    from asmcmc.utils.diagnostics import render
-    render("results/validation/150.0_6.324209e-07/phase_check")
-
-The CLI wrapper is ``scripts/plot_run.py``.
+Output names are prefixed with the db stem (``equilibration_energy.png``,
+``simulation_energy.png``), so production figures never overwrite equilibration
+ones. The command-line wrapper is ``scripts/plot_run.py``.
 """
 
 import math

@@ -1,12 +1,16 @@
 """Run-directory diagnostics: the loader's reductions and the four figures."""
 
-import os, math
+import math
+import os
+import random
 
 import numpy as np
 import pytest
 
 from ase.db import connect
 
+from asmcmc.base.initialize import ColumnarLatticeInitializer
+from asmcmc.base.metropolis import MetropolisCalculator
 from asmcmc.utils.diagnostics import (
     PLOTS,
     TAIL_FRACTION,
@@ -16,8 +20,6 @@ from asmcmc.utils.diagnostics import (
 )
 from asmcmc.utils.measurements import RadialDistributionFunction, nematic_q_tensor
 
-from asmcmc.utils.npt_equilibration import _evaluate_point
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -25,18 +27,17 @@ from asmcmc.utils.npt_equilibration import _evaluate_point
 
 
 def _point(out_dir, num_steps=12 * 27):
-    """One equilibrated run dir, built the way the scan builds them."""
-    cfg = {
-        "n_particles": 27,
-        "density": 0.3,
-        "num_steps": num_steps,
-        "block_size": 27,
-        "buffer_size": 100,
-        "seed0": 100,
-        "out_dir": out_dir,
-    }
-    _, d = _evaluate_point(0, 300.0, 0.0, cfg)
-    return d
+    """One equilibrated 27-particle run dir, seeded so repeated builds match."""
+    random.seed(100)
+    np.random.seed(100)
+    metro = MetropolisCalculator(
+        temp=300.0,
+        pressure=0.0,
+        initializer=ColumnarLatticeInitializer(n_particles=27, density=0.3, seed=100),
+        output_dir=out_dir,
+    )
+    metro.equilibrate(num_steps=num_steps, block_size=27, progress=False)
+    return out_dir
 
 
 # ---------------------------------------------------------------------------
@@ -155,9 +156,9 @@ def test_render_db_stem_prefixes_output(tmp_path):
     d = _point(str(tmp_path / "scan"))
     render(d, which=["energy"])
     # produce a simulation.db alongside, then render that
-    from asmcmc.utils.npt_production import produce_point
-
-    produce_point(d, num_steps=4 * 27, block_size=27)
+    MetropolisCalculator.from_equilibration(d).calculate_trajectory(
+        num_steps=4 * 27, block_size=27, num_eq_steps=None, progress=False
+    )
     written = render(d, which=["energy"], db_name="simulation.db")
     assert os.path.basename(written["energy"]) == "simulation_energy.png"
     assert os.path.exists(os.path.join(d, "equilibration_energy.png"))
