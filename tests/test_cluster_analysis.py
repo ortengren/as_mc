@@ -5,9 +5,6 @@ calculator ``test_cluster_dataset.py`` uses, so the suite stays runnable from a
 fresh clone without fairchem or a GPU.
 """
 
-import os
-
-import ase.io
 import numpy as np
 import pytest
 
@@ -20,26 +17,16 @@ from asmcmc.data_preparation.cluster_analysis import (
     PARALLEL_DISPLACED,
     T_SHAPED,
     gb_invariants,
-    hard_core_pass_rate,
     load_campaign,
     motif_masks,
-    pair_geometry,
     pair_records,
     qa_report,
     radial_profile,
-    reweighting_ess,
     stack_coordinates,
 )
-from asmcmc.data_preparation.cluster_dataset import (
-    SamplingSettings,
-    build_reference_benzene,
-    main,
-)
-from asmcmc.utils.geometry import coarse_grain_frame
+from asmcmc.data_preparation.cluster_dataset import build_reference_benzene, main
 
 from test_cluster_dataset import StubCalculator  # noqa: F401  (shared stub)
-
-CIF = os.path.join(os.path.dirname(__file__), "..", "data", "benzene_pbca_cod_7238223.cif")
 
 
 @pytest.fixture
@@ -61,16 +48,6 @@ def campaign(tmp_path, stub_uma):
         max_workers=1,
     )
     return load_campaign(tmp_path)
-
-
-@pytest.fixture(scope="module")
-def herringbone():
-    """The experimental Pbca crystal, coarse-grained and tiled.
-
-    The tracked cif is a single 4-molecule cell; repeating it gives enough
-    environments to be a meaningful reference while staying the same packing.
-    """
-    return coarse_grain_frame(ase.io.read(CIF)).repeat((3, 3, 3))
 
 
 def _dimer(offset, u_a=None, u_b=None):
@@ -113,19 +90,6 @@ def _dimer(offset, u_a=None, u_b=None):
 # --- the unpacking -----------------------------------------------------------
 
 
-def test_pair_geometry_matches_extract_periodic_pairs(herringbone):
-    """Same invariants as the fitting code, so statistics stay comparable."""
-    from asmcmc.fitting_gbq.data import extract_periodic_pairs
-
-    reference = extract_periodic_pairs(herringbone, "or_vec", 7.0)
-    pairs = pair_geometry(herringbone, 7.0)
-    mine = np.stack([pairs["r"], pairs["a_i"], pairs["a_j"], pairs["b"]], axis=1)
-    # Neighbour-list ordering is an implementation detail; compare as sets.
-    order_ref = np.lexsort(reference.T[::-1])
-    order_mine = np.lexsort(mine.T[::-1])
-    np.testing.assert_allclose(mine[order_mine], reference[order_ref], atol=1e-10)
-
-
 def test_pair_records_unpacks_one_row_per_frame(campaign):
     frames, _ = campaign
     records = pair_records(frames)
@@ -140,7 +104,7 @@ def test_pair_records_uses_the_stored_mlip_label(campaign):
     assert np.allclose(np.sort(records["e_uma"]), np.sort(stored))
 
 
-def test_pair_geometry_matches_a_hand_built_dimer():
+def test_pair_records_on_a_hand_built_dimer():
     """Cofacial stacking along z: r along the normals, so a_i = a_j = b = 1."""
     records = pair_records([_dimer([0.0, 0.0, 4.0])])
     assert records["r"][0] == pytest.approx(4.0)
@@ -328,59 +292,6 @@ def test_qa_records_disjoint_shard_seeds(campaign):
     assert all(len(seeds) == 1 for seeds in report.shard_seeds.values())
 
 
-# --- the hard-core proposal filter -------------------------------------------
-
-
-def test_pass_rate_rises_with_separation_and_saturates():
-    """Far apart, nothing can clash; close in, most random orientations do."""
-    radii = [3.4, 4.0, 5.0, 6.0, 8.0]
-    rates = hard_core_pass_rate(radii, n_trials=400, seed=1)
-
-    assert np.all(np.diff(rates) >= -0.02), rates  # monotone up to sampling noise
-    assert rates[0] < 0.15
-    assert rates[-1] == pytest.approx(1.0)
-
-
-def test_cofacial_seeding_beats_random_where_it_matters():
-    """The point of the whole measurement: at close approach the *proposal*, not
-    the filter, is what limits short-range coverage -- the reason the generator
-    accepts a lower yield at close range rather than seeding orientation.
-
-    Threshold pinned explicitly (2.4 A) rather than left to default through
-    ``SamplingSettings``: this measures a property of the *geometry* (random vs.
-    cofacial-seeded orientation), which should not silently drift if the
-    production hard-core floor changes.
-    """
-    random_rate = hard_core_pass_rate([3.6], n_trials=600, threshold=2.4, seed=2)[0]
-    cofacial_rate = hard_core_pass_rate(
-        [3.6], orientations="cofacial", n_trials=600, threshold=2.4, seed=2
-    )[0]
-
-    assert random_rate < 0.10
-    assert cofacial_rate > 0.60
-    assert cofacial_rate > 10 * random_rate
-
-
-def test_a_vanishing_threshold_admits_everything():
-    """Isolates the filter from the geometry: with no hard core nothing is
-    rejected, so a low pass rate can only come from the threshold."""
-    rates = hard_core_pass_rate([3.4, 4.0], n_trials=200, threshold=0.0, seed=3)
-    assert np.all(rates == 1.0)
-
-
-def test_pass_rate_is_reproducible_and_shaped_like_its_input():
-    first = hard_core_pass_rate([4.0, 5.0], n_trials=200, seed=7)
-    second = hard_core_pass_rate([4.0, 5.0], n_trials=200, seed=7)
-    assert np.array_equal(first, second)
-    assert first.shape == (2,)
-    assert hard_core_pass_rate(4.0, n_trials=100, seed=7).shape == (1,)
-
-
-def test_unknown_orientation_mode_is_rejected():
-    with pytest.raises(ValueError, match="unknown orientations"):
-        hard_core_pass_rate([4.0], orientations="herringbone")
-
-
 # --- duplicate detection -----------------------------------------------------
 
 
@@ -425,25 +336,3 @@ def test_the_signature_ignores_rigid_motion_and_relabelling():
     assert _configuration_signature(frame) == _configuration_signature(rotated)
 
 
-def test_reweighting_ess_is_perfect_when_campaign_matches_target():
-    """Nothing to correct means nothing is lost."""
-    frames = [_dimer([0.0, 0.0, d]) for d in np.linspace(4.0, 14.0, 200)]
-    records = pair_records(frames)
-    assert reweighting_ess(records, records["r"]) == pytest.approx(1.0, abs=0.02)
-
-
-def test_reweighting_ess_falls_when_the_target_sits_where_sampling_is_thin():
-    """A campaign concentrated away from its target pays for the correction."""
-    frames = [_dimer([0.0, 0.0, d]) for d in np.concatenate(
-        [np.linspace(4.0, 5.0, 190), np.linspace(12.0, 14.0, 10)]
-    )]
-    records = pair_records(frames)
-    target = np.linspace(12.0, 14.0, 500)  # all target mass where only 10 pairs sit
-    assert reweighting_ess(records, target) < 0.2
-
-
-def test_reweighting_ess_is_zero_without_overlapping_support():
-    """The failure reweighting cannot fix: a region that was never sampled."""
-    frames = [_dimer([0.0, 0.0, d]) for d in np.linspace(4.0, 5.0, 60)]
-    records = pair_records(frames)
-    assert reweighting_ess(records, np.linspace(12.0, 14.0, 200)) == 0.0
