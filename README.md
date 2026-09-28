@@ -1,174 +1,173 @@
 # asmcmc
 
-**AniSOAP Markov Chain Monte Carlo** — Monte Carlo simulation of a system of
-benzenes, coarse-grained as ellipsoidal particles.
+**AniSOAP Markov-chain Monte Carlo.** Monte Carlo simulation of benzene, with each
+molecule coarse-grained to a rigid oblate ellipsoid. It is also an effort to
+improve the potential those ellipsoids interact through, using a machine-learned
+AniSOAP correction.
 
-## Overview
+## Where things stand
 
-This project serves as a real-world benchmark of AniSOAP, designed to compare
-its effectiveness with other approaches (especially analytic potentials, i.e.
-the Gay-Berne potential).
+- **The sampler is done and validated.** NPT/NVT Metropolis MC of rigid ellipsoids.
+  With Cacelli et al.'s (2004) Gay-Berne + quadrupole potential (GBQIII) it
+  reproduces their 100 K crystal quantitatively.
+- **That potential is physically wrong in known ways.** It melts at least 130 K too
+  low, its liquid is ~28% too dense, and it prefers the wrong crystal polymorph.
+- **Refitting GB+Q to DFT crystal energies fails the physics test.** The refit fits
+  the energies well but makes the stacked dimer repulsive. So the current work is a
+  **Δ-learning correction**: ridge regression on AniSOAP descriptors, trained on
+  dimers labelled by the UMA machine-learned potential. The best model so far
+  improves the dimer-well error by 21% (0.436 → 0.346 kcal/mol). It is not yet used
+  in MC.
 
-The bulk of the simulation logic lives in `asmcmc/base/metropolis.py`.  The
-`MetropolisCalculator` class contains methods for performing full simulation
-runs, including equilibration.  Simulations can be read and evaluated using
-tools from `asmcmc/utils/measurements.py`.  In particular, the `TrajectoryAnalyzer`
-class offers an efficient way to determine quantities of interest, such as heat
-capacity and orientational correlation.
+The reasoning and the numbers behind all of this are in
+[`docs/findings.md`](docs/findings.md). Read it before changing the physics.
 
-The codebase is designed with modularity in mind so that new measurements can
-be made (by defining subclasses of `Measurement`) or new energy calculation
-methods can be used.
+## Install
 
-## Installation
-
-Editable install into an environment that already has the scientific stack
-(conda or otherwise):
+The code runs in a conda/mamba environment with Python ≥ 3.11. It is tested with
+Python 3.12, NumPy 2.2, ASE 3.29 and SciPy 1.16. Install the package in editable
+mode:
 
 ```bash
-pip install -e . --no-deps   # --no-deps if conda manages your dependencies
+pip install -e . --no-deps    # into an environment that already has the dependencies
+pip install -e ".[dev]"       # or let pip install the core dependencies and pytest
 ```
 
-Core dependencies: ASE, NumPy (≥2), SciPy, pandas, `tqdm`, `matplotlib`.
-The AniSOAP feature-generation modules additionally need `anisoap`,
-`metatensor`, `scikit-matter`, `scikit-learn` (`pip install -e ".[anisoap]"`).
-Tests need `pytest`.
+`asmcmc.mc` needs only the core dependencies. Two optional pieces:
 
-## Usage
+- **AniSOAP** (`delta_learning` descriptors and model): install AniSOAP from a
+  clone of the lab's AniSOAP repository (it builds a Rust extension), then the
+  `anisoap` extra (`metatensor`, `scikit-learn`).
+- **UMA** (dataset labels): the `uma` extra installs `fairchem-core` (tested with
+  2.12). The UMA checkpoint is gated on Hugging Face, so run
+  `huggingface-cli login` once.
 
-Run the commands and snippets below from the repository root (output paths are
-relative to the working directory).
+## Test
 
-### Run a simulation
-
-```python
-from asmcmc.base.metropolis import MetropolisCalculator
-
-# NPT by default; pass npt_ensemble=False for fixed-volume NVT.
-# init_frame=None auto-generates a starting configuration.
-metro = MetropolisCalculator(temp=300, pressure=0.0, output_dir="results/simulations/demo")
-metro.calculate_trajectory(num_steps=200_000, num_eq_steps=100_000)
-# → results/simulations/demo/{equilibration,simulation}.db
+```bash
+pytest
 ```
 
-### Analyse a trajectory
+About 330 tests, ~1.5 minutes. They need neither a GPU nor fairchem (UMA is
+replaced by a stub), and everything they read is tracked. The AniSOAP tests are
+skipped if AniSOAP is not installed.
+
+## Quick start
+
+Units are eV, Å and K; pressure is in eV/Å³ (`asmcmc.units.ATM_TO_EV_PER_A3` is 1 atm).
 
 ```python
-from asmcmc.utils.measurements import TrajectoryAnalyzer, HeatCapacity, RadialDistributionFunction
+from asmcmc.mc.initialize import HerringboneLatticeInitializer
+from asmcmc.mc.measurements import NematicOrderParameter, TrajectoryAnalyzer
+from asmcmc.mc.metropolis import MetropolisSampler
+from asmcmc.units import ATM_TO_EV_PER_A3
+
+sampler = MetropolisSampler(
+    temp=150.0,
+    pressure=1.0 * ATM_TO_EV_PER_A3,
+    initializer=HerringboneLatticeInitializer(n_particles=128, seed=1),
+    nl_radius=6.8,
+    output_dir="results/simulations/demo",
+)
+sampler.calculate_trajectory(num_steps=20_000, num_eq_steps=20_000, max_or_delt=0.25)
+# -> results/simulations/demo/{equilibration.db, simulation.db, run_config.json}
 
 analyzer = TrajectoryAnalyzer("results/simulations/demo/simulation.db")
-analyzer.add_measurement("Cv", HeatCapacity(temperature=300, num_particles=125))
-analyzer.add_measurement("rdf", RadialDistributionFunction(r_max=20.0, num_bins=50))
-results = analyzer.run_analysis()
+analyzer.add_measurement("order", NematicOrderParameter())
+print(analyzer.run_analysis()["order"]["S"])
 ```
 
-Add your own observable by subclassing `Measurement` (implement `compute` and
-`finalize`).
-
-## Project structure
-
-| Path | Role |
-| ---- | ---- |
-| `asmcmc/` | The installable package — everything importable lives here |
-| `asmcmc/base/` | The sampler engine — self-contained, no imports out of `base/` |
-| `asmcmc/base/metropolis.py` | `MetropolisCalculator` — the Metropolis-Hastings sampler (NPT default, NVT optional) and full simulation runs |
-| `asmcmc/base/potentials.py` | Gay-Berne + quadrupole pair potentials: `Potential` ABC, `GBQPotential`, `DEFAULT_POTENTIAL`, `CACELLI_POTENTIAL` |
-| `asmcmc/base/trial_moves.py` | Trial moves: translation, quaternion rotation, isotropic and single-axis anisotropic volume scaling |
-| `asmcmc/base/initialize.py` | Starting configurations + `Initializer` classes: random, columnar, herringbone, or an existing frame |
-| `asmcmc/base/config.py` | `RunConfig` — the frozen, JSON-serialisable record of a run's static definition (`run_config.json`) |
-| `asmcmc/base/paths.py` | `data_path()` — resolves paths under `data/`, anchored on the package location |
-| `asmcmc/utils/` | Orchestration, analysis, and helpers supporting the engine |
-| `asmcmc/utils/measurements.py` | Observable framework: `Measurement` base, `TrajectoryAnalyzer`, and ready-made measurements (energy, enthalpy, heat capacity, RDF, orientational correlation, nematic order) |
-| `asmcmc/utils/equilibration.py` | Single-point NPT equilibration primitives: `equilibrate_point`, `continue_point`, `find_point_dirs`, `pressure_ramp` |
-| `asmcmc/utils/npt_equilibration.py` | Equilibrate a grid of (T, P) state points in parallel (`python -m asmcmc.utils.npt_equilibration`) |
-| `asmcmc/utils/npt_production.py` | Production trajectories on equilibrated points |
-| `asmcmc/utils/replica_stats.py` | Reduce a point's replicas to observables with between-replica error bars |
-| `asmcmc/utils/validation.py` | Physics validation benchmarks for candidate potentials (Cacelli dimer wells) |
-| `asmcmc/utils/geometry.py` | Geometry helpers turning atomistic frames into ellipsoids (no `anisoap`/`metatensor` dependency) |
-| `asmcmc/fitting_gbq/` | Fit the GB + quadrupole potential to reference energies (`python -m asmcmc.fitting_gbq.run`) |
-| `asmcmc/data_preparation/` | Dataset generation for potential fitting (model-agnostic; model-specific featurisation lives in its fit package) |
-| `asmcmc/data_preparation/cluster_dataset.py` | UMA-labelled benzene cluster dataset generation (`python -m asmcmc.data_preparation.cluster_dataset`) |
-| `asmcmc/fitting_anisoap/` | AniSOAP Delta-learning fit: descriptors, hyperparameter sweep, physics gate |
-| `tests/` | pytest suite |
-| `scripts/` | Run drivers and fit campaign shell scripts; `scripts/archive/` holds superseded ones |
-| `data/` | Input datasets (`data/xyz_files/` crystal structures; bulk files kept on disk, not in VCS) |
-| `notebooks/` | Exploratory analysis notebooks (not load-bearing) |
-| `results/` | Regenerable outputs (gitignored except the fit campaign): `results/simulations/` MC runs, `results/validation/` Cacelli validation runs, `results/fitting/` fit artifacts |
-
-Trajectories are stored as ASE `.db` files.
-
-## Testing
+Plot what a run did (structure, phase, acceptance, energy):
 
 ```bash
-pytest tests/
+python scripts/plot_run.py results/simulations/demo --db simulation.db
 ```
 
-Covers the potentials, trial moves, initialization, the measurement framework,
-an end-to-end integration run, and the NVT scan.
+A run directory holds `equilibration.db` and/or `simulation.db` (ASE databases,
+one row per recorded block) plus a write-once `run_config.json`.
+`MetropolisSampler.from_equilibration(run_dir)` rebuilds a sampler from them, and
+`continue_equilibration(run_dir, extra_steps)` extends a run in place.
 
-## Status
+## Layout
 
-This project is very much still a work-in progress.  The core logic
-seems to work well, and the test suite currently passes (at least on my
-machine!).  At present, only the GB + quadrupole potential is implemented, and
- *not* the AniSOAP ML potential.
+```text
+asmcmc/
+  paths.py, units.py     data_path(); physical constants and unit conversions
+  mc/                    the sampler, and analysis of its runs
+    metropolis.py          MetropolisSampler, continue_equilibration
+    potentials.py          GBQPotential, CACELLI_POTENTIAL, calc_total_energy
+    trial_moves.py         translation, rotation and volume moves
+    initialize.py          random, columnar and herringbone starting lattices
+    run_config.py          RunConfig (run_config.json)
+    measurements.py        observables: g(r), order parameters, heat capacity, ESS...
+    diagnostics.py         figures and xyz export for one run directory
+    coarse_graining.py     atomistic frames -> one ellipsoid per molecule
+  delta_learning/        the AniSOAP correction
+    dimer_benchmark.py     the physics gate every potential must pass
+    uma.py                 the UMA labeller
+    dataset.py             UMA-labelled dimer dataset generation
+    dataset_analysis.py    dataset QA and summaries
+    descriptors.py         AniSOAP descriptors
+    model.py               the ridge Δ-model; AniSOAPDeltaPotential
+    sweep.py               hyperparameter sweep
+  fitting_gbq/           GB+Q refit to DFT crystal energies (not used for MC)
+scripts/                 command-line drivers (below)
+tests/                   pytest suite, one file per module
+data/                    inputs; see data/README.md
+docs/                    findings.md, cacelli_protocol_diff.md
+notebooks/               analyses (most read local results/)
+results/                 run outputs: local and gitignored, except results/fitting/
+```
 
-Currently, I am working on ensuring that simulations using the GB potential
-give reasonable results.  Next, I will implement energy calculation via AniSOAP,
-after which the two methods can finally be compared.
+`delta_learning` and `fitting_gbq` build on `mc`; `mc` imports neither of them.
 
-## TODO: path to an AniSOAP potential (as of 2026-07-28)
+## Workflows
 
-**Motivating finding:** a potential can fit condensed-phase per-configuration
-energies almost perfectly and still get the *pair interaction* badly wrong. The
-GB+Q refit to the crystal dataset is an example: ~3 kcal/mol test RMSE on the
-crystals, yet repulsive at the 3.9 Å cofacial stacking distance and anti-correlated
-with the ab initio dimer wells (which is why the literature Cacelli parameters give
-far more realistic simulations).
+**A validation state point** (herringbone start, 1 atm, the protocol from
+`docs/findings.md` §2). There are five temperatures, each with a fixed seed and run
+directory under `results/validation/`:
 
-### Done so far
+```bash
+python scripts/run_herringbone.py --temp 150 equilibrate   # 1e6 steps from the crystal
+python scripts/run_herringbone.py --temp 150 resume        # 9.2e6 more
+python scripts/run_herringbone.py --temp 150               # 1.5e7 production steps, then measure
+```
 
-- [x] **Dimer-well validation harness.** `asmcmc/utils/validation.py` scores any
-  `Potential` against the Cacelli et al. (2004) ab initio benzene dimer set
-  (`data/new_data/3648_1_supplements/`) — well correlation/RMSE, per-family
-  well depths (cofacial / parallel-displaced / T-shaped), and the `stacking_bound`
-  check. `tests/test_validation.py` pins both reference points: Cacelli passes
-  (0.21 kcal/mol well RMSE), the condensed-phase refit fails.
-- [x] **Polymorph ordering, from static E(V)**
-  (`notebooks/polymorph_ordering.ipynb`) — MC is not failing to equilibrate: it
-  correctly finds Cacelli's global minimum, which is the wrong crystal. Cacelli
-  prefers slipped-parallel over herringbone by 1.28 kcal/mol (≈1.1 after relaxing
-  both), and that minimum sits at 95.8 Å³, nearly matching the MC production density
-  of 96.5.  Herringbone survives relaxation as a local minimum between ~105 and 116 Å³
-  but loses metastability below ~105 Å³, and MC operates below that limit.
+These are long runs (hours); check `plot_run.py` output before moving on.
 
-### Next
+**The Δ-learning pipeline:**
 
-- [ ] **Δ-learning correction.** `E = E_GBQ(Cacelli) + AniSOAP·w` (ridge on
-  AniSOAP descriptors, mean-referenced target). The physical baseline hard-codes
-  the repulsive core and bound π-stacking so the ML correction cannot invert
-  them; an unconstrained linear model on raw energies is ruled out by the
-  findings above.
-  *Check first, before any fitting:* do AniSOAP descriptors actually distinguish
-  herringbone from slipped-parallel, and do they respond to density? A
-  correction flat in volume shifts both basins equally and changes nothing.
-  *Accept when:* it passes the dimer benchmark, beats Cacelli's
-  0.126 eV/molecule on the bound subset, and puts relaxed herringbone below
-  slipped-parallel (≈1.1 kcal/mol, plus enough curvature to restore
-  metastability below 105 Å³).
-  *Blocker:* the GFRE-tuned hyperparameters (`optimized_gfres.npz`) are not in
-  the `data/anisoap_data` drop — obtain from the authors/SI or re-run
-  `hyperparameter_tuning/gfre.py`.
-- [ ] **MC integration.** Generalise the `Potential` seam for a
-  local-but-not-pairwise energy (incremental single-particle updates within the
-  descriptor cutoff; full re-evaluation on volume moves). Measure the per-move
-  AniSOAP descriptor cost early — it is the main feasibility risk (MC needs
-  energies only, no forces). Final test: rerun the herringbone MC protocol
-  (100 K / 1 atm, N = 400) and check V/molecule is pulled from Cacelli's ~96 Å³
-  toward experiment's ~116 Å³.
-- [ ] **New reference data — only if the above stalls.** Active learning: new
-  PBE-D3 calculations (QuantumEspresso settings from
-  `data/anisoap_data/benzenes/README.md`) on MC-visited and close-contact
-  configurations, then retrain. Worth pricing first: PBE-D3's own
-  polymorph-ranking error (~0.24 kcal/mol) is small against 1.1 but should be
-  confirmed against benchmark data (X23) before committing compute.
+```bash
+python -m asmcmc.delta_learning.dataset --n-configs 5000 --out-dir results/cluster_new   # UMA labels
+python -m asmcmc.delta_learning.sweep --campaign results/cluster_new --out-dir results/anisoap_fit_new
+```
+
+`dataset` needs fairchem and runs for hours; keep `--max-workers` at 4 on a 14 GB
+machine. Then use `dataset_analysis.qa_report` on the new campaign. The sweep writes
+`comparison.csv`: rank points by `improves_on_baseline` and `well_rmse_kcal`, and
+use `--regate` to re-score a finished sweep against a new reference without
+refitting.
+
+**The GB+Q refit:** `python -m asmcmc.fitting_gbq.run --help`. The campaign in
+`results/fitting/` was made with `scripts/run_fits.sh` and
+`scripts/run_fit_seeds.sh`; `python -m asmcmc.fitting_gbq.summary` redraws its
+figures.
+
+**Regenerating the UMA dimer reference:** `python scripts/uma_cacelli_dimers.py`,
+which writes `data/uma_dimers/`. It takes a few minutes on CPU; first read the
+Euler-convention issue in `docs/findings.md`.
+
+Other scripts: `export_xyz.py` (a run's db as extended XYZ, for OVITO) and
+`build_herringbone_motif.py` (coarse-grain a Pbca cif into the starting motif).
+
+## Branches
+
+- `main`: this layout.
+- `archive/pre-cleanup`: the tree before the September 2026 cleanup, including
+  the (T, P) grid scan and replica-statistics tools, historical notebooks and
+  archived scripts.
+- `pre-revert-snapshot`: the July–August 2026 work reverted on 2026-08-11 (a
+  unified driver, the N = 500 fixed-width protocol, the `"ZXY"` Euler analysis).
+- `signac-flow-htc-impl`: the signac/CHTC harness for the planned (T, P) ×
+  potential sweep. It predates this layout; see the known issues in
+  `docs/findings.md`.

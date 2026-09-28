@@ -8,11 +8,19 @@ three-bead frames.
 """
 
 import csv
+import importlib.util
 import json
 
 import numpy as np
 import pytest
 from ase.io import write
+
+# Checked with find_spec rather than importorskip: importing AniSOAP or
+# scikit-learn here, before asmcmc sets single-threaded BLAS, would make
+# in-process fits run multi-threaded and differ in the last digits from the
+# sweep's worker processes.
+if not all(importlib.util.find_spec(name) for name in ("anisoap", "sklearn")):
+    pytest.skip("AniSOAP or scikit-learn is not installed", allow_module_level=True)
 
 from asmcmc.delta_learning.descriptors import (
     Hypers,
