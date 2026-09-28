@@ -1,10 +1,9 @@
-"""Geometry helpers for turning atomistic molecular frames into ellipsoids.
+"""Coarse-graining: atomistic frames to one ellipsoid (centre + disc normal) per molecule.
 
-Kept free of ``anisoap``/``metatensor`` (unlike
-:mod:`asmcmc.delta_learning.descriptors`, which pulls in the optional ``[anisoap]``
-extra) so the coarse-graining can be imported and tested from the base install.
+Needs no optional dependencies, so it can be imported and tested from the base
+install.
 
-**Why this exists: molecules that straddle a periodic boundary.** ASE's
+**Molecules that straddle a periodic boundary.** ASE's
 connectivity is PBC-aware, so identifying *which* atoms form a molecule works
 on any frame. Their *positions*, however, come back wrapped into the cell, and
 a molecule split across a face then has atoms at both edges — its naive

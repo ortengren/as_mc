@@ -154,14 +154,9 @@ def test_benchmark_discriminates(cacelli_bench, refit_bench):
 
 
 def test_default_potential_clears_the_gate(data):
-    """The regression that would have caught the DEFAULT_POTENTIAL footgun.
-
-    ``DEFAULT_POTENTIAL`` -- what every ``MetropolisSampler`` gets when no
-    ``potential=`` is passed -- used to be ``data/my_fitted_gbq_params.json``,
-    a fit with exactly ``CONDENSED_REFIT``'s failure mode above (well_rmse 4.10
-    kcal/mol, cofacial stack +2.61 vs UMA's -2.02). A candidate must clear this
-    gate, per the ``dimer_benchmark`` module docstring, before it may be the
-    default; this pins that the current default actually does.
+    """``DEFAULT_POTENTIAL``, which every ``MetropolisSampler`` gets when no
+    ``potential=`` is passed, must itself clear the gate: a default with
+    ``CONDENSED_REFIT``'s failure mode would silently corrupt every run.
     """
     bench = dimer_benchmark(DEFAULT_POTENTIAL, data)
     assert bench.stacking_bound

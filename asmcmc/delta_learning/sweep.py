@@ -26,14 +26,10 @@ silently changes what is being measured:
   re-reads the file on every call otherwise.
 
 **The physics probe is recorded, not enforced.** Every point is scored against
-the reference dimers (UMA by default) and its ``improves_on_baseline`` verdict
-is written next to its RMSE. Nothing is filtered on it here: the GB+Q refit
-postmortem is precisely that a model can post good fit parity while being
-repulsive at the cofacial stack, so the numbers belong side by side where
-ranking happens, not collapsed into a pass/fail that hides which points were
-sound. ``improves_on_baseline``, not ``stacking_bound``, is the verdict that
-means something -- the latter passed 64/64 points of a sweep in which none
-improved on doing nothing.
+the reference dimers (UMA by default) and its ``improves_on_baseline`` verdict is
+written next to its RMSE, so ranking can weigh both: a good RMSE can hide a model
+that damages the wells. Rank on ``improves_on_baseline`` and the well errors, not
+on ``stacking_bound``, which only checks that the cofacial stack is bound at all.
 
 A finished sweep is re-scored against a different reference with ``--regate``,
 which recomputes each point's gate from its saved ``model.npz``. The fit is
@@ -91,11 +87,10 @@ from asmcmc.delta_learning.dimer_benchmark import (
 DEFAULT_CAMPAIGN = "results/cluster_train"
 DEFAULT_OUT = "results/anisoap_fit"
 
-# The representation grid. The angular/radial corners span exactly the 64-to-490
-# feature range the fit's docstring quotes. The cutoffs bracket what matters
-# physically: 6.8 A is the sampler's own neighbour-list radius, and the campaign
-# samples centres out to 15 A, so this asks whether the correction needs to see
-# past the first shell.
+# The representation grid. The angular/radial corners span the 64-to-490 feature
+# range the model docstring quotes. The cutoffs run from the first coordination
+# shell (the herringbone runs use a 6.8 A neighbour list) out to 12 A, asking
+# whether the correction needs to see past it.
 DEFAULT_ANGULAR = (3, 5, 7, 9)
 DEFAULT_RADIAL = (3, 4, 5, 6)
 DEFAULT_CUTOFF = (6.0, 7.5, 9.0, 12.0)
@@ -223,9 +218,8 @@ def load_model(point_dir):
 def _row_from_metrics(record):
     """The ``comparison.csv`` row for one point, from its metrics payload.
 
-    Reads ``timing`` tolerantly: a ``metrics.json`` written before the per-stage
-    timings existed leaves those cells blank rather than raising a ``KeyError``
-    that would sink the whole comparison write.
+    A ``metrics.json`` without ``timing`` or ``gate`` entries leaves those cells
+    blank rather than failing the whole comparison.
     """
     hypers, test, gate = record["hypers"], record["test"], record.get("gate") or {}
     timing = record.get("timing") or {}
@@ -241,8 +235,7 @@ def _row_from_metrics(record):
         "test_well_rmse": test["well_rmse"],
         "test_r2": test["r2"],
         "n_zero_test": record["n_zero_test"],
-        # Blank on a gate written before the reference was recorded, which is
-        # exactly the signal that the row predates the UMA switch.
+        # Blank when the stored gate does not say which reference it used.
         "reference": gate.get("reference", ""),
         "improves_on_baseline": gate.get("improves_on_baseline", ""),
         "well_rmse_gain_kcal": gate.get("well_rmse_gain_kcal", ""),
@@ -265,7 +258,7 @@ def fit_and_score_point(hypers_dict, cfg):
 
     Idempotent: a point whose ``metrics.json`` already exists is loaded and
     returned rather than refitted, so an interrupted sweep resumes by
-    re-running -- the same finished-marker discipline the (T, P) grid uses.
+    re-running.
     A skipped point therefore carries the timing of the computation that
     originally produced it, not of the resume: ``timing`` describes the fit,
     never the invocation that read it back.

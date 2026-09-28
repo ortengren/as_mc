@@ -252,9 +252,9 @@ def run_fit(
         # initializer and map the context-bound _objective_global (takes only
         # trial_theta), so the ~25 MB dataset is pickled once per worker, not
         # once per eval.  The main process also needs the context populated because
-        # polish runs its final L-BFGS-B step here, not through the pool. spawn
-        # matches the codebase convention (nvt_scan) and avoids forking a process
-        # safely.  Switching to fork could provide a speedup.
+        # polish runs its final L-BFGS-B step here, not through the pool. spawn,
+        # as in the package's other process pools, avoids forking a process that
+        # may already hold BLAS threads; fork could be faster.
         _init_worker(data, weights, idx)
         max_workers = None if workers < 0 else workers
         with ProcessPoolExecutor(

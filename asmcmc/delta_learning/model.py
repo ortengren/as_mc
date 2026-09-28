@@ -1,10 +1,10 @@
-"""The Delta-learning model: ridge on AniSOAP descriptors, and its physics gate.
+"""The Delta-learning model: ridge regression on AniSOAP descriptors.
 
-Fits ``Delta = E_UMA - E_GBQ`` per cluster. Three choices here are physics, not
+Fits ``Delta = E_UMA - E_GBQ`` per frame. Three choices here are physics, not
 statistics, and each is pinned by a test:
 
 **No intercept, and no feature centring.** A frame with nothing inside the
-cutoff has an all-zero descriptor (see :func:`data.descriptors`), and the model
+cutoff has an all-zero descriptor (see :func:`descriptors.descriptors`), and the model
 must return exactly zero Delta there -- a truncated correction that returns a
 constant at infinite separation is wrong. Centring the features would destroy
 that (a zero descriptor would map to a nonzero feature vector), so scaling is a
@@ -12,7 +12,7 @@ single scalar divide. This is not cosmetic: in deployment the per-centre
 energies are summed over N=400 particles, so a constant per centre becomes a
 large spurious extensive shift in the total energy.
 
-**Summed, not averaged, descriptors.** Set in :func:`data.descriptors`; a linear
+**Summed, not averaged, descriptors.** Set in :func:`descriptors.descriptors`; a linear
 model on a sum of per-centre rows *is* a sum of per-centre energies.
 
 **Alpha chosen per hyperparameter point.** Feature count runs 64 to 490 across
@@ -225,12 +225,10 @@ def fit_delta(
 class AniSOAPDeltaPotential:
     """A fitted correction wearing the ``Potential`` pair interface.
 
-    Exists so a candidate can be scored by the **existing**
-    ``asmcmc.delta_learning.dimer_benchmark.dimer_benchmark`` without that module learning
-    anything about AniSOAP: it only ever calls ``pair_energy`` and reads
-    ``name``. Per the GB+Q refit postmortem, fit parity is never sufficient --
-    a correction that is repulsive at the cofacial stack is rejected however good
-    its RMSE.
+    Exists so a candidate can be scored by
+    :func:`~asmcmc.delta_learning.dimer_benchmark.dimer_benchmark`, which only
+    calls ``pair_energy`` and reads ``name``. A good fit RMSE is not enough on
+    its own: a correction must also improve the dimer wells.
 
     Building a two-bead frame from a pair of disc *normals* means inventing the
     azimuth about each normal, which is exactly the deployment situation and is

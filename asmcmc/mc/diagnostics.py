@@ -32,27 +32,16 @@ from asmcmc.mc.measurements import (
 )
 from asmcmc.mc.metropolis import TARGET_ACC_RATE
 
-# Window of recorded frames averaged into the RDF/OCF. A single frame's g(r) is
-# too noisy at N~500 to read a phase off, so a tail is averaged rather than one
-# frame; the window is the last TAIL_FRACTION of the run so the curves still
-# describe where it *ended up*, not its whole history.
-#
-# TAIL_MAX_FRAMES caps the cost. RDF and OCF each build a full mic distance matrix
-# per frame — measured at ~200 ms/frame for N=400 — so a literal 10% tail of a
-# 25,500-frame equilibration would be 2,550 frames and over eight minutes. Frames
-# are instead sampled *evenly across* the window: same tail semantics, bounded
-# cost, and the samples are less correlated than consecutive blocks would be.
+# RDF and OCF are averaged over the last TAIL_FRACTION of the run, so the curves
+# describe where it ended up. Each frame costs a full distance matrix (~0.2 s at
+# N = 400), so at most TAIL_MAX_FRAMES frames, spread evenly over the tail, are used.
 TAIL_FRACTION = 0.1
 TAIL_MAX_FRAMES = 40
 
 R_MAX = 12  # stays below half the (NPT-fluctuating) box; RDF/OCF skip wider bins
 NUM_BINS = 120
 
-# Validated 3-colour categorical palette (dataviz reference theme, slots 1-3),
-# assigned to move types in fixed order and never cycled. Checked against the
-# light chart surface: lightness band, chroma floor, CVD separation (worst
-# adjacent dE 9.2 deutan), normal-vision floor (27.6). The aqua's contrast warning
-# is discharged by the legend, which is mandatory for a 3-series chart anyway.
+# One colour per move type, from a colour-blind-safe categorical palette.
 SERIES = {"pos": "#2a78d6", "or": "#eb6834", "vol": "#1baf7a"}
 INK = "#0b0b0b"
 MUTED = "#52514e"

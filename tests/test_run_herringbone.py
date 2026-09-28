@@ -1,4 +1,4 @@
-"""scripts/run_herringbone.py reproduces the per-temperature scripts it replaced."""
+"""scripts/run_herringbone.py reproduces the protocol of the five validation runs."""
 
 import importlib.util
 import json
@@ -21,8 +21,8 @@ def driver():
     return module
 
 
-def test_state_points_match_the_replaced_scripts(driver):
-    """(T, seed, run dir) as in the old single_state_run_hb_1atm*.py scripts."""
+def test_state_points_match_the_validation_runs(driver):
+    """(T, seed, run dir) of the five validation runs in results/validation."""
     expected = {
         100.0: (45, "100.0_6.324209e-07/herringbone_jittered_2"),
         150.0: (313, "150.0_6.324209e-07/herringbone_jittered_0"),
@@ -37,7 +37,7 @@ def test_state_points_match_the_replaced_scripts(driver):
 
 
 def test_sampler_matches_the_recorded_protocol(driver, tmp_path, monkeypatch):
-    """The static settings the old scripts wrote into each run_config.json."""
+    """The static settings recorded in those runs' run_config.json files."""
     monkeypatch.setattr(driver, "run_dir", lambda temp: tmp_path / "run")
     cfg = RunConfig.from_sampler(driver.build_sampler(150.0))
 

@@ -1,3 +1,9 @@
+"""Gay-Berne + quadrupole pair potentials for uniaxial particles, and a frame's total energy.
+
+Functions take unit symmetry axes ``uhat1``/``uhat2`` and separation vectors ``r``
+(A), shaped ``(..., 3)`` and vectorised over pairs, and return energies in eV.
+"""
+
 import json
 import numpy as np
 from abc import ABC, abstractmethod
@@ -10,6 +16,7 @@ from asmcmc.paths import data_path
 
 
 def gb_shape_function(uhat1, uhat2, rhat, kappa):
+    """sigma / sigma0: the orientation-dependent contact distance, for aspect ratio ``kappa``."""
     chi = (kappa**2 - 1) / (kappa**2 + 1)
     term1 = (np.vecdot(uhat1, rhat) + np.vecdot(uhat2, rhat)) ** 2 / (
         1 + chi * np.vecdot(uhat1, uhat2)
@@ -22,11 +29,13 @@ def gb_shape_function(uhat1, uhat2, rhat, kappa):
 
 
 def gb_axial_energy(uhat1, uhat2, kappa):
+    """Well-depth factor set by the relative orientation of the two axes alone."""
     chi = (kappa**2 - 1) / (kappa**2 + 1)
     return 1 / np.sqrt(1 - (chi * np.vecdot(uhat1, uhat2)) ** 2)
 
 
 def gb_directional_energy(uhat1, uhat2, rhat, kappa_prime, mu):
+    """Well-depth factor that depends on the separation direction ``rhat``."""
     chi_prime = (kappa_prime ** (1 / mu) - 1) / (kappa_prime ** (1 / mu) + 1)
     term1 = (np.vecdot(uhat1, rhat) + np.vecdot(uhat2, rhat)) ** 2 / (
         1 + chi_prime * np.vecdot(uhat1, uhat2)
@@ -38,12 +47,14 @@ def gb_directional_energy(uhat1, uhat2, rhat, kappa_prime, mu):
 
 
 def gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu):
+    """The well depth: ``eps0 * gb_axial_energy**nu * gb_directional_energy**mu``."""
     eps1 = gb_axial_energy(uhat1, uhat2, kappa)
     eps2 = gb_directional_energy(uhat1, uhat2, rhat, kappa_prime, mu)
     return eps0 * eps1**nu * eps2**mu
 
 
 def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu, xi):
+    """Gay-Berne pair energy; ``xi`` rescales the range of the shifted 12-6 form."""
     rmag = np.expand_dims(la.norm(r, axis=-1), axis=-1)
     rhat = r / rmag
     eps = gb_energy_function(uhat1, uhat2, rhat, eps0, kappa, kappa_prime, mu, nu)
@@ -53,6 +64,7 @@ def gb(uhat1, uhat2, r, sigma0, eps0, kappa, kappa_prime, mu, nu, xi):
 
 
 def quadrupole(uhat1, uhat2, r, Q):
+    """Energy of two point quadrupoles along the particle axes; ``Q`` enters only as Q**2."""
     rmag = np.expand_dims(la.norm(r, axis=-1), axis=-1)
     rhat = r / rmag
     a1 = np.vecdot(uhat1, rhat)
@@ -79,14 +91,11 @@ def calc_total_energy(frame, nl_cutoff, potential=None):
     if potential is None:
         potential = DEFAULT_POTENTIAL
 
-    # Every interacting pair (i, j) and its shift vector. neighbor_list emits
-    # each pair in BOTH directions, so the sum below is halved rather than
-    # filtered with i < j: that filter also drops the i == j self-image pairs
-    # a molecule has with its own periodic copies, which are real interactions
-    # whenever a lattice vector is shorter than the cutoff. (It made the energy
-    # of a one-molecule cell exactly zero.) Halving is the same convention as
-    # fitting_gbq.data.extract_periodic_pairs / fit.predict_per_mol, and is
-    # identical to the old result for boxes larger than the cutoff.
+    # Every interacting pair (i, j) with its periodic shift. neighbor_list lists
+    # each pair in both directions, so the sum is halved. Filtering on i < j
+    # instead would also drop the pairs a molecule forms with its own periodic
+    # images, which are real interactions whenever a lattice vector is shorter
+    # than the cutoff. fitting_gbq uses the same convention.
     i, j, s = neighbor_list("ijS", frame, nl_cutoff)
 
     # calculate displacements
@@ -102,15 +111,15 @@ def calc_total_energy(frame, nl_cutoff, potential=None):
     return 0.5 * np.sum(potential.pair_energy(uhat1, uhat2, displacements))
 
 
-# TODO: Class structure may need to be updated for AniSOAP implementation.  Currently
-# handles only pairwise potentials.  This change would also likely require changes to
-# MetropolisSampler.
 class Potential(ABC):
-    """Interface the Metropolis sampler depends on: a named, pairwise energy.
+    """A named pair potential: the interface the sampler depends on.
 
     Concrete potentials carry their own parameters and implement
-    :meth:`pair_energy`. The ``name`` (provenance, e.g. which fit) is stamped
-    into simulation outputs so every run records which potential it used.
+    :meth:`pair_energy`; ``name`` is stamped into every run's outputs as
+    provenance. Only pair potentials are supported, because
+    ``MetropolisSampler.particle_energy`` sums ``pair_energy`` over neighbours. A
+    many-body model (e.g. a full AniSOAP potential) would need a per-particle
+    energy hook here and in the sampler.
     """
 
     name: str
@@ -141,15 +150,13 @@ class GBQPotential(Potential):
 
     @classmethod
     def from_json(cls, path, name=None):
-        """Build from a fit ``params.json`` (the ``{value, unit}`` schema written
-        by ``asmcmc.fitting_gbq``). ``name`` defaults to the path tail below the
-        ``fitting/`` directory, e.g. ``multiseed/uniform/seed_0/uniform``.
+        """Build from a ``params.json`` in the ``{name: {value, unit}}`` schema that
+        ``asmcmc.fitting_gbq`` writes.
 
-        Outside a ``fitting/`` tree the name comes from the **file stem**, not
-        the parent directory: the tracked params files all sit in ``data/``, so
-        a directory-based fallback named every one of them ``"data"`` -- making
-        the name useless exactly where it matters most, as provenance stamped
-        into run configs, dataset frames and benchmark output."""
+        ``name`` defaults to the path below a ``fitting/`` directory (e.g.
+        ``multiseed/uniform/seed_0/uniform``), or else to the file stem
+        (``lit_gbq_params``).
+        """
         path = Path(path)
         data = json.loads(path.read_text())
         if name is None:

@@ -1,3 +1,17 @@
+"""The GB+Q fit's dataset: DFT crystal frames reduced to pair invariants.
+
+Targets are absolute per-molecule DFT energies (``energy_pa * atoms_per_mol``).
+The intramolecular energy is the same in every frame (rigid benzene), so it enters
+the model as one fitted constant, E_intra, added once per molecule by
+``fit.predict_per_mol`` rather than per pair. :func:`extract_periodic_pairs` lists
+every neighbour pair in both directions (periodic self-images included), so a
+molecule's lattice energy is half the summed pair energy.
+
+The ``*_from_dots`` functions are the Gay-Berne + quadrupole terms of
+``asmcmc.mc.potentials`` rewritten in the pair invariants ``(r, a_i, a_j, b_ij)``,
+so the fit can precompute the geometry once.
+"""
+
 import os
 from dataclasses import dataclass
 from functools import cached_property
@@ -5,15 +19,6 @@ from functools import cached_property
 import ase.io
 from ase.neighborlist import neighbor_list
 import numpy as np
-
-# Targets are the ABSOLUTE per-molecule DFT energies (energy_pa * atoms_per_mol).
-# The intramolecular energy is frame-independent (rigid benzene), so it enters
-# the model as a single fitted constant E_intra, added once per molecule at the
-# frame level (fit.predict_per_mol) -- NOT inside the per-pair gbq_from_dots() below.
-#
-# extract_periodic_pairs returns every neighbour pair in BOTH directions (and
-# each periodic self-image once per direction), so a molecule's lattice energy
-# is HALF the summed pair energy; predict_per_mol applies that 1/2.
 
 
 def extract_periodic_pairs(frame, orientation_key, cutoff):
@@ -43,8 +48,8 @@ def extract_periodic_pairs(frame, orientation_key, cutoff):
 # The optional sum_sq/diff_sq/b_sq args are the geometry-only squares
 # (a_i+a_j)^2, (a_i-a_j)^2, b_ij^2. They depend only on the pair geometry, not
 # on any fitted parameter, so the fit precomputes them once (FitData.gb_geom)
-# and threads them through to skip rebuilding them on every evaluation. Default
-# None recomputes them, keeping every caller (e.g. gbq) backward-compatible.
+# and threads them through to skip rebuilding them on every evaluation; None
+# recomputes them.
 def gb_shape_function_from_dots(a_i, a_j, b_ij, sigma0, kappa, sum_sq=None, diff_sq=None):
     chi = (kappa**2 - 1) / (kappa**2 + 1)
     if sum_sq is None:

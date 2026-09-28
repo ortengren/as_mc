@@ -1,4 +1,4 @@
-"""Cluster campaign -> ellipsoid frames -> AniSOAP descriptors, aligned to targets.
+"""Dimer dataset -> ellipsoid frames -> AniSOAP descriptors, aligned to the fit targets.
 
 Three jobs, in the order the pipeline uses them.
 
@@ -21,6 +21,12 @@ and ``c_diameter[1..3]``. The quaternion comes from the principal-axis frame via
 :func:`descriptors` is where the one genuinely dangerous property of the AniSOAP
 API is handled -- see :func:`descriptor_rows`.
 
+**Uniaxial ellipsoids.** Both in-plane semiaxes are equal
+(``Hypers.semiaxis_ab``), so rotating a particle about its disc normal changes no
+descriptor. That is what lets an MC frame, which stores only ``or_vec``, be
+featurised with an arbitrary azimuth (:func:`quaternions_from_normals`); a test
+pins the invariance.
+
 This module is pure computation and has no output directories or result files. All
 persistence lives in :mod:`asmcmc.delta_learning.sweep`, so swapping the sweep's
 bookkeeping (e.g. onto signac) touches that module and nothing here.
@@ -38,8 +44,8 @@ from scipy.spatial.transform import Rotation
 
 from asmcmc.delta_learning.dataset import dataset_frames
 
-# The frames are isolated clusters (pbc=False), so we set the cell far larger than
-# the campaign's 15 Å max centre separation, so it cannot interact with anything.
+# Frames are isolated dimers (pbc=False); the cell only has to be far larger than
+# any dimer.
 NONPERIODIC_CELL = 100.0
 
 # Sample-dimension names under which AniSOAP has shipped the structure index.
@@ -124,14 +130,14 @@ class Hypers:
 class TrainingSet:
     """A campaign as flat arrays: one row per molecule, one entry per frame.
 
-    CSR layout (i.e. molecule ``m`` of frame ``f`` is row ``offsets[f] + m``) so
-    the ragged dimer/trimer mix stays a plain 2-D float array that an ``.npz``
-    round-trips exactly.
+    CSR layout (molecule ``m`` of frame ``f`` is row ``offsets[f] + m``), so
+    frames of any size stay plain 2-D float arrays that an ``.npz`` round-trips
+    exactly.
 
-    ``delta`` is the fit target in eV (``E_UMA - E_GBQ``, whole cluster, so the
-    three-body term is included). ``min_pair_r`` is the smallest centre-centre
-    separation in the frame: it decides both which frames a given cutoff can see
-    at all and which count as "well region" when scoring.
+    ``delta`` is the per-frame fit target in eV (``E_UMA - E_GBQ``). ``min_pair_r``
+    is the smallest centre-centre separation in the frame: it decides both which
+    frames a given cutoff can see at all and which count as "well region" when
+    scoring.
     """
 
     com: np.ndarray

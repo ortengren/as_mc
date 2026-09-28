@@ -1,4 +1,4 @@
-"""Unpacking, QA, and reduction over a cluster campaign.
+"""Unpacking, QA, and reduction over a dimer dataset.
 
 No MLIP: campaigns are driven through the generator with the same stub
 calculator the dataset tests use (see ``conftest.py``), so the suite stays runnable from a
@@ -170,21 +170,16 @@ def test_motifs_separate_the_canonical_contacts():
 
 
 def test_the_cacelli_minima_classify_as_their_own_motifs():
-    """The regression this cut exists for.
-
-    An earlier version cut parallel-displaced as ``a_hi < 0.6``. The real PD
-    minimum has stacking height 3.5, slip 1.6 A -- a_hi = 0.909 -- so it was
-    silently classified as *cofacial* and the PD bucket collected far-slipped
-    pairs instead, which inverted the conclusion about which motif was
-    undersampled.
-    """
+    """The Cacelli parallel-displaced minimum (height 3.5 A, slip 1.6 A) has
+    a_hi = 0.91, close to a cofacial stack's 1.0, so only a cut on slip separates
+    the two."""
     pd = pair_records([_dimer([1.6, 0.0, 3.5])])
     masks = motif_masks(pd)
     assert masks[PARALLEL_DISPLACED][0]
     assert not masks[COFACIAL][0]
 
     a_hi = 3.5 / np.hypot(3.5, 1.6)
-    assert a_hi > 0.6, "the old a_hi<0.6 cut could never have selected this"
+    assert a_hi > 0.6, "an a_hi cut would call this cofacial"
 
     # The real cofacial minimum (r=3.90, a_hi=1.0) still classifies as cofacial.
     assert motif_masks(pair_records([_dimer([0.0, 0.0, 3.90])]))[COFACIAL][0]
@@ -228,7 +223,7 @@ def test_qa_passes_on_a_clean_campaign(campaign):
 
     assert report.ok, report.problems
     assert report.n_frames == len(frames)
-    assert report.n_pairs == len(pair_records(frames)["r"])
+    assert report.n_dimers == len(pair_records(frames)["r"])
     assert report.unique_ids
 
 
@@ -297,14 +292,9 @@ def test_a_genuine_duplicate_is_caught(campaign):
 
 
 def test_matching_centre_distance_alone_is_not_a_duplicate():
-    """The regression this fingerprint exists for.
-
-    A distance-only signature is a *single number* for a dimer, so two unrelated
-    configurations collide at 1e-4 A with high probability once sampling
-    concentrates separations into a narrow band -- and the first motif campaign
-    duly reported a phantom duplicate. Same separation, different orientations,
-    is a different configuration.
-    """
+    """For a dimer a distance-only signature is one number, so unrelated
+    configurations in a narrow radial band would collide on it. Same separation,
+    different orientations, is a different configuration."""
     same_distance = 4.0
     a = _dimer([0.0, 0.0, same_distance])
     b = _dimer([0.0, 0.0, same_distance], u_b=[1.0, 0.0, 0.0])

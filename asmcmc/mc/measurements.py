@@ -1,3 +1,6 @@
+"""Observables of a recorded run: one ``Measurement`` per quantity, driven by
+``TrajectoryAnalyzer`` over a ``.db`` file."""
+
 from ase.db import connect
 import numpy as np
 from abc import ABC, abstractmethod
@@ -20,7 +23,7 @@ def nematic_q_tensor(or_vecs):
 
 
 class Measurement(ABC):
-    """Base class for all measurements."""
+    """One observable: ``compute`` sees every recorded frame, ``finalize`` returns the result."""
 
     def __init__(self):
         self.results = []
@@ -103,6 +106,8 @@ class AverageEnthalpy(AverageEnergy):
 
 
 class RadialDistributionFunction(Measurement):
+    """Radial distribution function g(r); ``finalize`` returns ``{"r", "g_r"}``."""
+
     def __init__(self, r_max, num_bins):
         super().__init__()
         self.r_max = r_max
@@ -158,6 +163,9 @@ class RadialDistributionFunction(Measurement):
 
 
 class OrientationalCorrelationFunction(Measurement):
+    """Mean P2(u_i . u_j) over particle pairs vs separation; ``finalize`` returns
+    ``{"r", "s2_r"}``."""
+
     def __init__(self, r_max, num_bins):
         super().__init__()
         self.r_max = r_max
@@ -331,7 +339,7 @@ def vibrational_heat_capacity(temperature, fundamentals=BENZENE_FUNDAMENTALS):
     volume dependence.
 
     ``temperature`` may be a scalar or an array (the result matches its shape).
-    Multiply by ``EV_PER_K_TO_J_PER_MOL_K`` to compare against calorimetry.
+    Multiply by ``asmcmc.units.EV_PER_K_TO_J_PER_MOL_K`` to compare against calorimetry.
     """
     temp = np.asarray(temperature, dtype=float)
     nu = np.array([f[0] for f in fundamentals], dtype=float)
@@ -486,6 +494,8 @@ class EffectiveSampleSize(Measurement):
 
 
 class TrajectoryAnalyzer:
+    """Reads a run's db once, feeding every frame to each added ``Measurement``."""
+
     def __init__(self, db_path):
         self.db_path = db_path
         self.measurements = {}

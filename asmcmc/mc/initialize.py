@@ -1,3 +1,5 @@
+"""Starting configurations: random, columnar or herringbone lattices, or a given frame."""
+
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -24,8 +26,7 @@ DEFAULT_DENSITY = 0.6
 DEFAULT_COLUMNAR_DENSITY = 1.4
 
 # Herringbone start: the experimental benzene Pbca crystal, coarse-grained to one
-# oblate particle per molecule (built by scripts/process_cod_benzene_data.py). The
-# motif path resolves against the package so it is found regardless of cwd.
+# oblate particle per molecule (see data/README.md for how it is built).
 DEFAULT_HERRINGBONE_MOTIF = data_path("benzene_herringbone_cg.xyz")
 # Small default jitters: a thermal wiggle giving replica independence that leaves
 # the herringbone order intact. Set both to 0 for a pristine crystal start.

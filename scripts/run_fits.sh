@@ -32,8 +32,7 @@ else
     ALPHAS=(5.80 4.64 3.87 3.32 2.90 0)
 fi
 
-# Shared differential_evolution settings (see README "Fit the GB+quadrupole
-# potential"). -1 workers uses every core.
+# Shared differential_evolution settings. -1 workers uses every core.
 DE_OPTS=(--workers -1 --popsize 22 --maxiter 250 --tol 1e-3)
 
 # All sweep runs share one built-dataset cache (keyed by file/cutoff/mtime, so

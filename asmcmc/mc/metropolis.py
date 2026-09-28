@@ -1,3 +1,5 @@
+"""The Metropolis sampler, :class:`MetropolisSampler`, and resuming its runs."""
+
 import numpy as np
 from tqdm.auto import tqdm
 from asmcmc.mc.run_config import RunConfig
@@ -27,22 +29,19 @@ from typing import Optional
 
 TARGET_ACC_RATE = 0.275
 
-# Bounds on the adaptive volume-move width. vol_delt is now the half-width of a
-# log-uniform volume scaling (s_v = exp(U(-vol_delt, vol_delt))), so s_v is always
-# positive regardless of vol_delt; the cap is just a sanity bound on the per-move
-# volume change. The lower floor stops a run of rejected volume moves from
-# shrinking vol_delt toward zero (e.g. ~1e-83), which freezes the box and turns
-# NPT into NVT at the starting density.
+# Bounds on the adapted volume-move width. vol_delt is the half-width of a
+# log-uniform scaling, s_v = exp(U(-vol_delt, vol_delt)), so s_v > 0 for any width
+# and the cap only bounds the per-move volume change. The floor stops a run of
+# rejected volume moves from shrinking vol_delt towards zero, which would freeze
+# the box and turn NPT into NVT at the starting density.
 MAX_VOL_DELT = 0.4
 MIN_VOL_DELT = 1e-3
 
-# Ceiling on the adaptive rotation-move width. or_delt is a rotation *angle in
-# radians*, so a half-turn is the geometric maximum. Growing it further only
-# re-parameterizes the same near-randomizing move while the tuner chases an acceptance
-# target a flat orientational landscape can't reach. Runs started from a crystal
-# may need to pass a much tighter max_or_delt (~0.25 rad ≈ 14°): near-randomizing
-# accepted rotations melt the starting order instead of sampling around it, which
-# causes glass formation.
+# Ceiling on the adapted rotation width, an angle in radians: a half-turn is the
+# geometric maximum, and anything wider re-parameterises the same near-randomising
+# move. Runs started from a crystal pass a much tighter max_or_delt (~0.25 rad,
+# 14 degrees), because near-randomising rotations melt the starting order instead
+# of sampling around it (see docs/findings.md).
 MAX_OR_DELT = np.pi
 
 
@@ -53,14 +52,14 @@ def default_output_dir():
 
 
 def npt_decide_accept(old_en, new_en, old_vol, new_vol, beta, pressure, num_part):
-    """Decide whether to accept a new configuration with probability min(p, 1), where
+    """Metropolis acceptance for the NPT ensemble, with volume moves sampled in ln V.
 
-        p = exp(-beta * (new_en - old_en + P * (new_vol - old_vol)) - (N + 1) * log(new_vol / old_vol))
+    Accepts with probability min(1, p), where
 
-    This function is suitable for the NPT ensemble.
+        p = exp(-beta * (dE + P dV) + (N + 1) ln(V'/V))
 
-    Pressure: eV/Å^3
-    Volume: Å^3
+    with P in eV/Å^3 and V in Å^3. The ln term is the Jacobian of sampling ln V;
+    it vanishes for particle moves, where V' = V.
     """
     if new_vol <= 0:
         return False
@@ -77,13 +76,7 @@ def npt_decide_accept(old_en, new_en, old_vol, new_vol, beta, pressure, num_part
 
 
 def nvt_decide_accept(old_en, new_en, beta):
-    """Decide whether to accept a new configuration with probability min(p, 1),
-    where
-
-        p = exp(-beta * (new_en - old_en))
-
-    This function is suitable for the NVT ensemble.
-    """
+    """Metropolis acceptance for the NVT ensemble: probability min(1, exp(-beta * dE))."""
     r = random.uniform(0, 1)
     arg = -beta * (new_en - old_en)
     if arg >= 0:
@@ -91,10 +84,15 @@ def nvt_decide_accept(old_en, new_en, beta):
     return r < np.exp(arg)
 
 
-# TODO: Double check NVT logic
 class MetropolisSampler:
-    """Main class for the Metropolis Monte Carlo simulation.  This class handles
-    most of the core logic of the simulation.
+    """Metropolis Monte Carlo of rigid uniaxial particles, NPT by default.
+
+    Each :meth:`step` is one trial move: a translation or rotation of one particle
+    or, in NPT, a volume move (on average once per N steps). :meth:`equilibrate`
+    tunes the move widths towards ``TARGET_ACC_RATE`` and writes
+    ``equilibration.db``; :meth:`calculate_trajectory` runs production at fixed
+    widths into ``simulation.db``. Both stamp a write-once ``run_config.json``, and
+    :meth:`from_equilibration` rebuilds a sampler from a run directory to continue it.
     """
 
     def __init__(
@@ -252,7 +250,11 @@ class MetropolisSampler:
         return metro
 
     def particle_energy(self, center_idx):
-        """Calculate the energy of particle at index `center_idx`."""
+        """Sum of the pair energies between particle ``center_idx`` and its neighbours.
+
+        A single-particle move changes the total energy by exactly the change in
+        this sum.
+        """
 
         center_pos = self.current_frame.positions[center_idx].copy()
 
@@ -465,15 +467,12 @@ class MetropolisSampler:
         vol_min_scale=None,
         max_or_delt=None,
     ):
-        """Perform a block update of the simulation.
+        """End-of-block bookkeeping: record a frame, then (optionally) retune widths.
 
-        This involves wrapping particles, calculating acceptance rates,
-        recording data, and writing to the database.
-
-        ``max_or_delt`` caps the adapted rotation width (default
-        ``MAX_OR_DELT``, the geometric π ceiling). May require a tight value
-        (~0.25 rad) when equilibrating from a crystal, where near-randomizing
-        rotations would melt the starting order.
+        Wraps the particles, re-syncs the energy to a full recompute, buffers the
+        frame with its acceptance rates for the db, and, when ``dynamic_delta``,
+        scales each move width towards ``TARGET_ACC_RATE``. ``max_or_delt`` caps
+        the rotation width (default ``MAX_OR_DELT``).
         """
         # wrap particles to simulation box
         self.current_frame.wrap()
@@ -610,7 +609,10 @@ class MetropolisSampler:
         vol_min_scale=None,
         max_or_delt=None,
     ):
-        """Perform an equilibration of the simulation.
+        """Run until ``step_count`` reaches ``num_steps``, tuning move widths.
+
+        ``num_steps`` is a target, so calling again with a larger one continues the
+        same run (appending to ``equilibration.db``).
 
         ``vol_max_scale``/``vol_min_scale`` optionally give vol_delt tighter
         per-update slew bounds than the shared ``max_scale``/``min_scale`` (see
@@ -688,8 +690,11 @@ class MetropolisSampler:
         max_or_delt=None,
         progress=True,
     ):
-        """Performs a simulation of the system.  This method will first equilibrate
-        the system, then perform the main simulation.
+        """Run production for ``num_steps`` at fixed move widths into ``simulation.db``.
+
+        First calls ``equilibrate(num_eq_steps, ...)``. Its target is absolute, so
+        with 0, or on a sampler resumed past the target, no equilibration steps run;
+        ``None`` skips the call. The step counter then restarts at 0.
 
         ``vol_max_scale``/``vol_min_scale``/``max_or_delt`` are forwarded to the
         equilibration (see ``equilibrate``); they have no effect on the

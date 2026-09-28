@@ -1,4 +1,4 @@
-"""Geometry and bookkeeping for the UMA-labelled cluster dataset.
+"""Geometry and bookkeeping for the UMA-labelled dimer dataset.
 
 No MLIP anywhere in here: every test either builds geometry or drives the
 generator with a stub calculator, so the suite stays runnable from a fresh
@@ -61,11 +61,9 @@ def test_volume_uniform_is_flat_in_r_cubed():
 
 
 def test_default_range_covers_the_uma_horizon_and_the_hard_core():
-    """min/max_atom_distance -- not max_com_distance -- are what shape a
-    campaign's label distribution (see CLAUDE.md's UMA HORIZON and TRIMER
-    notes): below ~3 A the pair is a hard-core clash UMA scores strongly
-    repulsive, and past its ~6 A minimum-atom-atom horizon the label is a
-    truncation artifact (Delta = -E_GBQ exactly). The window sits inside both.
+    """min/max_atom_distance -- not max_com_distance -- shape a campaign's labels:
+    below ~3 A the pair is a hard-core clash, and past UMA's 6 A minimum-atom-atom
+    horizon the label is exactly zero (Delta = -E_GBQ). The window sits inside both.
     """
     s = SamplingSettings()
     assert 2.4 < s.min_atom_distance < s.max_atom_distance < 6.0

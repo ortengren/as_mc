@@ -1,22 +1,11 @@
-"""What a :mod:`asmcmc.delta_learning.dataset` campaign says about itself.
+"""Quality checks and summaries of a generated dimer dataset.
 
-Two questions, which is why this exists as one module rather than notebook cells:
-
-**QA.** Is the campaign trustworthy? Checks for disjoint shards, no hard-core
-violations, no duplicates, and that the recomputed GB+Q baseline reproduces the
-stored one. :func:`qa_report`.
-
-**Target.** How large the Delta-learning target ``E_UMA - E_GBQ`` is and where
-in geometry it lives, which is what sets a fit's weighting. :func:`pair_records`
-is the unpacking a Delta-learning fit wants; it is model-agnostic (geometry plus
-both energies), with the GB invariants applied on top (:func:`gb_invariants`).
-:func:`radial_profile`, :func:`motif_masks` (now a post-hoc census -- see
-CLAUDE.md's MOTIF GENERATION note; there is no generator-side taxonomy any more).
-
-Every campaign is dimers only (2026-09; trimers dropped, see CLAUDE.md's TRIMER
-note), so a frame's ``gbq_interaction_energy`` is one pair's baseline directly --
-no cluster-sum attribution is needed. :func:`qa_report` still cross-checks it
-against a recomputation via ``CACELLI_POTENTIAL.pair_energy``.
+:func:`qa_report` checks a campaign end to end: unique ids, one seed per shard, no
+clash below the atom-distance floor, no duplicate configurations, finite energies,
+a constant monomer reference, and a stored GB+Q baseline that matches a
+recomputation. :func:`pair_records` unpacks the dimers into flat arrays of pair
+geometry and energies, including the Delta-learning target ``E_UMA - E_GBQ``;
+:func:`radial_profile` and :func:`motif_masks` summarise where that target lives.
 """
 
 from __future__ import annotations
@@ -34,11 +23,8 @@ from asmcmc.delta_learning.dataset import (
 )
 
 
-# Motif cuts in (|b|, slip). Reporting labels, not a taxonomy: these quantities
-# are rotation- and inversion-invariant, so they name a contact and cannot
-# identify a lattice -- two crystals sharing a motif but sitting on different
-# lattices score the same (measured on the 100 K validation run vs the Cacelli
-# minimum: same motif, same contact fractions, differing lattices and RDFs).
+# Contact-motif labels, for reporting. They are functions of pair invariants, so
+# they name a contact but cannot tell apart two crystals built from it.
 COFACIAL = "cofacial"
 T_SHAPED = "T-shaped"
 PARALLEL_DISPLACED = "parallel-displaced"
@@ -46,13 +32,9 @@ FAR_SLIPPED = "far-slipped"
 
 WELL_RANGE = (3.4, 6.0)
 
-# Boundaries in **slip** (lateral offset, A), not in a_hi. An earlier version cut
-# parallel-displaced as ``a_hi < 0.6``, which was wrong: the Cacelli PD minimum
-# sits at a_hi = 0.909 (r = 3.85, stacking height 3.5, slip 1.6), so the actual
-# PD motif was being counted as cofacial and the "PD" bucket collected
-# far-slipped pairs instead. Cofacial and PD differ only by slip -- 0.0 vs
-# 1.6 A at essentially the same height -- so slip is the coordinate that
-# separates them and a_hi is not.
+# Motif boundaries are in slip (lateral offset, A), not in a_hi: cofacial and
+# parallel-displaced stacks sit at nearly the same height and differ only in slip
+# (the Cacelli parallel-displaced minimum has slip 1.6 A yet a_hi = 0.91).
 COFACIAL_MAX_SLIP = 1.0
 DISPLACED_MAX_SLIP = 3.0
 PARALLEL_MIN_B = 0.8
@@ -152,11 +134,9 @@ def motif_masks(records, well_range=WELL_RANGE):
     that is barely interacting, and pooling those in would dilute every
     per-motif statistic toward zero.
 
-    Split on **slip**, per the module constants -- see ``COFACIAL_MAX_SLIP`` for
-    why an ``a_hi`` cut misclassifies the parallel-displaced motif. ``FAR_SLIPPED``
-    is reported separately rather than folded into PD because it is where the
-    GB+Q baseline is worst (Δ rms 2.0 kcal/mol against PD's 0.45), so merging
-    them would hide the one region that most needs sampling.
+    Parallel contacts are split on slip (see the module constants).
+    ``FAR_SLIPPED`` is kept apart from parallel-displaced because the GB+Q
+    baseline is much worse there, and merging them would hide that.
     """
     abs_b, _, a_lo = gb_invariants(records)
     _, slip = stack_coordinates(records)
@@ -230,7 +210,6 @@ class QAReport:
 
     n_frames: int
     n_dimers: int
-    n_pairs: int
     unique_ids: bool
     shard_seeds: dict
     monomer_energy_spread: float
@@ -258,19 +237,11 @@ def _min_intermolecular_distance(frame):
 
 
 def _configuration_signature(frame, decimals=4):
-    """A fingerprint identifying a cluster up to rigid motion and relabelling.
+    """A fingerprint of a configuration, invariant to rigid motion and relabelling.
 
-    Per pair: separation plus the ``(|a_i|, |a_j|, |b|)`` invariants, sorted
-    over pairs. Rotation-, inversion- and relabelling-invariant, which is what
-    "the same configuration" has to mean here.
-
-    **Orientation is included deliberately.** An earlier version fingerprinted
-    inter-centre distances alone, which for a dimer is a *single* number: with
-    141 dimers concentrated by motif sampling into a narrow radial band, two
-    unrelated configurations collide at 1e-4 A resolution with ~30% probability,
-    and the check duly reported a phantom duplicate on the first motif campaign.
-    Four invariants per pair make coincidence negligible while a genuine
-    duplicate still matches exactly.
+    Per pair: the separation and the ``(|a_i|, |a_j|, |b|)`` invariants, sorted
+    over pairs. The orientation terms matter: for a dimer the separation alone is
+    one number, and unrelated dimers in a narrow radial band collide on it.
     """
     com = np.asarray(frame.info["molecular_com"], dtype=float)
     u = _normals(frame)
@@ -357,9 +328,9 @@ def qa_report(frames, config=None, potential=CACELLI_POTENTIAL):
         problems.append(f"{duplicates} duplicate configurations")
     if non_finite:
         problems.append(f"{non_finite} frames with non-finite energy")
-    if settings.get("rigid", True) and monomer_spread > 1e-9:
+    if monomer_spread > 1e-9:
         problems.append(
-            f"rigid run has a varying monomer reference ({monomer_spread:.3e} eV)"
+            f"monomers are rigid, yet the monomer reference varies ({monomer_spread:.3e} eV)"
         )
     if any(len(seeds) > 1 for seeds in shard_seeds.values()):
         problems.append("a shard mixes generator seeds")
@@ -367,7 +338,6 @@ def qa_report(frames, config=None, potential=CACELLI_POTENTIAL):
     return QAReport(
         n_frames=len(frames),
         n_dimers=n_dimers,
-        n_pairs=n_dimers,
         unique_ids=unique_ids,
         shard_seeds=shard_seeds,
         monomer_energy_spread=monomer_spread,

@@ -3,7 +3,7 @@
 Fit quality is judged by *plain* (unweighted) regression metrics on a held-out
 test split -- reported both overall and for the bound subset (target < 0), since
 ~32% of frames are repulsive and an unweighted error would otherwise be
-dominated by the wall. Diagnostic plots build on these metrics (later slice).
+dominated by the wall. Figures of the same predictions: :mod:`asmcmc.fitting_gbq.plots`.
 """
 
 import json

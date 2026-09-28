@@ -1,3 +1,9 @@
+"""Trial moves: particle translations and rotations, and volume moves.
+
+Widths differ in meaning: ``pos_delt`` is a full width, while ``or_delt`` and
+``vol_delt`` are half-widths.
+"""
+
 import numpy as np
 import random as rand
 from scipy.spatial.transform import Rotation
@@ -14,7 +20,7 @@ def quat_to_or_vec(quats):
 
 
 def calculate_com_move(r, delta):
-    # generate random displacement (x_1, x_2, x_3) such that |x_i| <= delta / 2
+    """``r`` displaced by a uniform draw from the cube [-delta/2, delta/2]^3."""
     displacement = [rand.uniform(-delta / 2, delta / 2) for _ in range(3)]
     return r + displacement
 
@@ -37,7 +43,8 @@ def quaternion_multiply(q1, q2):
 
 
 def calculate_quat_move(quat, delta):
-    # generate a random rotation angle uniformly in [-delta, delta]
+    """``quat`` rotated by an angle drawn from [-delta, delta] (radians) about a
+    uniformly random axis."""
     theta = rand.uniform(-delta, delta)
     half_theta = theta / 2.0
     sin_half_theta = np.sin(half_theta)
@@ -61,6 +68,7 @@ def calculate_quat_move(quat, delta):
 
 
 def calculate_vol_move(cell, curr_vol, delta):
+    """Isotropic volume move: every axis scaled by s_v**(1/3), ln(s_v) ~ U(-delta, delta)."""
     # log-uniform volume scaling: ln(s_v) ~ U(-delta, delta), so the proposal is
     # symmetric in ln(V). This matches the (N+1)*ln(V'/V) term in npt_decide_accept
     # (which is derived for ln-volume sampling) and keeps s_v > 0 for any delta.

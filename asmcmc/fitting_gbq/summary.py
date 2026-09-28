@@ -107,9 +107,9 @@ def discover_uniform_run(results_root=DEFAULT_RESULTS_ROOT):
 def discover_boltzmann_run(results_root=DEFAULT_RESULTS_ROOT):
     """Return the alpha=2.90 Boltzmann fit's ``theta``, or ``None``.
 
-    This is the weighted-sweep reference (no longer the production choice, which
-    is the uniform fit -- see :func:`discover_uniform_production_run`). Prefers
-    the seed-0 finalisation run and falls back to the alpha-sweep's 2.90 point.
+    The Boltzmann-weighted reference fit; the production fit is the uniform one
+    (:func:`discover_uniform_production_run`). Prefers the seed-0 finalisation
+    run and falls back to the alpha-sweep's 2.90 point.
     """
     cands = (
         os.path.join(results_root, MULTISEED_SUBDIR, BOLTZMANN_CAMPAIGN, "seed_0"),
@@ -492,9 +492,9 @@ def weight_concentration_plot(
 # Figure 3D: dimer energy curves -- does the fitted potential give sensible
 # orientation-dependent energetics? (external physical-validity test)
 # --------------------------------------------------------------------------- #
-# Canonical relative orientations of two uniaxial (oblate) particles, reused from
-# notebooks/fitting_gb.ipynb. ``u1``/``u2`` are the symmetry axes (or_vec, the
-# thin axis of the disk); ``r_dir`` is the unit separation direction.
+# Canonical relative orientations of two uniaxial (oblate) particles. ``u1``/``u2``
+# are the symmetry axes (or_vec, the thin axis of the disc); ``r_dir`` is the unit
+# separation direction.
 DIMER_ORIENTATIONS = {
     "face-to-face (stacked)": ([0, 0, 1], [0, 0, 1], [0, 0, 1]),
     "edge-to-edge (side-by-side)": ([0, 0, 1], [0, 0, 1], [1, 0, 0]),

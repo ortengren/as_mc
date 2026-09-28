@@ -1,13 +1,21 @@
-from dataclasses import asdict, dataclass, fields
-from asmcmc.mc.potentials import potential_from_dict
+"""``run_config.json``: the static definition of a run, written once when it starts."""
 
 import json
 import warnings
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+
+from asmcmc.mc.potentials import potential_from_dict
 
 
 @dataclass(frozen=True)
 class RunConfig:
+    """Everything needed to rebuild a sampler, apart from its evolving state.
+
+    The last db row supplies the evolving state (frame, tuned move widths, step);
+    together they let ``MetropolisSampler.from_equilibration`` resume a run.
+    """
+
     temp: float
     pressure: float
     npt_ensemble: bool
@@ -53,10 +61,9 @@ class RunConfig:
         known = {f.name for f in fields(cls)}
         unknown = set(raw) - known
         if unknown:
-            # A run_config.json can outlive the RunConfig fields it was written
-            # with (e.g. the pre-revert `moves_per_vol` sampler knob). Drop what
-            # this version doesn't know rather than failing the whole resume —
-            # but say so, since it is provenance loss.
+            # An old run_config.json can carry fields RunConfig no longer has.
+            # Drop them rather than fail the resume, but say so: it loses
+            # provenance.
             warnings.warn(
                 f"{path}: dropping unknown RunConfig field(s) {sorted(unknown)}",
                 stacklevel=2,

@@ -1,42 +1,32 @@
-"""Generate a UMA-labelled benzene dimer dataset for AniSOAP training.
+"""Generate a UMA-labelled dataset of benzene dimers for the Delta-learning fit.
 
-The labeller is Meta FAIR Chemistry's OMol-trained UMA MLIP, which clears the
-physics gate in :mod:`asmcmc.delta_learning.dimer_benchmark` first: r = 0.994 / RMSE 0.55 kcal/mol
-against all 197 Cacelli MP2 dimer rows, all three wells bound and placed within
-~0.1 A, having never seen that data.
-
-Dimers only (2026-09; trimers dropped -- see CLAUDE.md's TRIMER note). Every
-pair is drawn uniformly in orientation and volume-in-r^3, filtered by geometry
-alone (``SamplingSettings.min_atom_distance``/``max_atom_distance``): no motif
-taxonomy, no quotas. Deployment is pair-decomposed (see
-:mod:`asmcmc.delta_learning.model`'s ``AniSOAPDeltaPotential``), so a dimer
-campaign matches the training distribution to the deployment distribution by
-construction.
+Each configuration is two rigid benzenes with uniformly random orientations and a
+separation drawn by :class:`RadialSampler`, kept only if their closest atom-atom
+distance falls inside the :class:`SamplingSettings` window. The UMA MLIP labels
+each dimer; it reproduces the Cacelli et al. dimer energies without having been
+fitted to them, which is why it is trusted as the labeller. Only dimers are
+generated: three-body energies in trimers are far below the fit error (see
+docs/findings.md).
 
 Each saved frame carries:
-  * total energy in a ``SinglePointCalculator``
-  * ``arrays["molecule_id"]``      : molecule membership per atom
-  * ``info["molecular_com"]``      : (2, 3), Angstrom
-  * ``info["principal_axes"]``     : (2, 3, 3)
-  * ``info["or_vec"]``             : (2, 3) disc normals, the GB+Q orientation
-  * ``info["monomer_energies"]``   : isolated monomer references, eV
-  * ``info["interaction_energy"]`` : E(cluster) - sum E(monomers), eV
-  * ``info["gbq_interaction_energy"]`` : the same quantity under CACELLI_POTENTIAL,
-    so the Delta-learning target E_UMA - E_GBQ needs no geometry re-derivation
+  * the total energy, in a ``SinglePointCalculator``
+  * ``arrays["molecule_id"]``          : molecule membership per atom
+  * ``info["molecular_com"]``          : (2, 3), Angstrom
+  * ``info["principal_axes"]``         : (2, 3, 3)
+  * ``info["or_vec"]``                 : (2, 3) disc normals, the GB+Q orientation
+  * ``info["monomer_energies"]``       : isolated-monomer references, eV
+  * ``info["interaction_energy"]``     : E(dimer) - sum E(monomers), eV
+  * ``info["gbq_interaction_energy"]`` : the same under CACELLI_POTENTIAL, so the
+    Delta-learning target E_UMA - E_GBQ needs no geometry re-derivation
 
 Usage::
 
     python -m asmcmc.delta_learning.dataset --n-configs 500 --out-dir results/clusters/pilot
 
-Output is sharded by seed and written incrementally, so an interrupted
-campaign resumes by re-running the same command.
-
-Notes
------
-1. OMol/UMA requires total charge and spin multiplicity in ``Atoms.info``.
-   Neutral benzene clusters are singlets: charge=0, spin=1.
-2. Frames are non-periodic and centred on the origin. The monomer reference is
-   ASE's idealized D6h benzene from the g2 set.
+Output is sharded by seed and written incrementally, so an interrupted campaign
+resumes by re-running the same command. UMA needs ``charge`` and ``spin`` in
+``Atoms.info`` (neutral benzene: 0 and 1). Frames are non-periodic and centred on
+the origin; the monomer is ASE's idealized D6h benzene from the g2 set.
 """
 
 from __future__ import annotations
@@ -152,7 +142,9 @@ def _skew(v):
 
 @dataclass(frozen=True)
 class RadialSampler:
-    """Centre-centre separations: volume-uniform, or concentrated on the wells."""
+    """Centre-centre separations: uniform in r^3 over [lo, hi] (``"volume-uniform"``),
+    or with a ``compact_probability`` share redrawn from a normal centred on the
+    wells (``"mixture"``)."""
 
     lo: float = 3.4
     hi: float = 15.0
@@ -187,25 +179,23 @@ def _unit(rng):
 
 
 def sample_dimer_geometry(rng, radial=None):
-    """Both orientations and the separation drawn uniformly."""
+    """Two uniformly random unit normals and a separation vector (uniform
+    direction, length from ``radial``)."""
     radial = radial or RadialSampler()
     return _unit(rng), _unit(rng), float(radial.sample(rng, 1)[0]) * _unit(rng)
 
 
 @dataclass(frozen=True)
 class SamplingSettings:
-    """Geometry knobs for cluster construction.
+    """Geometry of the sampled dimers.
 
-    ``max_com_distance`` bounds the centre-centre draw. ``min_atom_distance``/
-    ``max_atom_distance`` bound the realised minimum atom-atom separation
-    between the two molecules, which is what actually governs both ends of the
-    UMA label: below ~3.0 A the pair is a hard-core clash UMA scores strongly
-    repulsive (measured: pairs at 2.40-2.73 A dominate the Delta^2 fit
-    objective by 40-75% depending on campaign, while the MC sampler never
-    approaches closer than ~3.6 A), and past UMA's ~6 A minimum-atom-atom
-    interaction horizon the label is a truncation artifact (Delta = -E_GBQ
-    exactly). Tightening this window is what disarms both failure modes at
-    once.
+    ``min_com_distance``/``max_com_distance`` bound the centre-centre draw.
+    ``min_atom_distance``/``max_atom_distance`` bound the closest atom-atom
+    distance between the two molecules, and are what actually shapes a dataset.
+    Below ~3 A the pair is a hard-core clash, which MC never visits (it stays
+    beyond ~3.6 A) but which would dominate the squared fit error. Beyond UMA's
+    6 A interaction horizon the label is exactly zero, so ``Delta = -E_GBQ``
+    there is an artefact of the labeller (see docs/findings.md).
     """
 
     min_com_distance: float = 3.4
@@ -320,14 +310,12 @@ def make_dimer(
     rng: np.random.Generator,
     settings: SamplingSettings,
 ) -> Atoms:
-    """One non-periodic dimer, free of hard clashes.
+    """One non-periodic dimer whose closest atom-atom distance is inside the window.
 
-    Orientations and separation are uniform (:func:`sample_dimer_geometry`);
-    the geometry window (``min_atom_distance``/``max_atom_distance``) is what
-    shapes the campaign, not a taxonomy. A rejected draw costs no MLIP call --
-    only the geometry below is evaluated -- so the low clearance rate of a
-    uniform orientation at close range (measured ~3% at 3.6 A, vs ~86% for a
-    face-to-face-seeded one) costs CPU attempts, not budget.
+    Draws from :func:`sample_dimer_geometry` until a placement fits. Rejection
+    costs no MLIP call, only geometry, so the low acceptance of random
+    orientations at close range (a few percent at 3.6 A) costs CPU time, not
+    labelling budget.
     """
     for _ in range(settings.max_placement_attempts):
         u0, u1, r_vec = sample_dimer_geometry(rng, settings.radial())
@@ -817,23 +805,22 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--max-com-distance",
         type=float,
         default=default_settings.max_com_distance,
-        help="Matches MetropolisSampler's nl_radius and the AniSOAP cutoff.",
+        help="Upper bound on the centre-centre draw; the atom-distance window "
+        "usually binds first.",
     )
     geometry.add_argument(
         "--min-atom-distance",
         type=float,
         default=default_settings.min_atom_distance,
-        help="Floor on realised minimum atom-atom separation; keeps hard-core "
-        "clash geometries (which dominate the UMA-vs-GBQ loss) out of the "
-        "campaign.",
+        help="Floor on the closest atom-atom distance; keeps hard-core clashes, "
+        "which MC never visits, out of the dataset.",
     )
     geometry.add_argument(
         "--max-atom-distance",
         type=float,
         default=default_settings.max_atom_distance,
-        help="Ceiling on realised minimum atom-atom separation; UMA returns "
-        "exactly zero interaction past its ~6 A horizon, so nothing beyond it "
-        "is learnable.",
+        help="Ceiling on the closest atom-atom distance; UMA returns exactly zero "
+        "interaction past its 6 A horizon, so nothing beyond it is learnable.",
     )
     geometry.add_argument(
         "--max-placement-attempts",
