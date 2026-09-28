@@ -14,6 +14,7 @@ from asmcmc.mc.trial_moves import (
     calculate_aniso_vol_move,
 )
 from asmcmc.mc.potentials import Potential, calc_total_energy, DEFAULT_POTENTIAL
+from asmcmc.paths import REPO_ROOT
 from asmcmc.units import BOLTZCONST
 import random
 import ase
@@ -45,16 +46,10 @@ MIN_VOL_DELT = 1e-3
 MAX_OR_DELT = np.pi
 
 
-def generate_simulation_id(method="datetime"):
-    """Generate an ID for the simulation."""
-
-    if method == "datetime":
-        dt = datetime.datetime.today().isoformat(timespec="minutes")
-        if not os.path.exists(f"results/simulations/{dt}"):
-            os.makedirs(f"results/simulations/{dt}")
-        return dt
-    else:
-        raise NotImplementedError
+def default_output_dir():
+    """``results/simulations/<date>T<hh:mm>`` under the repository root."""
+    stamp = datetime.datetime.today().isoformat(timespec="minutes")
+    return str(REPO_ROOT / "results" / "simulations" / stamp)
 
 
 def npt_decide_accept(old_en, new_en, old_vol, new_vol, beta, pressure, num_part):
@@ -187,11 +182,7 @@ class MetropolisSampler:
         # than every block, since volume moves are ~N× rarer than pos/or moves.
         self._vol_tune_idx = 0
 
-        # auto generate traj file name if needed
-        if output_dir is None:
-            self.output_dir = f"results/simulations/{generate_simulation_id()}"
-        else:
-            self.output_dir = output_dir
+        self.output_dir = default_output_dir() if output_dir is None else output_dir
 
         # set up neighborlist
         self.nl_radius = nl_radius

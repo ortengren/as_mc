@@ -9,7 +9,8 @@ Four figures, each answering one question:
 
 Output names are prefixed with the db stem (``equilibration_energy.png``,
 ``simulation_energy.png``), so production figures never overwrite equilibration
-ones. The command-line wrapper is ``scripts/plot_run.py``.
+ones. The command-line wrappers are ``scripts/plot_run.py`` and
+``scripts/export_xyz.py``.
 """
 
 import math
@@ -17,6 +18,7 @@ import os
 from dataclasses import dataclass, field
 
 import numpy as np
+import ase.io
 from ase.db import connect
 import matplotlib
 
@@ -305,3 +307,27 @@ def render(run_dir, which=None, db_name="equilibration.db", out_dir=None):
     for name in which:
         written[name] = PLOTS[name](trace, os.path.join(out_dir, f"{stem}_{name}.png"))
     return written
+
+
+# Ellipsoid semiaxes (A) written as a per-particle ``shape`` array, for viewers.
+SHAPE = (2.5, 2.5, 1.0)
+
+
+def export_xyz(run_dir, db_name="simulation.db"):
+    """Write ``<db stem>.xyz`` (extended XYZ) next to the db, for OVITO or ASE's GUI.
+
+    Each frame carries the per-particle ``c_q``, ``or_vec`` and ``shape`` arrays
+    and its ``total_energy``. Returns the path written.
+    """
+    xyz_path = os.path.join(run_dir, os.path.splitext(db_name)[0] + ".xyz")
+    frames = []
+    with connect(os.path.join(run_dir, db_name)) as db:
+        for row in db.select():
+            atoms = row.toatoms()
+            atoms.new_array("c_q", np.asarray(row.data["c_q"]))
+            atoms.new_array("or_vec", np.asarray(row.data["or_vec"]))
+            atoms.new_array("shape", np.tile(SHAPE, (len(atoms), 1)))
+            atoms.info["total_energy"] = row["total_energy"]
+            frames.append(atoms)
+    ase.io.write(xyz_path, frames, format="extxyz")
+    return xyz_path

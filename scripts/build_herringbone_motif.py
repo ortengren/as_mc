@@ -31,9 +31,10 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from asmcmc.mc.coarse_graining import coarse_grain_frame
+from asmcmc.mc.trial_moves import quat_to_or_vec
 
 ROOT = Path(__file__).resolve().parent.parent
-SHAPE = (2.5, 2.5, 1.0)  # ellipsoid semiaxes, as in export_ideal_crystals.py
+SHAPE = (2.5, 2.5, 1.0)  # ellipsoid semiaxes (A), stored as the ``axes`` array
 AVOGADRO = 6.02214076e23
 BENZENE_G_PER_MOL = 78.11
 
@@ -93,10 +94,7 @@ def build(cif, out):
     cg.new_array("c_q", or_vec_to_quat(u))
     cg.new_array("axes", np.tile(SHAPE, (n, 1)).astype(float))
 
-    quat_check = np.array(
-        [Rotation.from_quat(np.roll(q, -1)).as_matrix() @ [0, 0, 1] for q in cg.arrays["c_q"]]
-    )
-    assert np.abs(quat_check - u).max() < 1e-9, "c_q does not reproduce or_vec"
+    assert np.abs(quat_to_or_vec(cg.arrays["c_q"]) - u).max() < 1e-9, "c_q does not reproduce or_vec"
 
     ase.io.write(str(out), cg, format="extxyz")
 

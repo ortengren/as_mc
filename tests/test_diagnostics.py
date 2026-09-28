@@ -5,6 +5,7 @@ import os
 import random
 
 import numpy as np
+import ase.io
 import pytest
 
 from ase.db import connect
@@ -13,8 +14,10 @@ from asmcmc.mc.initialize import ColumnarLatticeInitializer
 from asmcmc.mc.metropolis import MetropolisSampler
 from asmcmc.mc.diagnostics import (
     PLOTS,
+    SHAPE,
     TAIL_FRACTION,
     TAIL_MAX_FRAMES,
+    export_xyz,
     load_run,
     render,
 )
@@ -171,3 +174,19 @@ def test_render_out_dir_redirects_output(tmp_path):
     assert os.path.exists(written["energy"])
     assert str(elsewhere) in written["energy"]
     assert not os.path.exists(os.path.join(d, "equilibration_energy.png"))
+
+
+def test_export_xyz_writes_every_frame_with_its_arrays(tmp_path):
+    d = _point(str(tmp_path / "scan"))
+    path = export_xyz(d, db_name="equilibration.db")
+    assert os.path.basename(path) == "equilibration.xyz"
+
+    frames = ase.io.read(path, index=":")
+    with connect(os.path.join(d, "equilibration.db")) as db:
+        rows = list(db.select())
+    assert len(frames) == len(rows)
+    for frame, row in zip(frames, rows):
+        # extxyz stores ~8 significant digits
+        np.testing.assert_allclose(frame.arrays["or_vec"], row.data["or_vec"], atol=1e-6)
+        np.testing.assert_allclose(frame.arrays["shape"], np.tile(SHAPE, (len(frame), 1)))
+        assert frame.info["total_energy"] == pytest.approx(row.total_energy)
