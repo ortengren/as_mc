@@ -1,34 +1,22 @@
 """What a :mod:`asmcmc.data_preparation.cluster_dataset` campaign says about itself.
 
-Three questions, which is why this exists as one module rather than notebook cells:
+Two questions, which is why this exists as one module rather than notebook cells:
 
-**QA.** Is the campaign trustworthy -- disjoint shards, no hard-core violations,
-exact many-body algebra, no duplicates? :func:`qa_report`.
-
-**Content.** What is actually in it. The headline is that a campaign holds far
-more pair labels than frames: every trimer stores ``pair_interaction_energies``
-computed by *real* MLIP calls on its three 2-molecule subsets, so a 500-frame
-campaign of 156 dimers + 344 trimers carries ``156 + 3*344 = 1188`` labelled
-pair interaction energies. :func:`pair_records` is the unpacking, and a
-Delta-learning fit wants exactly the same table -- which is why it lives here in
-``data_preparation`` and not in a notebook or a fit package. It is
-model-agnostic: the records carry raw geometry, and the GB invariants are a
-reduction applied on top (:func:`gb_invariants`).
+**QA.** Is the campaign trustworthy? Checks for disjoint shards, no hard-core
+violations, no duplicates, and that the recomputed GB+Q baseline reproduces the
+stored one. :func:`qa_report`.
 
 **Target.** How large the Delta-learning target ``E_UMA - E_GBQ`` is and where
-in geometry it lives, which is what sets a fit's weighting.
-:func:`radial_profile`, :func:`motif_masks`.
+in geometry it lives, which is what sets a fit's weighting. :func:`pair_records`
+is the unpacking a Delta-learning fit wants; it is model-agnostic (geometry plus
+both energies), with the GB invariants applied on top (:func:`gb_invariants`).
+:func:`radial_profile`, :func:`motif_masks` (now a post-hoc census -- see
+CLAUDE.md's MOTIF GENERATION note; there is no generator-side taxonomy any more).
 
-Nothing here calls an MLIP. Every quantity is either read from the stored
-frames or recomputed from the GB+Q closed form, so this module imports cheaply
-and runs on a laptop.
-
-The pair baseline is **recomputed rather than read**: a frame's
-``gbq_interaction_energy`` is summed over the whole cluster, so for a trimer it
-is the sum of three pairs and cannot be attributed to any one of them.
-:func:`pair_records` evaluates ``CACELLI_POTENTIAL.pair_energy`` per pair and
-:func:`qa_report` checks the per-cluster sum reproduces the stored value, which
-makes the recomputation self-verifying.
+Every campaign is dimers only (2026-09; trimers dropped, see CLAUDE.md's TRIMER
+note), so a frame's ``gbq_interaction_energy`` is one pair's baseline directly --
+no cluster-sum attribution is needed. :func:`qa_report` still cross-checks it
+against a recomputation via ``CACELLI_POTENTIAL.pair_energy``.
 """
 
 from __future__ import annotations
@@ -39,6 +27,7 @@ from pathlib import Path
 
 import numpy as np
 from ase.db import connect
+from ase.neighborlist import neighbor_list
 
 from asmcmc.base.potentials import CACELLI_POTENTIAL
 from asmcmc.data_preparation.cluster_dataset import CONFIG_NAME, dataset_frames
@@ -47,8 +36,9 @@ EV_TO_KCAL = 23.060541945329334
 
 # Motif cuts in (|b|, slip). Reporting labels, not a taxonomy: these quantities
 # are rotation- and inversion-invariant, so they name a contact and cannot
-# identify a lattice. asmcmc.utils.polymorph's docstring is the standing warning
-# about building a structural claim on top of them.
+# identify a lattice -- two crystals sharing a motif but sitting on different
+# lattices score the same (measured on the 100 K validation run vs the Cacelli
+# minimum: same motif, same contact fractions, differing lattices and RDFs).
 COFACIAL = "cofacial"
 T_SHAPED = "T-shaped"
 PARALLEL_DISPLACED = "parallel-displaced"
@@ -83,160 +73,51 @@ def _normals(frame):
     return u / np.linalg.norm(u, axis=1, keepdims=True)
 
 
-def _cluster_pairs(frame):
-    """``(pairs, e_uma)`` for one frame, in eV.
-
-    A dimer's single pair energy is the whole cluster's ``interaction_energy``.
-    A trimer carries its three pair interaction energies explicitly, each from
-    an MLIP call on the corresponding 2-molecule subset -- that is what makes a
-    trimer worth three pair labels rather than one.
-    """
-    n_mol = int(frame.info["n_molecules"])
-    if n_mol == 2:
-        return [(0, 1)], np.array([float(frame.info["interaction_energy"])])
-
-    ids = np.asarray(frame.info["pair_molecule_ids"], dtype=int)
-    energies = np.asarray(frame.info["pair_interaction_energies"], dtype=float)
-    return [tuple(p) for p in ids], energies
-
-
 def pair_records(frames, potential=CACELLI_POTENTIAL):
-    """Every labelled molecule pair in a campaign, as a dict of flat arrays.
+    """Every dimer in a campaign, as a dict of flat arrays (one entry per frame).
 
     Keys: ``r``, ``a_i``, ``a_j``, ``b`` (the pair geometry), ``e_uma`` and
     ``e_gbq`` (interaction energies, eV), ``delta`` (``e_uma - e_gbq``, the
-    Delta-learning target), plus provenance ``n_molecules`` (2 = sampled as a
-    dimer, 3 = extracted from a trimer), ``shard``, ``config_index``,
-    ``log_q`` and ``seeded``.
+    Delta-learning target), plus provenance ``shard``, ``config_index``.
 
     Geometry comes from the stored ``molecular_com``/``or_vec``, so no frame is
     re-coarse-grained and the numbers are exactly the ones the generator used.
-
-    **``log_q`` is a frame-level quantity, broadcast here for convenience, and
-    is a valid pair proposal density only where ``seeded`` is True.** The motif
-    mixture proposes the (0, 1) pair; in a dimer that *is* the whole cluster, so
-    the density is exact. A trimer's 0-2 and 1-2 pairs are incidental -- their
-    marginal proposal density is an integral with no closed form -- so weighting
-    every pair by ``exp(-log_q)`` would be wrong. Filter on ``seeded`` first.
-    ``NaN`` for campaigns that recorded no density (``orientation_sampling`` was
-    ``"uniform"``).
-
-    Trimers requiring ``decomposition="full"`` is not checked defensively: a
-    campaign run with ``monomers`` has no pair energies to unpack and raises a
-    ``KeyError`` naming the missing field, which is the correct diagnosis.
     """
     r, a_i, a_j, b = [], [], [], []
     e_uma, e_gbq = [], []
-    n_mol, shard, config_index = [], [], []
-    log_q, seeded = [], []
+    shard, config_index = [], []
 
     for frame in frames:
         com = np.asarray(frame.info["molecular_com"], dtype=float)
         u = _normals(frame)
-        pairs, energies = _cluster_pairs(frame)
-
-        i_idx = np.array([p[0] for p in pairs])
-        j_idx = np.array([p[1] for p in pairs])
-        disp = com[j_idx] - com[i_idx]
-        dist = np.linalg.norm(disp, axis=1)
-        r_hat = disp / dist[:, None]
+        disp = com[1] - com[0]
+        dist = float(np.linalg.norm(disp))
+        r_hat = disp / dist
 
         r.append(dist)
-        a_i.append(np.einsum("pk,pk->p", r_hat, u[i_idx]))
-        a_j.append(np.einsum("pk,pk->p", r_hat, u[j_idx]))
-        b.append(np.einsum("pk,pk->p", u[i_idx], u[j_idx]))
-        e_uma.append(energies)
-        e_gbq.append(np.atleast_1d(potential.pair_energy(u[i_idx], u[j_idx], disp)))
+        a_i.append(float(np.dot(r_hat, u[0])))
+        a_j.append(float(np.dot(r_hat, u[1])))
+        b.append(float(np.dot(u[0], u[1])))
+        e_uma.append(float(frame.info["interaction_energy"]))
+        e_gbq.append(float(potential.pair_energy(u[:1], u[1:], disp[None, :])[0]))
+        shard.append(int(frame.info.get("shard", -1)))
+        config_index.append(int(frame.info.get("config_index", -1)))
 
-        count = len(pairs)
-        n_mol.append(np.full(count, int(frame.info["n_molecules"])))
-        shard.append(np.full(count, int(frame.info.get("shard", -1))))
-        config_index.append(np.full(count, int(frame.info.get("config_index", -1))))
-        log_q.append(np.full(count, float(frame.info.get("log_q", np.nan))))
-        # The motif mixture proposes the (0, 1) pair and nothing else.
-        seeded.append(
-            np.array([set(p) == {0, 1} for p in pairs]) & ("log_q" in frame.info)
-        )
-
-    def cat(chunks, dtype=float):
-        if not chunks:
-            return np.array([], dtype=dtype)
-        return np.concatenate(chunks).astype(dtype)
+    def arr(values, dtype=float):
+        return np.asarray(values, dtype=dtype)
 
     records = {
-        "r": cat(r),
-        "a_i": cat(a_i),
-        "a_j": cat(a_j),
-        "b": cat(b),
-        "e_uma": cat(e_uma),
-        "e_gbq": cat(e_gbq),
-        "n_molecules": cat(n_mol, int),
-        "shard": cat(shard, int),
-        "config_index": cat(config_index, int),
-        "log_q": cat(log_q),
-        "seeded": cat(seeded, bool),
+        "r": arr(r),
+        "a_i": arr(a_i),
+        "a_j": arr(a_j),
+        "b": arr(b),
+        "e_uma": arr(e_uma),
+        "e_gbq": arr(e_gbq),
+        "shard": arr(shard, int),
+        "config_index": arr(config_index, int),
     }
     records["delta"] = records["e_uma"] - records["e_gbq"]
     return records
-
-
-def frame_records(frames):
-    """Per-frame proposal provenance -- the granularity ``log_q`` actually has.
-
-    Keys: ``log_q``, ``proposal_component``, ``n_molecules``. Use this, not
-    ``pair_records``, for anything that reweights whole configurations.
-    """
-    return {
-        "log_q": np.array(
-            [float(f.info.get("log_q", np.nan)) for f in frames], dtype=float
-        ),
-        "proposal_component": np.array(
-            [str(f.info.get("proposal_component", "")) for f in frames]
-        ),
-        "n_molecules": np.array(
-            [int(f.info["n_molecules"]) for f in frames], dtype=int
-        ),
-    }
-
-
-def weight_diagnostics(log_q):
-    """How concentrated a recorded proposal is, relative to flat.
-
-    **Descriptive, not a pass/fail gate.** ``w ∝ 1/q`` reweights toward a target
-    that is uniform over the whole configuration ball, which is not a target
-    anyone wants here -- it would put nearly all its mass at large separation,
-    exactly where the proposal deliberately does not look. A low
-    ``ess_fraction`` therefore says the proposal is far from uniform, which is
-    the entire point of motif seeding, not evidence that it is misweighted. For
-    an actual acceptance criterion use :func:`reweighting_ess` against a target
-    census you would really fit to.
-
-    ``p99_over_p50`` rather than max-over-median: when most weights sit at the
-    maximum (a bottom-heavy proposal), the median *is* the max and the naive
-    ratio reads 1.0 while the ESS is well below 1.
-
-    Returns ``NaN`` for a campaign that recorded no density.
-    """
-    log_q = np.asarray(log_q, dtype=float)
-    finite = log_q[np.isfinite(log_q)]
-    if len(finite) == 0:
-        return {
-            "n": 0,
-            "ess_fraction": float("nan"),
-            "p99_over_p50": float("nan"),
-            "log_q_range": float("nan"),
-        }
-
-    # Shift before exponentiating: log_q spans tens of nats, so exp overflows.
-    weights = np.exp(-(finite - finite.max()))
-    ess = weights.sum() ** 2 / np.sum(weights**2)
-    p99, p50 = np.percentile(weights, [99, 50])
-    return {
-        "n": int(len(finite)),
-        "ess_fraction": float(ess / len(finite)),
-        "p99_over_p50": float(p99 / p50),
-        "log_q_range": float(finite.max() - finite.min()),
-    }
 
 
 def reweighting_ess(records, target_r, edges=None):
@@ -279,8 +160,7 @@ def gb_invariants(records):
     """``(|b|, a_hi, a_lo)`` -- the symmetry-folded pair coordinates.
 
     Uniaxial discs satisfy ``u = -u`` and pairs are unordered, so only absolute
-    values and the sorted pair carry information. Same reduction as
-    ``asmcmc.utils.polymorph.contact_invariants``, in cosines rather than
+    values and the sorted pair carry information, in cosines rather than
     degrees because the coverage maps are plotted against ``|b|``.
     """
     abs_i, abs_j = np.abs(records["a_i"]), np.abs(records["a_j"])
@@ -292,7 +172,7 @@ def gb_invariants(records):
 
 
 def stack_coordinates(records):
-    """``(height, slip)`` -- the natural coordinates of a near-parallel pair.
+    """``(height, slip)`` are the natural coordinates of a near-parallel pair.
 
     ``height = r·a_hi`` is the separation along the more-aligned normal and
     ``slip = r·sqrt(1 - a_hi²)`` the lateral offset. Cofacial, parallel-displaced
@@ -351,8 +231,13 @@ def radial_profile(records, edges=DEFAULT_RADIAL_EDGES, units=EV_TO_KCAL):
         if count == 0:
             rows.append(
                 {
-                    "r_lo": lo, "r_hi": hi, "count": 0, "fraction": 0.0,
-                    "e_uma_rms": 0.0, "delta_rms": 0.0, "delta_absmax": 0.0,
+                    "r_lo": lo,
+                    "r_hi": hi,
+                    "count": 0,
+                    "fraction": 0.0,
+                    "e_uma_rms": 0.0,
+                    "delta_rms": 0.0,
+                    "delta_absmax": 0.0,
                     "delta_sq_share": 0.0,
                 }
             )
@@ -364,69 +249,15 @@ def radial_profile(records, edges=DEFAULT_RADIAL_EDGES, units=EV_TO_KCAL):
                 "r_hi": hi,
                 "count": count,
                 "fraction": count / len(records["r"]),
-                "e_uma_rms": float(np.sqrt(np.mean((records["e_uma"][mask] * units) ** 2))),
+                "e_uma_rms": float(
+                    np.sqrt(np.mean((records["e_uma"][mask] * units) ** 2))
+                ),
                 "delta_rms": float(np.sqrt(np.mean(d**2))),
                 "delta_absmax": float(np.max(np.abs(d))),
                 "delta_sq_share": float(np.sum(d**2) / total_sq) if total_sq else 0.0,
             }
         )
     return rows
-
-
-@dataclass(frozen=True)
-class ThreeBodyRecords:
-    """Per-trimer three-body term against how compact the trimer is.
-
-    ``max_pair_r`` is the compactness control, not the COM spread: a trimer is
-    only three-body-active when *every* pair is close, and one distant molecule
-    reduces it to a dimer plus a spectator however tight the other two are.
-    """
-
-    three_body: np.ndarray
-    pair_sum: np.ndarray
-    min_pair_r: np.ndarray
-    max_pair_r: np.ndarray
-
-    def __len__(self):
-        return len(self.three_body)
-
-    def compact(self, cutoff=7.0):
-        return self.max_pair_r < cutoff
-
-    def rms(self, mask=None):
-        values = self.three_body if mask is None else self.three_body[mask]
-        if len(values) == 0:
-            return float("nan")
-        return float(np.sqrt(np.mean(values**2)))
-
-    def relative_rms(self):
-        """rms(3-body) / rms(sum of pair interactions) -- is it worth sampling?"""
-        denom = float(np.sqrt(np.mean(self.pair_sum**2)))
-        return self.rms() / denom if denom else float("nan")
-
-
-def three_body_records(frames, units=EV_TO_KCAL):
-    """Three-body terms and compactness for every trimer, in kcal/mol."""
-    three_body, pair_sum, min_r, max_r = [], [], [], []
-
-    for frame in frames:
-        if int(frame.info["n_molecules"]) != 3:
-            continue
-        com = np.asarray(frame.info["molecular_com"], dtype=float)
-        i, j = np.triu_indices(len(com), k=1)
-        separations = np.linalg.norm(com[j] - com[i], axis=1)
-
-        three_body.append(float(frame.info["three_body_energy"]) * units)
-        pair_sum.append(float(np.sum(frame.info["pair_interaction_energies"])) * units)
-        min_r.append(separations.min())
-        max_r.append(separations.max())
-
-    return ThreeBodyRecords(
-        three_body=np.asarray(three_body),
-        pair_sum=np.asarray(pair_sum),
-        min_pair_r=np.asarray(min_r),
-        max_pair_r=np.asarray(max_r),
-    )
 
 
 # --- QA ----------------------------------------------------------------------
@@ -438,15 +269,12 @@ class QAReport:
 
     n_frames: int
     n_dimers: int
-    n_trimers: int
     n_pairs: int
     unique_ids: bool
     shard_seeds: dict
     monomer_energy_spread: float
     min_atom_distance: float
     hard_core_violations: int
-    three_body_max_error: float
-    pair_algebra_max_error: float
     baseline_max_error: float
     duplicate_signatures: int
     non_finite_frames: int
@@ -502,32 +330,25 @@ def _configuration_signature(frame, decimals=4):
 
 
 def qa_report(frames, config=None, potential=CACELLI_POTENTIAL):
-    """Check a campaign end to end.
-
-    The many-body checks are exact-arithmetic identities, not tolerances: the
-    generator *defines* ``three_body_energy`` as ``E_123 - sum(E_ij) +
-    sum(E_i)``, so any nonzero residual means the stored fields disagree with
-    each other and the frame was corrupted rather than merely imprecise. A
-    small float tolerance is still allowed for round-tripping through extxyz.
-    """
+    """Check a campaign end to end."""
     config = config or {}
     settings = config.get("settings", {})
     min_atom_distance = float(settings.get("min_atom_distance", 0.0))
 
     problems = []
-    n_dimers = n_trimers = 0
+    n_dimers = 0
     ids, signatures = [], []
     monomer_energies = []
-    three_body_error = pair_error = baseline_error = 0.0
+    baseline_error = 0.0
     min_distance = np.inf
     violations = non_finite = 0
 
     for frame in frames:
-        n_mol = int(frame.info["n_molecules"])
-        n_dimers += n_mol == 2
-        n_trimers += n_mol == 3
+        n_dimers += int(frame.info["n_molecules"]) == 2
 
-        ids.append((int(frame.info.get("shard", -1)), int(frame.info.get("config_index", -1))))
+        ids.append(
+            (int(frame.info.get("shard", -1)), int(frame.info.get("config_index", -1)))
+        )
         signatures.append(_configuration_signature(frame))
         monomer_energies.extend(np.atleast_1d(frame.info["monomer_energies"]).tolist())
 
@@ -536,35 +357,23 @@ def qa_report(frames, config=None, potential=CACELLI_POTENTIAL):
         violations += distance < min_atom_distance - 1e-9
 
         energy = float(frame.get_potential_energy())
-        forces = np.asarray(frame.get_forces(), dtype=float)
-        if not (np.isfinite(energy) and np.all(np.isfinite(forces))):
+        if not np.isfinite(energy):
             non_finite += 1
 
-        monomers = np.atleast_1d(np.asarray(frame.info["monomer_energies"], dtype=float))
-        if n_mol == 3:
-            pair_energies = np.asarray(frame.info["pair_energies"], dtype=float)
-            pair_ids = np.asarray(frame.info["pair_molecule_ids"], dtype=int)
-            stored_interactions = np.asarray(frame.info["pair_interaction_energies"], dtype=float)
-
-            expected = pair_energies - monomers[pair_ids[:, 0]] - monomers[pair_ids[:, 1]]
-            pair_error = max(pair_error, float(np.max(np.abs(expected - stored_interactions))))
-
-            expected_3b = energy - pair_energies.sum() + monomers.sum()
-            three_body_error = max(
-                three_body_error, abs(expected_3b - float(frame.info["three_body_energy"]))
-            )
-
-        # The stored cluster baseline against this module's per-pair rebuild:
-        # the check that licenses pair_records to attribute a trimer's summed
-        # gbq_interaction_energy to its individual pairs.
+        # The stored baseline against this module's per-pair rebuild: the check
+        # that licenses pair_records to trust gbq_interaction_energy directly.
         com = np.asarray(frame.info["molecular_com"], dtype=float)
         u = _normals(frame)
         i, j = np.triu_indices(len(com), k=1)
         rebuilt = float(np.sum(potential.pair_energy(u[i], u[j], com[j] - com[i])))
-        baseline_error = max(baseline_error, abs(rebuilt - float(frame.info["gbq_interaction_energy"])))
+        baseline_error = max(
+            baseline_error, abs(rebuilt - float(frame.info["gbq_interaction_energy"]))
+        )
 
     monomer_spread = (
-        float(np.max(monomer_energies) - np.min(monomer_energies)) if monomer_energies else 0.0
+        float(np.max(monomer_energies) - np.min(monomer_energies))
+        if monomer_energies
+        else 0.0
     )
     unique_ids = len(set(ids)) == len(ids)
     duplicates = len(signatures) - len(set(signatures))
@@ -579,34 +388,31 @@ def qa_report(frames, config=None, potential=CACELLI_POTENTIAL):
     if not unique_ids:
         problems.append("duplicate (shard, config_index)")
     if violations:
-        problems.append(f"{violations} hard-core violations below {min_atom_distance} A")
-    if three_body_error > 1e-6:
-        problems.append(f"three-body algebra residual {three_body_error:.3e} eV")
-    if pair_error > 1e-6:
-        problems.append(f"pair-interaction algebra residual {pair_error:.3e} eV")
+        problems.append(
+            f"{violations} hard-core violations below {min_atom_distance} A"
+        )
     if baseline_error > 1e-6:
         problems.append(f"GBQ baseline mismatch {baseline_error:.3e} eV")
     if duplicates:
         problems.append(f"{duplicates} duplicate configurations")
     if non_finite:
-        problems.append(f"{non_finite} frames with non-finite energy/forces")
+        problems.append(f"{non_finite} frames with non-finite energy")
     if settings.get("rigid", True) and monomer_spread > 1e-9:
-        problems.append(f"rigid run has a varying monomer reference ({monomer_spread:.3e} eV)")
+        problems.append(
+            f"rigid run has a varying monomer reference ({monomer_spread:.3e} eV)"
+        )
     if any(len(seeds) > 1 for seeds in shard_seeds.values()):
         problems.append("a shard mixes generator seeds")
 
     return QAReport(
         n_frames=len(frames),
         n_dimers=n_dimers,
-        n_trimers=n_trimers,
-        n_pairs=n_dimers + 3 * n_trimers,
+        n_pairs=n_dimers,
         unique_ids=unique_ids,
         shard_seeds=shard_seeds,
         monomer_energy_spread=monomer_spread,
         min_atom_distance=float(min_distance),
         hard_core_violations=violations,
-        three_body_max_error=three_body_error,
-        pair_algebra_max_error=pair_error,
         baseline_max_error=baseline_error,
         duplicate_signatures=duplicates,
         non_finite_frames=non_finite,
@@ -624,9 +430,15 @@ def _random_rotations(rng, n):
     w, x, y, z = q.T
     return np.stack(
         [
-            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], -1),
-            np.stack([2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], -1),
-            np.stack([2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], -1),
+            np.stack(
+                [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)], -1
+            ),
+            np.stack(
+                [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)], -1
+            ),
+            np.stack(
+                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)], -1
+            ),
         ],
         axis=1,
     )
@@ -706,7 +518,9 @@ def hard_core_pass_rate(
             direction = np.broadcast_to(np.array([0.0, 0.0, 1.0]), (n_trials, 3))
 
         pos_a = np.einsum("nij,kj->nki", rot_a, positions)
-        pos_b = np.einsum("nij,kj->nki", rot_b, positions) + radius * direction[:, None, :]
+        pos_b = (
+            np.einsum("nij,kj->nki", rot_b, positions) + radius * direction[:, None, :]
+        )
 
         delta = pos_a[:, :, None, :] - pos_b[:, None, :, :]
         closest = np.sqrt(np.min(np.sum(delta * delta, axis=-1), axis=(1, 2)))
@@ -716,6 +530,45 @@ def hard_core_pass_rate(
 
 
 # --- the MC reference --------------------------------------------------------
+
+
+def _mc_frame_orientations(frame, or_vecs=None):
+    """Unit disc normals for an MC ``ase.Atoms`` frame, from ``or_vecs`` if given.
+
+    Distinct from :func:`_normals`: a campaign frame carries orientation in
+    ``frame.info["or_vec"]``, an MC db frame in ``frame.arrays["or_vec"]``
+    (read from ``row.data`` in :func:`mc_pair_reference`, since
+    ``row.toatoms()`` does not carry it).
+    """
+    u = frame.arrays["or_vec"] if or_vecs is None else or_vecs
+    u = np.asarray(u, dtype=float)
+    return u / np.linalg.norm(u, axis=1, keepdims=True)
+
+
+def pair_geometry(frame, cutoff, or_vecs=None):
+    """All directed neighbour pairs within ``cutoff`` (PBC, incl. self-images).
+
+    The same quantities and conventions as
+    ``fitting_gbq.data.extract_periodic_pairs`` -- so pair statistics here stay
+    comparable with the fitting code -- but the centre index ``i`` is kept,
+    which that function discards.
+
+    Returns a dict of equal-length arrays: ``i``, ``j``, ``r`` (separation),
+    ``a_i``/``a_j`` (``r_hat . u``), ``b`` (``u_i . u_j``).
+    """
+    u = _mc_frame_orientations(frame, or_vecs)
+    i, j, offsets = neighbor_list("ijS", frame, cutoff)
+    disp = frame.positions[j] + offsets @ np.asarray(frame.cell) - frame.positions[i]
+    r = np.linalg.norm(disp, axis=1)
+    r_hat = disp / r[:, None]
+    return {
+        "i": i,
+        "j": j,
+        "r": r,
+        "a_i": np.einsum("pk,pk->p", r_hat, u[i]),
+        "a_j": np.einsum("pk,pk->p", r_hat, u[j]),
+        "b": np.einsum("pk,pk->p", u[i], u[j]),
+    }
 
 
 def mc_pair_reference(db_path, n_frames=20, cutoff=15.0, tail_fraction=0.5):
@@ -731,8 +584,6 @@ def mc_pair_reference(db_path, n_frames=20, cutoff=15.0, tail_fraction=0.5):
     uses. Energies are not defined for these pairs (an MC frame carries no
     per-pair label), so ``e_uma``/``delta`` are absent by construction.
     """
-    from asmcmc.utils.polymorph import pair_geometry
-
     with connect(str(db_path)) as db:
         row_ids = [row.id for row in db.select()]
         if not row_ids:

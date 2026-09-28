@@ -216,14 +216,21 @@ def potential_from_dict(d):
 
 # Resolve the default potential relative to the package (not the cwd, and not
 # this file's depth) so imports work regardless of where the interpreter is
-# launched. Points at the tracked uniform/seed_0 fit; switch via
-# GBQPotential.from_json(<other params.json>).
+# launched.
+#
+# DEFAULT_POTENTIAL = CACELLI_POTENTIAL (2026-09). It previously pointed at
+# data/my_fitted_gbq_params.json -- the condensed-phase GB+Q refit -- which
+# fails utils.validation.dimer_benchmark (well_rmse 4.10 kcal/mol vs Cacelli's
+# 0.44) and makes the cofacial stack repulsive (+2.61 kcal/mol vs UMA's
+# -2.02). Any MetropolisCalculator built without an explicit potential= was
+# silently getting that potential. See utils.validation for the physics gate a
+# candidate must clear before it may be the default; switch via
+# GBQPotential.from_json(<params.json>) once one does.
 from asmcmc.base.paths import data_path
 
-DEFAULT_PARAMS_PATH = data_path("my_fitted_gbq_params.json")
 CACELLI_PARAMS_PATH = data_path("lit_gbq_params.json")
-DEFAULT_POTENTIAL = GBQPotential.from_json(DEFAULT_PARAMS_PATH)
 CACELLI_POTENTIAL = GBQPotential.from_json(CACELLI_PARAMS_PATH)
+DEFAULT_POTENTIAL = CACELLI_POTENTIAL
 
 # Backward-compatible aliases, derived from the active default so dependents
 # (initialize.py lattice spacing, nvt_scan.py reduced-unit scales) stay

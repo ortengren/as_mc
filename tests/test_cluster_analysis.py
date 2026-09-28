@@ -5,6 +5,9 @@ calculator ``test_cluster_dataset.py`` uses, so the suite stays runnable from a
 fresh clone without fairchem or a GPU.
 """
 
+import os
+
+import ase.io
 import numpy as np
 import pytest
 
@@ -12,8 +15,6 @@ from asmcmc.base.potentials import CACELLI_POTENTIAL
 from asmcmc.data_preparation.cluster_analysis import (
     COFACIAL,
     _configuration_signature,
-    frame_records,
-    weight_diagnostics,
     EV_TO_KCAL,
     FAR_SLIPPED,
     PARALLEL_DISPLACED,
@@ -22,20 +23,23 @@ from asmcmc.data_preparation.cluster_analysis import (
     hard_core_pass_rate,
     load_campaign,
     motif_masks,
+    pair_geometry,
     pair_records,
     qa_report,
     radial_profile,
     reweighting_ess,
     stack_coordinates,
-    three_body_records,
 )
 from asmcmc.data_preparation.cluster_dataset import (
     SamplingSettings,
     build_reference_benzene,
     main,
 )
+from asmcmc.utils.geometry import coarse_grain_frame
 
 from test_cluster_dataset import StubCalculator  # noqa: F401  (shared stub)
+
+CIF = os.path.join(os.path.dirname(__file__), "..", "data", "benzene_pbca_cod_7238223.cif")
 
 
 @pytest.fixture
@@ -48,16 +52,25 @@ def stub_uma(monkeypatch):
 
 @pytest.fixture
 def campaign(tmp_path, stub_uma):
-    """A small full-decomposition campaign: dimers and trimers both present."""
+    """A small campaign of dimers, for exercising qa_report/pair_records."""
     main(
         n_configs=12,
         out_dir=tmp_path,
         n_shards=1,
-        decomposition="full",
-        settings=SamplingSettings(trimer_fraction=0.5),
+        decomposition="monomers",
         max_workers=1,
     )
     return load_campaign(tmp_path)
+
+
+@pytest.fixture(scope="module")
+def herringbone():
+    """The experimental Pbca crystal, coarse-grained and tiled.
+
+    The tracked cif is a single 4-molecule cell; repeating it gives enough
+    environments to be a meaningful reference while staying the same packing.
+    """
+    return coarse_grain_frame(ase.io.read(CIF)).repeat((3, 3, 3))
 
 
 def _dimer(offset, u_a=None, u_b=None):
@@ -100,49 +113,31 @@ def _dimer(offset, u_a=None, u_b=None):
 # --- the unpacking -----------------------------------------------------------
 
 
-def test_a_trimer_is_worth_three_pair_labels(campaign):
-    """The headline: pair count is dimers + 3*trimers, not the frame count."""
+def test_pair_geometry_matches_extract_periodic_pairs(herringbone):
+    """Same invariants as the fitting code, so statistics stay comparable."""
+    from asmcmc.fitting_gbq.data import extract_periodic_pairs
+
+    reference = extract_periodic_pairs(herringbone, "or_vec", 7.0)
+    pairs = pair_geometry(herringbone, 7.0)
+    mine = np.stack([pairs["r"], pairs["a_i"], pairs["a_j"], pairs["b"]], axis=1)
+    # Neighbour-list ordering is an implementation detail; compare as sets.
+    order_ref = np.lexsort(reference.T[::-1])
+    order_mine = np.lexsort(mine.T[::-1])
+    np.testing.assert_allclose(mine[order_mine], reference[order_ref], atol=1e-10)
+
+
+def test_pair_records_unpacks_one_row_per_frame(campaign):
     frames, _ = campaign
-    n_dimers = sum(f.info["n_molecules"] == 2 for f in frames)
-    n_trimers = sum(f.info["n_molecules"] == 3 for f in frames)
-    assert n_dimers and n_trimers, "fixture must exercise both cluster sizes"
-
     records = pair_records(frames)
-    assert len(records["r"]) == n_dimers + 3 * n_trimers
-    assert (records["n_molecules"] == 3).sum() == 3 * n_trimers
+    assert len(records["r"]) == len(frames)
 
 
-def test_trimer_pair_energies_are_the_stored_mlip_labels(campaign):
-    """Pair labels must be the frame's own values -- these came from real MLIP
-    calls on the 2-molecule subsets and must not be re-derived or approximated."""
+def test_pair_records_uses_the_stored_mlip_label(campaign):
+    """Pair labels must be the frame's own value, not re-derived."""
     frames, _ = campaign
     records = pair_records(frames)
-
-    stored = np.concatenate(
-        [
-            np.atleast_1d(
-                f.info["pair_interaction_energies"]
-                if f.info["n_molecules"] == 3
-                else f.info["interaction_energy"]
-            )
-            for f in frames
-        ]
-    )
+    stored = np.array([float(f.info["interaction_energy"]) for f in frames])
     assert np.allclose(np.sort(records["e_uma"]), np.sort(stored))
-
-
-def test_per_pair_baseline_sums_to_the_stored_cluster_baseline(campaign):
-    """A trimer's stored gbq_interaction_energy is cluster-summed; attributing
-    it to individual pairs is only legitimate if the rebuild reproduces it."""
-    frames, _ = campaign
-    records = pair_records(frames)
-
-    start = 0
-    for frame in frames:
-        count = 1 if frame.info["n_molecules"] == 2 else 3
-        rebuilt = records["e_gbq"][start : start + count].sum()
-        assert rebuilt == pytest.approx(float(frame.info["gbq_interaction_energy"]), abs=1e-9)
-        start += count
 
 
 def test_pair_geometry_matches_a_hand_built_dimer():
@@ -223,26 +218,21 @@ def test_the_cacelli_minima_classify_as_their_own_motifs():
     """The regression this cut exists for.
 
     An earlier version cut parallel-displaced as ``a_hi < 0.6``. The real PD
-    minimum has ``a_hi = 0.909``, so it was silently classified as *cofacial* and
-    the PD bucket collected far-slipped pairs instead -- which inverted the
-    conclusion about which motif was undersampled.
+    minimum has stacking height 3.5, slip 1.6 A -- a_hi = 0.909 -- so it was
+    silently classified as *cofacial* and the PD bucket collected far-slipped
+    pairs instead, which inverted the conclusion about which motif was
+    undersampled.
     """
-    from asmcmc.data_preparation.proposals import motif_reference
-
-    reference = motif_reference()
-
-    # PD: stacking height 3.5, slip 1.6 -> must be parallel-displaced, not cofacial.
     pd = pair_records([_dimer([1.6, 0.0, 3.5])])
     masks = motif_masks(pd)
     assert masks[PARALLEL_DISPLACED][0]
     assert not masks[COFACIAL][0]
 
-    r, _, a_i, _ = reference["parallel_displaced"]
-    assert r * np.sqrt(1 - a_i**2) == pytest.approx(1.6, abs=0.02)
-    assert a_i > 0.6, "the old a_hi<0.6 cut could never have selected this"
+    a_hi = 3.5 / np.hypot(3.5, 1.6)
+    assert a_hi > 0.6, "the old a_hi<0.6 cut could never have selected this"
 
-    cofacial_r = reference["cofacial"][0]
-    assert motif_masks(pair_records([_dimer([0.0, 0.0, cofacial_r])]))[COFACIAL][0]
+    # The real cofacial minimum (r=3.90, a_hi=1.0) still classifies as cofacial.
+    assert motif_masks(pair_records([_dimer([0.0, 0.0, 3.90])]))[COFACIAL][0]
 
 
 def test_stack_coordinates_decompose_the_separation():
@@ -274,30 +264,6 @@ def test_motifs_exclude_pairs_outside_the_well():
     assert not any(mask.any() for mask in motif_masks(far).values())
 
 
-def test_three_body_compactness_uses_the_widest_pair(campaign):
-    """One distant molecule makes a trimer a dimer plus a spectator however
-    tight the other two are, so compactness is max_pair_r, not min."""
-    frames, _ = campaign
-    records = three_body_records(frames)
-
-    assert len(records) == sum(f.info["n_molecules"] == 3 for f in frames)
-    assert np.all(records.max_pair_r >= records.min_pair_r)
-    assert np.array_equal(records.compact(cutoff=7.0), records.max_pair_r < 7.0)
-
-    # A spread trimer is excluded even when its closest pair is in contact.
-    tight_but_spread = (records.min_pair_r < 7.0) & (records.max_pair_r >= 7.0)
-    if tight_but_spread.any():
-        assert not records.compact(cutoff=7.0)[tight_but_spread].any()
-
-
-def test_three_body_records_are_kcal(campaign):
-    frames, _ = campaign
-    records = three_body_records(frames)
-    trimers = [f for f in frames if f.info["n_molecules"] == 3]
-    expected = float(trimers[0].info["three_body_energy"]) * EV_TO_KCAL
-    assert records.three_body[0] == pytest.approx(expected)
-
-
 # --- QA ----------------------------------------------------------------------
 
 
@@ -309,8 +275,6 @@ def test_qa_passes_on_a_clean_campaign(campaign):
     assert report.n_frames == len(frames)
     assert report.n_pairs == len(pair_records(frames)["r"])
     assert report.unique_ids
-    assert report.three_body_max_error == 0.0
-    assert report.pair_algebra_max_error == 0.0
 
 
 def test_qa_flags_a_hard_core_violation(campaign):
@@ -336,20 +300,9 @@ def test_qa_flags_duplicate_config_ids(campaign):
     assert any("duplicate (shard, config_index)" in p for p in report.problems)
 
 
-def test_qa_flags_broken_three_body_algebra(campaign):
-    frames, config = campaign
-    trimer = next(f for f in frames if f.info["n_molecules"] == 3)
-    trimer.info["three_body_energy"] = float(trimer.info["three_body_energy"]) + 0.5
-
-    report = qa_report(frames, config)
-    assert not report.ok
-    assert report.three_body_max_error == pytest.approx(0.5)
-    assert any("three-body algebra" in p for p in report.problems)
-
-
 def test_qa_flags_a_baseline_that_does_not_rebuild(campaign):
-    """If the stored cluster baseline disagrees with a per-pair rebuild, then
-    pair_records cannot attribute it and the Delta column is wrong."""
+    """If the stored baseline disagrees with a per-pair rebuild, then
+    pair_records's e_gbq column is wrong."""
     frames, config = campaign
     frames[0].info["gbq_interaction_energy"] = float(frames[0].info["gbq_interaction_energy"]) + 1.0
 
@@ -390,9 +343,18 @@ def test_pass_rate_rises_with_separation_and_saturates():
 
 def test_cofacial_seeding_beats_random_where_it_matters():
     """The point of the whole measurement: at close approach the *proposal*, not
-    the filter, is what limits short-range coverage."""
-    random_rate = hard_core_pass_rate([3.6], n_trials=600, seed=2)[0]
-    cofacial_rate = hard_core_pass_rate([3.6], orientations="cofacial", n_trials=600, seed=2)[0]
+    the filter, is what limits short-range coverage -- the reason the generator
+    accepts a lower yield at close range rather than seeding orientation.
+
+    Threshold pinned explicitly (2.4 A) rather than left to default through
+    ``SamplingSettings``: this measures a property of the *geometry* (random vs.
+    cofacial-seeded orientation), which should not silently drift if the
+    production hard-core floor changes.
+    """
+    random_rate = hard_core_pass_rate([3.6], n_trials=600, threshold=2.4, seed=2)[0]
+    cofacial_rate = hard_core_pass_rate(
+        [3.6], orientations="cofacial", n_trials=600, threshold=2.4, seed=2
+    )[0]
 
     assert random_rate < 0.10
     assert cofacial_rate > 0.60
@@ -419,84 +381,6 @@ def test_unknown_orientation_mode_is_rejected():
         hard_core_pass_rate([4.0], orientations="herringbone")
 
 
-# --- proposal density provenance ---------------------------------------------
-
-
-def test_pair_records_marks_only_the_seeded_pair(campaign):
-    """log_q is the density of the whole cluster, and the mixture proposes only
-    the (0,1) pair -- so a trimer's other two pairs must not be marked usable."""
-    frames, _ = campaign
-    for frame in frames:
-        frame.info["log_q"] = -7.5
-
-    records = pair_records(frames)
-    n_dimers = sum(f.info["n_molecules"] == 2 for f in frames)
-    n_trimers = sum(f.info["n_molecules"] == 3 for f in frames)
-
-    # one seeded pair per cluster, whatever its size
-    assert records["seeded"].sum() == n_dimers + n_trimers
-    assert np.all(records["log_q"] == -7.5)
-    # ... and the incidental trimer pairs are exactly the rest
-    assert (~records["seeded"]).sum() == 2 * n_trimers
-
-
-def test_log_q_is_nan_for_a_campaign_that_recorded_none(campaign):
-    """A uniform campaign has no proposal density; it must read as missing
-    rather than as some default that would silently weight wrong."""
-    frames, _ = campaign
-    records = pair_records(frames)
-    assert np.all(np.isnan(records["log_q"]))
-    assert not records["seeded"].any()
-
-
-def test_frame_records_are_per_frame_not_per_pair(campaign):
-    frames, _ = campaign
-    for i, frame in enumerate(frames):
-        frame.info["log_q"] = -float(i)
-        frame.info["proposal_component"] = "stacked_tight"
-
-    records = frame_records(frames)
-    assert len(records["log_q"]) == len(frames)
-    assert np.array_equal(records["log_q"], -np.arange(len(frames), dtype=float))
-    assert set(records["proposal_component"]) == {"stacked_tight"}
-
-
-def test_weight_diagnostics_are_perfect_for_a_flat_proposal():
-    """Identical densities mean identical weights: nothing is lost reweighting."""
-    stats = weight_diagnostics(np.full(500, -3.2))
-    assert stats["ess_fraction"] == pytest.approx(1.0)
-    assert stats["p99_over_p50"] == pytest.approx(1.0)
-    assert stats["log_q_range"] == pytest.approx(0.0)
-
-
-def test_ess_catches_a_lone_dominating_weight_that_the_robust_ratio_misses():
-    """Both statistics are reported because neither alone is sufficient.
-
-    One configuration proposed far more rarely than the rest dominates the
-    reweighted sample. ESS sees it; ``p99_over_p50`` is a robust quantile ratio
-    and deliberately does not, which is exactly why it is not reported alone.
-    """
-    log_q = np.concatenate([np.full(999, 0.0), [-25.0]])
-    stats = weight_diagnostics(log_q)
-
-    assert stats["ess_fraction"] < 0.01
-    assert stats["log_q_range"] == pytest.approx(25.0)
-    assert stats["p99_over_p50"] == pytest.approx(1.0)
-
-
-def test_weight_diagnostics_survive_large_log_q():
-    """exp(-log_q) overflows without the shift; the ESS must stay finite."""
-    stats = weight_diagnostics(np.linspace(-800, -600, 400))
-    assert np.isfinite(stats["ess_fraction"])
-    assert 0.0 < stats["ess_fraction"] <= 1.0
-
-
-def test_weight_diagnostics_on_no_density_is_nan():
-    stats = weight_diagnostics(np.full(10, np.nan))
-    assert stats["n"] == 0
-    assert np.isnan(stats["ess_fraction"])
-
-
 # --- duplicate detection -----------------------------------------------------
 
 
@@ -514,7 +398,7 @@ def test_matching_centre_distance_alone_is_not_a_duplicate():
     """The regression this fingerprint exists for.
 
     A distance-only signature is a *single number* for a dimer, so two unrelated
-    configurations collide at 1e-4 A with high probability once motif sampling
+    configurations collide at 1e-4 A with high probability once sampling
     concentrates separations into a narrow band -- and the first motif campaign
     duly reported a phantom duplicate. Same separation, different orientations,
     is a different configuration.
@@ -563,13 +447,3 @@ def test_reweighting_ess_is_zero_without_overlapping_support():
     frames = [_dimer([0.0, 0.0, d]) for d in np.linspace(4.0, 5.0, 60)]
     records = pair_records(frames)
     assert reweighting_ess(records, np.linspace(12.0, 14.0, 200)) == 0.0
-
-
-def test_weight_diagnostics_spread_survives_a_bottom_heavy_proposal():
-    """Most weights at the maximum is exactly where max-over-median reads 1.0 and
-    hides a real spread; the p99/p50 form must not."""
-    log_q = np.concatenate([np.full(900, 0.0), np.full(100, -9.0)])
-    stats = weight_diagnostics(log_q)
-    assert stats["p99_over_p50"] > 1e3
-    assert stats["log_q_range"] == pytest.approx(9.0)
-    assert stats["ess_fraction"] < 0.2

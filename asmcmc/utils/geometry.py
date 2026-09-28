@@ -1,9 +1,8 @@
 """Geometry helpers for turning atomistic molecular frames into ellipsoids.
 
 Kept free of ``anisoap``/``metatensor`` (unlike
-:mod:`asmcmc.data_preparation.generate_cg_reps`,
-which pulls in the optional ``[anisoap]`` extra) so the coarse-graining can be
-imported and tested from the base install.
+:mod:`asmcmc.fitting_anisoap.data`, which pulls in the optional ``[anisoap]``
+extra) so the coarse-graining can be imported and tested from the base install.
 
 **Why this exists: molecules that straddle a periodic boundary.** ASE's
 connectivity is PBC-aware, so identifying *which* atoms form a molecule works

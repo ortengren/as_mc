@@ -88,7 +88,7 @@ Add your own observable by subclassing `Measurement` (implement `compute` and
 | `asmcmc/fitting_gbq/` | Fit the GB + quadrupole potential to reference energies (`python -m asmcmc.fitting_gbq.run`) |
 | `asmcmc/data_preparation/` | Dataset generation for potential fitting (model-agnostic; model-specific featurisation lives in its fit package) |
 | `asmcmc/data_preparation/cluster_dataset.py` | UMA-labelled benzene cluster dataset generation (`python -m asmcmc.data_preparation.cluster_dataset`) |
-| `asmcmc/data_preparation/generate_cg_reps.py` | AniSOAP coarse-grained representation generation |
+| `asmcmc/fitting_anisoap/` | AniSOAP Delta-learning fit: descriptors, hyperparameter sweep, physics gate |
 | `tests/` | pytest suite |
 | `scripts/` | Run drivers and fit campaign shell scripts; `scripts/archive/` holds superseded ones |
 | `data/` | Input datasets (`data/xyz_files/` crystal structures; bulk files kept on disk, not in VCS) |

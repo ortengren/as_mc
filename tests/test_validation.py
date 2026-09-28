@@ -1,12 +1,16 @@
 import numpy as np
 import pytest
 
-from asmcmc.base.potentials import CACELLI_POTENTIAL, GBQPotential
+from asmcmc.base.potentials import CACELLI_POTENTIAL, DEFAULT_POTENTIAL, GBQPotential
 from asmcmc.utils.validation import (
+    DEFAULT_REFERENCE,
+    UMA_DIMER_PATH,
     DimerBenchmark,
     dimer_benchmark,
     dimer_scan,
     load_cacelli_dimers,
+    load_reference_dimers,
+    load_uma_dimers,
 )
 
 
@@ -141,6 +145,22 @@ def test_benchmark_discriminates(cacelli_bench, refit_bench):
     assert cacelli_bench.well_pearson_r > refit_bench.well_pearson_r + 0.5
 
 
+def test_default_potential_clears_the_gate(data):
+    """The regression that would have caught the DEFAULT_POTENTIAL footgun.
+
+    ``DEFAULT_POTENTIAL`` -- what every ``MetropolisCalculator`` gets when no
+    ``potential=`` is passed -- used to be ``data/my_fitted_gbq_params.json``,
+    a fit with exactly ``CONDENSED_REFIT``'s failure mode above (well_rmse 4.10
+    kcal/mol, cofacial stack +2.61 vs UMA's -2.02). A candidate must clear this
+    gate, per ``utils.validation``'s module docstring, before it may be the
+    default; this pins that the current default actually does.
+    """
+    bench = dimer_benchmark(DEFAULT_POTENTIAL, data)
+    assert bench.stacking_bound
+    assert bench.stacking_energy_kcal < 0.0
+    assert bench.well_rmse_kcal < 1.0
+
+
 # --- reporting ---
 
 def test_summary_is_printable(cacelli_bench):
@@ -148,3 +168,86 @@ def test_summary_is_printable(cacelli_bench):
     assert isinstance(cacelli_bench, DimerBenchmark)
     for token in ("cofacial", "parallel_displaced", "t_shaped", "RMSE", "bound"):
         assert token in s
+
+# --- UMA as ground truth ---
+# The project scores corrections against UMA, not MP2: GBQIII was *fitted* to
+# these MP2 rows, so scoring a correction against them rewards standing still.
+# The geometries survive as a structural probe; see the module docstring.
+
+@pytest.fixture(scope="module")
+def uma_data():
+    return load_uma_dimers()
+
+
+def test_default_reference_is_uma():
+    assert DEFAULT_REFERENCE == "uma"
+    assert load_reference_dimers().reference == "uma"
+
+
+def test_uma_shares_the_cacelli_geometry(data, uma_data):
+    """Same 197 dimers, different energies -- the point of the swap."""
+    assert len(uma_data) == len(data)
+    assert uma_data.reference == "uma" and data.reference == "mp2"
+    for attr in ("uhat1", "uhat2", "r", "euler_deg"):
+        np.testing.assert_allclose(getattr(uma_data, attr), getattr(data, attr))
+    assert not np.allclose(uma_data.energy_kcal, data.energy_kcal)
+
+
+def test_reference_dispatch(data, uma_data):
+    np.testing.assert_allclose(
+        load_reference_dimers("mp2").energy_kcal, data.energy_kcal
+    )
+    np.testing.assert_allclose(
+        load_reference_dimers("uma").energy_kcal, uma_data.energy_kcal
+    )
+    with pytest.raises(ValueError, match="unknown reference"):
+        load_reference_dimers("ccsdt")
+
+
+def test_geometry_mismatch_raises(tmp_path):
+    """A reference file that is not these geometries must not score silently."""
+    rows = UMA_DIMER_PATH.read_text().splitlines()
+    header, first = rows[0], rows[1].split(",")
+    first[1] = f"{float(first[1]) + 1.0:.4f}"  # shift one x by 1 A
+    bad = tmp_path / "dimer_energies.csv"
+    bad.write_text("\n".join([header, ",".join(first), *rows[2:]]))
+    with pytest.raises(ValueError, match="centre offsets disagree"):
+        load_uma_dimers(bad)
+
+
+def test_missing_reference_names_the_regeneration_command(tmp_path):
+    with pytest.raises(FileNotFoundError, match="uma_cacelli_dimers"):
+        load_uma_dimers(tmp_path / "absent.csv")
+
+
+def test_baseline_against_itself_shows_no_gain(uma_data):
+    """Scoring the baseline as the candidate must report exactly zero gain."""
+    b = dimer_benchmark(CACELLI_POTENTIAL, uma_data, baseline=CACELLI_POTENTIAL)
+    assert b.reference == "uma"
+    assert b.well_rmse_kcal == pytest.approx(b.baseline_well_rmse_kcal)
+    assert b.well_rmse_gain_kcal == pytest.approx(0.0, abs=1e-12)
+    assert b.improves_on_baseline is False
+
+
+def test_baseline_may_be_skipped(uma_data):
+    b = dimer_benchmark(CACELLI_POTENTIAL, uma_data, baseline=None)
+    assert b.baseline_name == ""
+    assert np.isnan(b.baseline_well_rmse_kcal)
+
+
+def test_uma_wants_every_well_deeper_than_gbq(uma_data):
+    """Why the reference swap changes the sign of the verdict.
+
+    Under UMA all three families bind deeper than GB+Q does, so the correct
+    correction *deepens* every well -- exactly the move the MP2-referenced
+    score recorded as 'over-binding the cofacial stack'.
+    """
+    b = dimer_benchmark(CACELLI_POTENTIAL, uma_data)
+    for family, well in b.wells.items():
+        assert well.ab_depth < well.model_at_ab_min, family
+
+
+def test_summary_names_the_reference_and_baseline(uma_data):
+    s = dimer_benchmark(CACELLI_POTENTIAL, uma_data).summary()
+    assert "reference: uma" in s
+    assert "vs baseline" in s

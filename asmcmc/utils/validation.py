@@ -8,15 +8,22 @@ The GB+Q refit to the PBE-D3 crystal dataset is the cautionary example: test
 RMSE ~3 kcal/mol on the crystals, yet *repulsive* at the 3.9 A cofacial
 stacking distance and anti-correlated with the true dimer wells.
 
-This module scores an energy model against near-ground-truth pair data that
-is independent of any condensed-phase fit: the ab initio (MP2/6-31G*,
-supermolecule) benzene dimer interaction energies of Cacelli et al.,
-J. Chem. Phys. 120, 3648 (2004) — the supplement data the GBQIII potential
-was originally fit to (``data/new_data/3648_1_supplements``).
+This module scores an energy model against pair data independent of any
+condensed-phase fit, over the benzene dimer geometries of Cacelli et al.,
+J. Chem. Phys. 120, 3648 (2004) (``data/new_data/3648_1_supplements``).
 
-Every candidate potential (GB+Q variants, AniSOAP models) should pass
-:func:`dimer_benchmark` *in addition to* condensed-phase parity; thresholds
-live in ``tests/test_validation.py``.
+**The reference is UMA, not MP2** (:data:`DEFAULT_REFERENCE`). MP2 remains
+loadable via ``reference="mp2"`` as a tracked diagnostic, but is never the
+thing to optimise against: GBQIII was fitted to those MP2 rows, so scoring a
+correction against them rewards staying put. The geometries are kept as a
+**structural probe, not a held-out test set** — dense, physically meaningful
+rays that check well depth, position and smoothness, which is the failure mode
+a random split cannot catch. Statistical generalisation belongs to the
+campaign's own held-out split.
+
+The verdict that matters is :attr:`DimerBenchmark.improves_on_baseline` —
+whether the correction beats the uncorrected potential — not
+:attr:`~DimerBenchmark.stacking_bound`, which a bad model can also pass.
 
 Geometry convention (from the supplement README): molecule A is fixed at the
 origin with its ring in the xz-plane, so its disc normal is +y. Each row
@@ -29,6 +36,7 @@ scanning all standard conventions against the 53 angle-carrying rows
 on the known T-shaped well (~ -2.3 kcal/mol near 5.0 A).
 """
 
+import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,11 +44,19 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from asmcmc.base.paths import data_path
+from asmcmc.base.potentials import CACELLI_POTENTIAL
 
 EV_TO_KCAL = 23.060541945329334
 EULER_SEQ = "zyx"
 
 CACELLI_DIMER_PATH = data_path("new_data", "3648_1_supplements", "abinitio.energies.txt")
+UMA_DIMER_PATH = data_path("uma_dimers", "dimer_energies.csv")
+
+REFERENCES = ("uma", "mp2")
+
+#: Which reference a benchmark scores against unless told otherwise. UMA is the
+#: project's chosen ground truth; see the reference note in ``CLAUDE.md``.
+DEFAULT_REFERENCE = "uma"
 
 # A's disc normal: ring in the xz-plane.
 _NORMAL_A = np.array([0.0, 1.0, 0.0])
@@ -61,6 +77,7 @@ class DimerData:
     r: np.ndarray
     energy_kcal: np.ndarray
     euler_deg: np.ndarray
+    reference: str = "mp2"
 
     def __len__(self):
         return len(self.energy_kcal)
@@ -89,6 +106,60 @@ def load_cacelli_dimers(path=None):
     uhat1 = np.tile(_NORMAL_A, (len(data), 1))
     uhat2 = Rotation.from_euler(EULER_SEQ, euler_deg, degrees=True).apply(_NORMAL_A)
     return DimerData(uhat1, uhat2, r, energy_kcal, euler_deg)
+
+
+def load_uma_dimers(path=None):
+    """The Cacelli dimer geometries carrying **UMA** interaction energies.
+
+    Geometry comes from :func:`load_cacelli_dimers`, never from the CSV, so both
+    references describe the same 197 dimers; the CSV's own coordinates are
+    checked against it and a mismatch raises rather than silently scoring a
+    different set. Regenerate with
+    ``python scripts/uma_cacelli_dimers.py --out-dir data/uma_dimers``.
+    """
+    path = UMA_DIMER_PATH if path is None else Path(path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"UMA dimer reference not found at {path}. Regenerate it with:\n"
+            "  python scripts/uma_cacelli_dimers.py --out-dir data/uma_dimers"
+        )
+
+    with open(path, newline="") as fh:
+        rows = list(csv.DictReader(fh))
+
+    geometry = load_cacelli_dimers()
+    if len(rows) != len(geometry):
+        raise ValueError(
+            f"{path} has {len(rows)} rows, the ab initio set has {len(geometry)}"
+        )
+
+    csv_r = np.array([[float(row[k]) for k in ("x", "y", "z")] for row in rows])
+    csv_euler = np.array(
+        [[float(row[k]) for k in ("alpha", "beta", "gamma")] for row in rows]
+    )
+    # The CSV stores offsets to 4 dp and angles to 2 dp, so compare at that scale.
+    if not np.allclose(csv_r, geometry.r, atol=1e-3):
+        raise ValueError(f"{path} centre offsets disagree with the ab initio geometries")
+    if not np.allclose(csv_euler, geometry.euler_deg, atol=1e-2):
+        raise ValueError(f"{path} Euler angles disagree with the ab initio geometries")
+
+    return DimerData(
+        geometry.uhat1,
+        geometry.uhat2,
+        geometry.r,
+        np.array([float(row["e_uma_kcal"]) for row in rows]),
+        geometry.euler_deg,
+        reference="uma",
+    )
+
+
+def load_reference_dimers(reference=DEFAULT_REFERENCE, path=None):
+    """Dimer probe set for ``reference`` -- ``"uma"`` (ground truth) or ``"mp2"``."""
+    if reference == "uma":
+        return load_uma_dimers(path)
+    if reference == "mp2":
+        return load_cacelli_dimers(path)
+    raise ValueError(f"unknown reference {reference!r}; expected one of {REFERENCES}")
 
 
 def dimer_scan(potential, uhat1, uhat2, rhat, dists):
@@ -154,7 +225,7 @@ class FamilyWell:
 
 @dataclass(frozen=True)
 class DimerBenchmark:
-    """Scores of one potential against the ab initio dimer set (kcal/mol)."""
+    """Scores of one potential against the reference dimer set (kcal/mol)."""
 
     name: str
     full_pearson_r: float
@@ -163,21 +234,49 @@ class DimerBenchmark:
     well_rmse_kcal: float
     stacking_energy_kcal: float
     wells: dict = field(default_factory=dict)
+    reference: str = "mp2"
+    baseline_name: str = ""
+    baseline_full_rmse_kcal: float = float("nan")
+    baseline_well_rmse_kcal: float = float("nan")
 
     @property
     def stacking_bound(self):
-        """True if the model binds the cofacial stack at the ab initio
+        """True if the model binds the cofacial stack at the reference
         equilibrium separation — the check the condensed-phase refit fails."""
         return self.stacking_energy_kcal < 0.0
 
+    @property
+    def well_rmse_gain_kcal(self):
+        """Baseline well RMSE minus this model's: positive means an improvement."""
+        return self.baseline_well_rmse_kcal - self.well_rmse_kcal
+
+    @property
+    def improves_on_baseline(self):
+        """Whether the correction beats the uncorrected baseline on the wells.
+
+        This is the verdict that matters, not :attr:`stacking_bound` -- a model
+        can bind the stack and still be worse than applying no correction.
+        """
+        return bool(self.well_rmse_gain_kcal > 0.0)
+
     def summary(self):
         lines = [
-            f"Dimer benchmark — {self.name}",
+            f"Dimer benchmark — {self.name}   [reference: {self.reference}]",
             f"  all rows      : r = {self.full_pearson_r:6.3f}   "
             f"RMSE = {self.full_rmse_kcal:6.3f} kcal/mol",
             f"  wells (E < 0) : r = {self.well_pearson_r:6.3f}   "
             f"RMSE = {self.well_rmse_kcal:6.3f} kcal/mol",
-            f"  cofacial stack at ab initio minimum: "
+        ]
+        if self.baseline_name:
+            lines.append(
+                f"  vs baseline {self.baseline_name}: "
+                f"well RMSE {self.baseline_well_rmse_kcal:6.3f} -> "
+                f"{self.well_rmse_kcal:6.3f} "
+                f"({self.well_rmse_gain_kcal:+.3f}, "
+                f"{'IMPROVES' if self.improves_on_baseline else 'no gain'})"
+            )
+        lines += [
+            f"  cofacial stack at reference minimum: "
             f"{self.stacking_energy_kcal:+.3f} kcal/mol "
             f"({'bound' if self.stacking_bound else 'REPULSIVE'})",
         ]
@@ -190,18 +289,22 @@ class DimerBenchmark:
         return "\n".join(lines)
 
 
-def dimer_benchmark(potential, data=None):
-    """Score ``potential`` (anything with ``pair_energy``) against the
-    ab initio dimers; returns a :class:`DimerBenchmark`.
+def dimer_benchmark(potential, data=None, baseline=CACELLI_POTENTIAL):
+    """Score ``potential`` (anything with ``pair_energy``) against the reference
+    dimers; returns a :class:`DimerBenchmark`.
 
-    Global metrics are computed over all rows and over the attractive subset
-    (E < 0, where MC spends its time and phase behaviour is decided); the
-    repulsive wall's huge dynamic range otherwise dominates — the same metric
-    trap as condensed-phase parity. Family wells compare depth and location
-    along each canonical ray.
+    This is a **structural probe, not a held-out test set**: the geometries are
+    dense, physically meaningful rays that check well depth, well position and
+    smoothness — the failure mode a random split cannot catch. Statistical
+    generalisation is the campaign's own held-out split.
+
+    Global metrics cover all rows and the attractive subset (E < 0, where MC
+    spends its time); the repulsive wall's dynamic range otherwise dominates.
+    ``baseline`` is the uncorrected potential a candidate has to beat; pass
+    ``None`` to skip it.
     """
     if data is None:
-        data = load_cacelli_dimers()
+        data = load_reference_dimers()
     model = potential.pair_energy(data.uhat1, data.uhat2, data.r) * EV_TO_KCAL
     ab = data.energy_kcal
 
@@ -250,8 +353,19 @@ def dimer_benchmark(potential, data=None):
             model_r = float(np.linalg.norm(r[k]))
         wells[fam] = FamilyWell(ab_depth, ab_r, model_at_ab_min, model_depth, model_r)
 
-    # cofacial stacking check at the ab initio minimum-energy separation
+    # cofacial stacking check at the reference minimum-energy separation
     cof = wells["cofacial"]
+
+    baseline_name, baseline_full, baseline_well = "", float("nan"), float("nan")
+    if baseline is not None:
+        base = baseline.pair_energy(data.uhat1, data.uhat2, data.r) * EV_TO_KCAL
+        attractive = ab < 0.0
+        baseline_name = getattr(baseline, "name", type(baseline).__name__)
+        baseline_full = float(np.sqrt(np.mean((base - ab) ** 2)))
+        baseline_well = float(
+            np.sqrt(np.mean((base[attractive] - ab[attractive]) ** 2))
+        )
+
     return DimerBenchmark(
         name=getattr(potential, "name", type(potential).__name__),
         full_pearson_r=full_r,
@@ -260,4 +374,8 @@ def dimer_benchmark(potential, data=None):
         well_rmse_kcal=well_rmse,
         stacking_energy_kcal=cof.model_at_ab_min,
         wells=wells,
+        reference=data.reference,
+        baseline_name=baseline_name,
+        baseline_full_rmse_kcal=baseline_full,
+        baseline_well_rmse_kcal=baseline_well,
     )
