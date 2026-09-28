@@ -18,7 +18,7 @@ from asmcmc.delta_learning.descriptors import (
     Hypers,
     descriptors,
     ellipsoid_frames,
-    load_geometry,
+    load_training_set,
     make_ellipsoid_frame,
     quaternions_from_normals,
 )
@@ -32,9 +32,9 @@ from asmcmc.delta_learning.sweep import (
     MODEL_NAME,
     POINTS_DIRNAME,
     build_grid,
-    evaluate_point,
+    fit_and_score_point,
     load_model,
-    main,
+    run_sweep,
 )
 from asmcmc.mc.potentials import CACELLI_POTENTIAL
 
@@ -182,7 +182,7 @@ def test_grid_is_the_full_product_ordered_most_expensive_first():
 
 @pytest.fixture
 def campaign(tmp_path):
-    """A tiny synthetic campaign in the shape ``load_geometry`` reads."""
+    """A tiny synthetic campaign in the shape ``load_training_set`` reads."""
     rng = np.random.default_rng(0)
     frames = []
     for i in range(N_CAMPAIGN):
@@ -208,10 +208,10 @@ def campaign(tmp_path):
 
 
 def test_geometry_reads_the_synthetic_campaign(campaign):
-    geometry = load_geometry(campaign, cache_dir=None)
-    assert len(geometry) == N_CAMPAIGN
-    assert geometry.com.shape == (2 * N_CAMPAIGN, 3)
-    assert len(ellipsoid_frames(geometry, Hypers())) == N_CAMPAIGN
+    training_set = load_training_set(campaign, cache_dir=None)
+    assert len(training_set) == N_CAMPAIGN
+    assert training_set.com.shape == (2 * N_CAMPAIGN, 3)
+    assert len(ellipsoid_frames(training_set, Hypers())) == N_CAMPAIGN
 
 
 def test_a_point_writes_its_three_artifacts_and_the_model_round_trips(campaign, tmp_path):
@@ -228,7 +228,7 @@ def test_a_point_writes_its_three_artifacts_and_the_model_round_trips(campaign, 
         "dimers": None,
         "meta": {},
     }
-    record = evaluate_point(hypers.to_dict(), cfg)
+    record = fit_and_score_point(hypers.to_dict(), cfg)
     assert record["skipped"] is False
     assert record["extras"]["n_features"] == hypers.n_features
 
@@ -262,7 +262,7 @@ def test_the_descriptor_build_and_the_fit_are_timed_separately(campaign, tmp_pat
         "dimers": None,
         "meta": {},
     }
-    timing = evaluate_point(hypers.to_dict(), cfg)["timing"]
+    timing = fit_and_score_point(hypers.to_dict(), cfg)["timing"]
 
     # Exactly these two -- the geometry load and the gate are deliberately not
     # measured, so a stray extra key means something crept back in.
@@ -285,8 +285,8 @@ def test_rerunning_a_point_skips_instead_of_refitting(campaign, tmp_path):
         "dimers": None,
         "meta": {},
     }
-    first = evaluate_point(hypers.to_dict(), cfg)
-    second = evaluate_point(hypers.to_dict(), cfg)
+    first = fit_and_score_point(hypers.to_dict(), cfg)
+    second = fit_and_score_point(hypers.to_dict(), cfg)
 
     assert first["skipped"] is False and second["skipped"] is True
     assert second["test"] == first["test"]
@@ -321,12 +321,12 @@ def test_an_interrupted_sweep_resumes_to_the_same_comparison(campaign, tmp_path)
         progress=False,
     )
     full = tmp_path / "full"
-    main(out_dir=str(full), **kwargs)
+    run_sweep(out_dir=str(full), **kwargs)
 
     # A sweep that only got through one of the two points, then re-run whole.
     partial = tmp_path / "partial"
-    main(out_dir=str(partial), **{**kwargs, "cutoffs": (6.0,)})
-    records = main(out_dir=str(partial), **kwargs)
+    run_sweep(out_dir=str(partial), **{**kwargs, "cutoffs": (6.0,)})
+    records = run_sweep(out_dir=str(partial), **kwargs)
 
     assert sum(r["skipped"] for r in records) == 1
     assert _comparison_rows(partial / COMPARISON_NAME) == _comparison_rows(
@@ -336,7 +336,7 @@ def test_an_interrupted_sweep_resumes_to_the_same_comparison(campaign, tmp_path)
 
 def test_the_sweep_records_the_gate_without_filtering_on_it(campaign, tmp_path):
     """Both verdicts are legitimate results; nothing is dropped for failing."""
-    records = main(
+    records = run_sweep(
         campaign=str(campaign),
         out_dir=str(tmp_path / "gated"),
         angular=(3,),
@@ -382,14 +382,14 @@ def test_regate_rescores_a_finished_point_without_refitting(campaign, tmp_path):
         / MODEL_NAME
     )
 
-    first = main(reference="mp2", **kwargs)[0]
+    first = run_sweep(reference="mp2", **kwargs)[0]
     model_before = model_path.read_bytes()
 
     # Without regate the stale gate comes back untouched -- the trap.
-    stale = main(reference="uma", **kwargs)[0]
+    stale = run_sweep(reference="uma", **kwargs)[0]
     assert stale["gate"]["reference"] == "mp2"
 
-    again = main(reference="uma", regate=True, **kwargs)[0]
+    again = run_sweep(reference="uma", regate=True, **kwargs)[0]
 
     assert again["skipped"] is True, "regate must not refit"
     assert model_path.read_bytes() == model_before, "regate must not touch the model"

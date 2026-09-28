@@ -18,7 +18,7 @@ import numpy as np
 from scipy.optimize import differential_evolution
 from tqdm import tqdm
 
-from asmcmc.fitting_gbq.data import precompute_dots_gb
+from asmcmc.fitting_gbq.data import gb_from_dots
 
 PARAM_NAMES = ["sigma0", "eps0", "kappa", "kappa_prime", "mu", "nu", "xi", "Q", "E_intra"]
 
@@ -91,12 +91,12 @@ def predict_per_mol(theta, data):
     GB and quadrupole are summed separately: only GB is recomputed per call,
     while the quadrupole's geometry-only part is precomputed once
     (``data.quad_geom_per_frame``) and scaled here by the sole quadrupole
-    parameter ``Q**2``.  Algebraically identical to summing ``gbq`` per pair,
+    parameter ``Q**2``.  Algebraically identical to summing ``gbq_from_dots`` per pair,
     but it drops the per-pair quadrupole work from the fit's inner loop.
     """
     sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q, E_intra = theta
     sum_sq, diff_sq, b_sq = data.gb_geom
-    gb_pair = precompute_dots_gb(
+    gb_pair = gb_from_dots(
         data.r_mag,
         data.a_i,
         data.a_j,

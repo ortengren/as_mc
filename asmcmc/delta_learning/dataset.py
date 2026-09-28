@@ -151,7 +151,7 @@ def _skew(v):
 
 
 @dataclass(frozen=True)
-class RadialProposal:
+class RadialSampler:
     """Centre-centre separations: volume-uniform, or concentrated on the wells."""
 
     lo: float = 3.4
@@ -186,9 +186,9 @@ def _unit(rng):
     return v / np.linalg.norm(v)
 
 
-def draw_uniform(rng, radial=None):
+def sample_dimer_geometry(rng, radial=None):
     """Both orientations and the separation drawn uniformly."""
-    radial = radial or RadialProposal()
+    radial = radial or RadialSampler()
     return _unit(rng), _unit(rng), float(radial.sample(rng, 1)[0]) * _unit(rng)
 
 
@@ -237,8 +237,8 @@ class SamplingSettings:
             raise ValueError("max_placement_attempts must be positive")
 
     def radial(self):
-        """The :class:`~asmcmc.delta_learning.dataset.RadialProposal` these imply."""
-        return RadialProposal(
+        """The :class:`~asmcmc.delta_learning.dataset.RadialSampler` these imply."""
+        return RadialSampler(
             lo=self.min_com_distance,
             hi=self.max_com_distance,
             mode=self.radial_sampling,
@@ -315,14 +315,14 @@ def _assemble(molecules, extra_info: dict) -> Atoms:
     return cluster
 
 
-def make_cluster(
+def make_dimer(
     reference: Atoms,
     rng: np.random.Generator,
     settings: SamplingSettings,
 ) -> Atoms:
     """One non-periodic dimer, free of hard clashes.
 
-    Orientations and separation are uniform (:func:`draw_uniform`);
+    Orientations and separation are uniform (:func:`sample_dimer_geometry`);
     the geometry window (``min_atom_distance``/``max_atom_distance``) is what
     shapes the campaign, not a taxonomy. A rejected draw costs no MLIP call --
     only the geometry below is evaluated -- so the low clearance rate of a
@@ -330,7 +330,7 @@ def make_cluster(
     face-to-face-seeded one) costs CPU attempts, not budget.
     """
     for _ in range(settings.max_placement_attempts):
-        u0, u1, r_vec = draw_uniform(rng, settings.radial())
+        u0, u1, r_vec = sample_dimer_geometry(rng, settings.radial())
         normals = [u0, u1]
         coms = [np.zeros(3), r_vec]
 
@@ -590,7 +590,7 @@ def generate_shard(
         index = done + written
         rng = config_rng(seed, index, attempt)
         try:
-            cluster = make_cluster(reference, rng, settings)
+            cluster = make_dimer(reference, rng, settings)
             energy = evaluate_energy(cluster, calculator)
             info = {
                 **molecular_geometry_metadata(cluster),
@@ -652,7 +652,7 @@ def _shard_sizes(n_configs: int, n_shards: int) -> list[int]:
     return [base + (1 if k < extra else 0) for k in range(n_shards)]
 
 
-def main(
+def generate_dataset(
     n_configs: int = 500,
     out_dir="results/clusters/pilot",
     n_shards: int | None = None,
@@ -817,7 +817,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--max-com-distance",
         type=float,
         default=default_settings.max_com_distance,
-        help="Matches MetropolisCalculator's nl_radius and the AniSOAP cutoff.",
+        help="Matches MetropolisSampler's nl_radius and the AniSOAP cutoff.",
     )
     geometry.add_argument(
         "--min-atom-distance",
@@ -872,7 +872,7 @@ def cli(argv=None) -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
 
-    results = main(
+    results = generate_dataset(
         n_configs=args.n_configs,
         out_dir=args.out_dir,
         n_shards=args.n_shards,

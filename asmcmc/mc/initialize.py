@@ -49,7 +49,7 @@ def _shape_from_potential(potential):
 
 
 class Initializer(ABC):
-    """Builds the starting frame for a :class:`MetropolisCalculator` and records
+    """Builds the starting frame for a :class:`MetropolisSampler` and records
     how it was built.
 
     Subclasses implement :meth:`generate` (return a fresh ``ase.Atoms``) and
@@ -72,7 +72,7 @@ class Initializer(ABC):
 
     def set_potential(self, potential):
         """Adopt the simulated potential's shape so the built geometry matches
-        the potential the MC runs. Called by :class:`MetropolisCalculator`. The
+        the potential the MC runs. Called by :class:`MetropolisSampler`. The
         base implementation is a no-op (e.g. :class:`FrameInitializer`, which
         wraps an existing frame and synthesises no lattice); lattice builders
         override it, keeping any shape they were constructed with explicitly."""

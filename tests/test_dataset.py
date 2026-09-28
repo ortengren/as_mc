@@ -24,8 +24,8 @@ from asmcmc.delta_learning.dataset import (
     gbq_baseline,
     _shard_sizes,
     generate_shard,
-    main,
-    make_cluster,
+    generate_dataset,
+    make_dimer,
     molecule_indices,
     shard_count,
     shard_path,
@@ -82,7 +82,7 @@ def test_mixture_sampling_concentrates_on_the_wells():
 # --- cluster construction ----------------------------------------------------
 
 def test_cluster_shape_and_labelling(reference):
-    cluster = make_cluster(reference, config_rng(3, 0), SamplingSettings())
+    cluster = make_dimer(reference, config_rng(3, 0), SamplingSettings())
 
     assert len(cluster) == 24
     assert int(cluster.info["n_molecules"]) == 2
@@ -103,7 +103,7 @@ def test_no_cluster_violates_the_hard_core(reference):
     are rejection criteria, not suggestions."""
     s = SamplingSettings(min_atom_distance=2.5, max_atom_distance=4.0)
     for k in range(25):
-        cluster = make_cluster(reference, config_rng(5, k), s)
+        cluster = make_dimer(reference, config_rng(5, k), s)
         pos = cluster.get_positions()
         ids = cluster.arrays["molecule_id"]
         d = np.linalg.norm(
@@ -118,7 +118,7 @@ def test_rigid_monomers_are_the_reference_up_to_rotation(reference):
     That is only true if each molecule is a *rigid rotation* of the reference,
     which this pins via the (rotation-invariant) sorted internal distances.
     """
-    cluster = make_cluster(reference, config_rng(7, 0), SamplingSettings())
+    cluster = make_dimer(reference, config_rng(7, 0), SamplingSettings())
     ref_d = np.sort(reference.get_all_distances().ravel())
     for block in molecule_indices(cluster):
         mol = cluster[block]
@@ -129,17 +129,17 @@ def test_rigid_monomers_are_the_reference_up_to_rotation(reference):
 
 def test_config_rng_is_reproducible_and_index_dependent(reference):
     """Per-configuration seeding is what makes resume exact."""
-    a = make_cluster(reference, config_rng(11, 4), SamplingSettings())
-    b = make_cluster(reference, config_rng(11, 4), SamplingSettings())
-    c = make_cluster(reference, config_rng(11, 5), SamplingSettings())
+    a = make_dimer(reference, config_rng(11, 4), SamplingSettings())
+    b = make_dimer(reference, config_rng(11, 4), SamplingSettings())
+    c = make_dimer(reference, config_rng(11, 5), SamplingSettings())
     np.testing.assert_allclose(a.get_positions(), b.get_positions())
     assert not np.allclose(a.get_positions(), c.get_positions())
 
 
 def test_retry_salt_changes_the_stream(reference):
     """A failed placement must not be retried from an identical stream."""
-    a = make_cluster(reference, config_rng(11, 4, 0), SamplingSettings())
-    b = make_cluster(reference, config_rng(11, 4, 1), SamplingSettings())
+    a = make_dimer(reference, config_rng(11, 4, 0), SamplingSettings())
+    b = make_dimer(reference, config_rng(11, 4, 1), SamplingSettings())
     assert not np.allclose(a.get_positions(), b.get_positions())
 
 
@@ -148,7 +148,7 @@ def test_retry_salt_changes_the_stream(reference):
 def test_decomposition_algebra_is_exact(reference, make_stub_calculator):
     """interaction = E_cluster - sum E_mono."""
     calc = make_stub_calculator()
-    cluster = make_cluster(reference, config_rng(13, 0), SamplingSettings())
+    cluster = make_dimer(reference, config_rng(13, 0), SamplingSettings())
     e_cluster = -0.1 * len(cluster)
 
     out = energy_decomposition(cluster, calc, e_cluster, mode="monomers")
@@ -160,7 +160,7 @@ def test_decomposition_algebra_is_exact(reference, make_stub_calculator):
 
 def test_rigid_monomer_energy_skips_the_per_molecule_calls(reference, make_stub_calculator):
     """The cost saving is real: passing the constant makes zero monomer calls."""
-    cluster = make_cluster(reference, config_rng(13, 1), SamplingSettings())
+    cluster = make_dimer(reference, config_rng(13, 1), SamplingSettings())
 
     calc = make_stub_calculator()
     energy_decomposition(cluster, calc, -1.0, mode="monomers")
@@ -175,12 +175,12 @@ def test_rigid_monomer_energy_skips_the_per_molecule_calls(reference, make_stub_
 
 
 def test_decomposition_none_is_empty(reference, make_stub_calculator):
-    cluster = make_cluster(reference, config_rng(13, 2), SamplingSettings())
+    cluster = make_dimer(reference, config_rng(13, 2), SamplingSettings())
     assert energy_decomposition(cluster, make_stub_calculator(), -1.0, mode="none") == {}
 
 
 def test_subset_atoms_selects_whole_molecules(reference):
-    cluster = make_cluster(reference, config_rng(13, 3), SamplingSettings())
+    cluster = make_dimer(reference, config_rng(13, 3), SamplingSettings())
     sub = subset_atoms(cluster, [0])
     assert len(sub) == 12
     assert sub.info["charge"] == 0 and sub.info["spin"] == 1
@@ -229,14 +229,14 @@ def test_baseline_names_the_potential_it_used():
 def _run(tmp_path, n_configs, **kw):
     """Drive a campaign through the in-process path.
 
-    ``n_shards=1`` is deliberate, not a simplification: ``main`` dispatches
+    ``n_shards=1`` is deliberate, not a simplification: ``generate_dataset`` dispatches
     multi-shard runs through a **spawned** ProcessPoolExecutor, and a
     monkeypatched ``load_uma_calculator`` does not survive that boundary -- the
     child re-imports the real module and would quietly load real UMA, turning
     these into slow MLIP tests. The shard plan the pool would execute is
     tested directly in ``test_shard_plan_*`` below.
     """
-    return main(
+    return generate_dataset(
         n_configs=n_configs,
         out_dir=tmp_path,
         n_shards=1,
@@ -367,7 +367,7 @@ def test_campaign_stamps_a_config(stub_uma, tmp_path):
 
 def test_unknown_radial_sampling_is_rejected(stub_uma, tmp_path):
     with pytest.raises(ValueError, match="radial_sampling"):
-        main(
+        generate_dataset(
             n_configs=2,
             out_dir=tmp_path,
             settings=SamplingSettings(radial_sampling="nonsense"),

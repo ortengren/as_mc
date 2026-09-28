@@ -1,5 +1,5 @@
 from asmcmc.mc.initialize import HerringboneLatticeInitializer
-from asmcmc.mc.metropolis import MetropolisCalculator
+from asmcmc.mc.metropolis import MetropolisSampler
 from asmcmc.mc.potentials import CACELLI_POTENTIAL
 from asmcmc.mc.measurements import (
     TrajectoryAnalyzer,
@@ -9,7 +9,7 @@ from asmcmc.mc.measurements import (
     NematicOrderParameter,
     AverageEnthalpy,
 )
-from asmcmc.mc.metropolis import continue_point
+from asmcmc.mc.metropolis import continue_equilibration
 
 import pickle
 import json
@@ -44,7 +44,7 @@ def build_initializer():
 
 
 def build_calculator():
-    return MetropolisCalculator(
+    return MetropolisSampler(
         T,
         P,
         initializer=build_initializer(),
@@ -67,7 +67,7 @@ def equilibrate():
 def resume_equilibration():
     """Resume the last stage of the ramp and equilibrate further."""
 
-    continue_point(
+    continue_equilibration(
         OUTPUT_DIR,
         extra_steps=9_200_000,
         block_size=N_PARTICLES,
@@ -78,7 +78,7 @@ def resume_equilibration():
 
 
 def run_simulation():
-    metro = MetropolisCalculator.from_equilibration(OUTPUT_DIR)
+    metro = MetropolisSampler.from_equilibration(OUTPUT_DIR)
     metro.calculate_trajectory(
         num_steps=15_000_000, block_size=N_PARTICLES, num_eq_steps=0, buffer_size=500
     )

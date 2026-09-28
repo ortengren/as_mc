@@ -24,14 +24,14 @@ from asmcmc.delta_learning.dataset_analysis import (
     radial_profile,
     stack_coordinates,
 )
-from asmcmc.delta_learning.dataset import build_reference_benzene, main
+from asmcmc.delta_learning.dataset import build_reference_benzene, generate_dataset
 
 
 
 @pytest.fixture
 def campaign(tmp_path, stub_uma):
     """A small campaign of dimers, for exercising qa_report/pair_records."""
-    main(
+    generate_dataset(
         n_configs=12,
         out_dir=tmp_path,
         n_shards=1,

@@ -97,7 +97,7 @@ def nvt_decide_accept(old_en, new_en, beta):
 
 
 # TODO: Double check NVT logic
-class MetropolisCalculator:
+class MetropolisSampler:
     """Main class for the Metropolis Monte Carlo simulation.  This class handles
     most of the core logic of the simulation.
     """
@@ -260,7 +260,7 @@ class MetropolisCalculator:
         metro.step_count = row.step
         return metro
 
-    def calc_energy(self, center_idx):
+    def particle_energy(self, center_idx):
         """Calculate the energy of particle at index `center_idx`."""
 
         center_pos = self.current_frame.positions[center_idx].copy()
@@ -363,7 +363,7 @@ class MetropolisCalculator:
             rand_idx = random.randint(0, num_particles - 1)
 
             # calculate particle's contribution to total energy
-            old_energy = self.calc_energy(rand_idx)
+            old_energy = self.particle_energy(rand_idx)
 
             # record original position
             old_pos = self.current_frame.positions[rand_idx].copy()
@@ -378,7 +378,7 @@ class MetropolisCalculator:
             self.nl.update(self.current_frame)
 
             # calculate new energy
-            new_energy = self.calc_energy(rand_idx)
+            new_energy = self.particle_energy(rand_idx)
 
             # decide whether to accept trial move
             if self.npt_ensemble:
@@ -413,7 +413,7 @@ class MetropolisCalculator:
             rand_idx = random.randint(0, num_particles - 1)
 
             # calculate particle's contribution to total energy
-            old_energy = self.calc_energy(rand_idx)
+            old_energy = self.particle_energy(rand_idx)
 
             # record original orientation
             old_quat = self.current_frame.arrays["c_q"][rand_idx].copy()
@@ -430,7 +430,7 @@ class MetropolisCalculator:
             self.current_frame.arrays["or_vec"][rand_idx] = new_or_vec
 
             # calculate new energy
-            new_energy = self.calc_energy(rand_idx)
+            new_energy = self.particle_energy(rand_idx)
 
             # decide whether to accept trial move
             if self.npt_ensemble:
@@ -768,7 +768,7 @@ class MetropolisCalculator:
                         )
 
 
-def continue_point(
+def continue_equilibration(
     output_dir,
     extra_steps,
     block_size=None,
@@ -778,26 +778,20 @@ def continue_point(
     max_or_delt=None,
     progress=False,
 ):
-    """Resume one finished point in place and equilibrate ``extra_steps`` further.
+    """Resume the equilibration in ``output_dir`` and run ``extra_steps`` more.
 
-    Rebuilds the sampler from the point's ``run_config.json`` + last
-    ``equilibration.db`` frame via ``from_equilibration`` (which restores
-    ``step_count`` and points ``output_dir`` back at the same dir), then calls the
-    re-entrant ``equilibrate`` with an *absolute* target of ``step_count +
-    extra_steps`` so the trajectory is appended to the same db rather than
-    restarted. ``block_size`` defaults to the particle count.
+    Rebuilds the sampler with :meth:`MetropolisSampler.from_equilibration` and
+    calls the re-entrant ``equilibrate`` with the absolute target ``step_count +
+    extra_steps``, so frames are appended to the same ``equilibration.db``.
+    ``block_size`` defaults to the particle count. ``vol_delt`` optionally resets
+    the carried volume-move width; ``max_or_delt`` caps the re-tuned rotation
+    width, so pass the cap the run was started with.
 
-    ``vol_delt`` (default ``None``) is forwarded to ``from_equilibration`` to
-    optionally reset the carried volume move width before continuing.
-    ``max_or_delt`` is forwarded to ``equilibrate`` to cap the adapted rotation
-    width (a resumed run re-tunes its deltas, so an uncapped continuation could
-    otherwise walk or_delt back up).
-
-    Reseeds the global RNG from the point's seed subdir (offset by the resumed
-    step) so the extension is reproducible and independent of how many other
-    points a worker continued first.
+    The global RNGs are reseeded from the run directory's name plus the resumed
+    step. A numeric name (``.../7``) makes the extension reproducible; any other
+    name falls back to ``hash()``, which varies between Python processes.
     """
-    metro = MetropolisCalculator.from_equilibration(output_dir, vol_delt=vol_delt)
+    metro = MetropolisSampler.from_equilibration(output_dir, vol_delt=vol_delt)
 
     seed_name = os.path.basename(os.path.normpath(output_dir))
     seed = int(seed_name) if seed_name.isdigit() else abs(hash(output_dir))

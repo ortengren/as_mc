@@ -20,7 +20,7 @@ from asmcmc.mc.initialize import (
     HerringboneLatticeInitializer,
     FrameInitializer,
 )
-from asmcmc.mc.metropolis import MetropolisCalculator
+from asmcmc.mc.metropolis import MetropolisSampler
 
 
 # --- helpers ---
@@ -195,22 +195,22 @@ def test_frame_initializer_wraps_supplied_frame():
     assert init.density == pytest.approx(27 / frame.get_volume())
 
 
-# --- MetropolisCalculator frame-source resolution ---
+# --- MetropolisSampler frame-source resolution ---
 
 def test_calculator_defaults_to_random_lattice_initializer():
-    mc = MetropolisCalculator(temp=300, pressure=0.0)
+    mc = MetropolisSampler(temp=300, pressure=0.0)
     assert isinstance(mc.initializer, RandomLatticeInitializer)
 
 
 def test_calculator_wraps_init_frame_in_frame_initializer():
     frame = generate_random_config(27, density=0.3, seed=0)
-    mc = MetropolisCalculator(temp=300, pressure=0.0, init_frame=frame)
+    mc = MetropolisSampler(temp=300, pressure=0.0, init_frame=frame)
     assert isinstance(mc.initializer, FrameInitializer)
 
 
 def test_calculator_accepts_explicit_initializer():
     init = RandomLatticeInitializer(n_particles=27, density=0.3, seed=0)
-    mc = MetropolisCalculator(temp=300, pressure=0.0, initializer=init)
+    mc = MetropolisSampler(temp=300, pressure=0.0, initializer=init)
     assert mc.initializer is init
 
 
@@ -218,7 +218,7 @@ def test_calculator_rejects_both_init_frame_and_initializer():
     frame = generate_random_config(27, density=0.3, seed=0)
     init = RandomLatticeInitializer(n_particles=27, density=0.3, seed=0)
     with pytest.raises(ValueError, match="at most one"):
-        MetropolisCalculator(
+        MetropolisSampler(
             temp=300, pressure=0.0, init_frame=frame, initializer=init
         )
 
@@ -342,7 +342,7 @@ def test_columnar_initializer_provenance_records_packing():
 
 def test_calculator_accepts_columnar_initializer():
     init = ColumnarLatticeInitializer(n_particles=50, density=1.0, seed=0)
-    mc = MetropolisCalculator(temp=300, pressure=0.0, initializer=init)
+    mc = MetropolisSampler(temp=300, pressure=0.0, initializer=init)
     assert mc.initializer is init
 
 
@@ -393,7 +393,7 @@ def test_calculator_propagates_potential_shape_to_initializer():
     passed to the calculator, so geometry can't silently use the default shape."""
     pot = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=6.0, kappa=0.5)
     init = ColumnarLatticeInitializer(n_particles=64, density=1.0, seed=0)
-    mc = MetropolisCalculator(
+    mc = MetropolisSampler(
         temp=300, pressure=0.0, initializer=init, potential=pot, nl_radius=10.0
     )
     assert (init.sigma0, init.kappa) == (6.0, 0.5)
@@ -537,5 +537,5 @@ def test_herringbone_initializer_provenance_records_packing_and_jitter():
 
 def test_calculator_accepts_herringbone_initializer():
     init = HerringboneLatticeInitializer(n_particles=125, seed=0)
-    mc = MetropolisCalculator(temp=100, pressure=0.0, initializer=init)
+    mc = MetropolisSampler(temp=100, pressure=0.0, initializer=init)
     assert mc.initializer is init

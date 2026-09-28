@@ -10,7 +10,7 @@ import pytest
 from ase.db import connect
 
 from asmcmc.mc.initialize import ColumnarLatticeInitializer
-from asmcmc.mc.metropolis import MetropolisCalculator
+from asmcmc.mc.metropolis import MetropolisSampler
 from asmcmc.mc.diagnostics import (
     PLOTS,
     TAIL_FRACTION,
@@ -30,7 +30,7 @@ def _point(out_dir, num_steps=12 * 27):
     """One equilibrated 27-particle run dir, seeded so repeated builds match."""
     random.seed(100)
     np.random.seed(100)
-    metro = MetropolisCalculator(
+    metro = MetropolisSampler(
         temp=300.0,
         pressure=0.0,
         initializer=ColumnarLatticeInitializer(n_particles=27, density=0.3, seed=100),
@@ -156,7 +156,7 @@ def test_render_db_stem_prefixes_output(tmp_path):
     d = _point(str(tmp_path / "scan"))
     render(d, which=["energy"])
     # produce a simulation.db alongside, then render that
-    MetropolisCalculator.from_equilibration(d).calculate_trajectory(
+    MetropolisSampler.from_equilibration(d).calculate_trajectory(
         num_steps=4 * 27, block_size=27, num_eq_steps=None, progress=False
     )
     written = render(d, which=["energy"], db_name="simulation.db")

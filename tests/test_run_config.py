@@ -2,7 +2,7 @@ import json
 
 from asmcmc.mc.run_config import RunConfig
 from asmcmc.mc.potentials import DEFAULT_POTENTIAL, potential_from_dict
-from asmcmc.mc.metropolis import MetropolisCalculator
+from asmcmc.mc.metropolis import MetropolisSampler
 
 
 def _default_config(**overrides):
@@ -70,7 +70,7 @@ def test_runconfig_written_as_plain_json(tmp_path):
 
 def test_equilibrate_writes_run_config(two_particle_frame, tmp_path):
     """A run stamps run_config.json with the static run definition."""
-    metro = MetropolisCalculator(
+    metro = MetropolisSampler(
         temp=250.0,
         pressure=0.0,
         init_frame=two_particle_frame,
@@ -94,7 +94,7 @@ def test_equilibrate_writes_run_config(two_particle_frame, tmp_path):
 
 def test_write_config_is_write_once(two_particle_frame, tmp_path):
     """A second write attempt (e.g. on resume) must not clobber the stamped config."""
-    metro = MetropolisCalculator(
+    metro = MetropolisSampler(
         temp=250.0,
         pressure=0.0,
         init_frame=two_particle_frame,

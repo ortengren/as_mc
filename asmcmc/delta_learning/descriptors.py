@@ -2,7 +2,7 @@
 
 Three jobs, in the order the pipeline uses them.
 
-**1. Read the campaign once.** :func:`load_geometry` pulls only what the fit
+**1. Read the campaign once.** :func:`load_training_set` pulls only what the fit
 needs out of the extxyz shards (centres, principal axes, the Delta target) into flat
 CSR-style arrays cached as one small ``.npz``. The shards are ~32 MB of extxyz whose
 ``info`` fields are ``_JSON`` blobs, so parsing them repeatedly would be inefficient.
@@ -121,7 +121,7 @@ class Hypers:
 
 
 @dataclass(frozen=True)
-class Geometry:
+class TrainingSet:
     """A campaign as flat arrays: one row per molecule, one entry per frame.
 
     CSR layout (i.e. molecule ``m`` of frame ``f`` is row ``offsets[f] + m``) so
@@ -153,7 +153,7 @@ class Geometry:
         return slice(int(self.offsets[i]), int(self.offsets[i + 1]))
 
     def subset(self, idx):
-        """A :class:`Geometry` holding only frames ``idx``, re-offset."""
+        """A :class:`TrainingSet` holding only frames ``idx``, re-offset."""
         idx = np.asarray(idx, dtype=int)
         counts = self.counts()[idx]
         offsets = np.concatenate([[0], np.cumsum(counts)]).astype(int)
@@ -164,7 +164,7 @@ class Geometry:
             if len(idx)
             else np.zeros(0, dtype=int)
         )
-        return Geometry(
+        return TrainingSet(
             com=self.com[rows],
             axes=self.axes[rows],
             offsets=offsets,
@@ -193,8 +193,8 @@ def _campaign_signature(campaign_dir):
     return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
 
 
-def load_geometry(campaign_dir, cache_dir=None, refresh=False):
-    """Read a campaign into a :class:`Geometry`, caching the extraction."""
+def load_training_set(campaign_dir, cache_dir=None, refresh=False):
+    """Read a campaign into a :class:`TrainingSet`, caching the extraction."""
     campaign_dir = Path(campaign_dir)
     signature = _campaign_signature(campaign_dir)
 
@@ -203,7 +203,7 @@ def load_geometry(campaign_dir, cache_dir=None, refresh=False):
         cache_path = Path(cache_dir) / f"geometry_{campaign_dir.name}_{signature}.npz"
         if cache_path.exists() and not refresh:
             with np.load(cache_path) as handle:
-                return Geometry(**{k: handle[k] for k in handle.files})
+                return TrainingSet(**{k: handle[k] for k in handle.files})
 
     com, axes = [], []
     delta, e_uma, e_gbq, min_pair_r, n_mol = [], [], [], [], []
@@ -226,7 +226,7 @@ def load_geometry(campaign_dir, cache_dir=None, refresh=False):
         n_mol.append(len(centres))
 
     counts = np.array(n_mol, dtype=int)
-    geometry = Geometry(
+    training_set = TrainingSet(
         com=np.concatenate(com).astype(float),
         axes=np.concatenate(axes).astype(float),
         offsets=np.concatenate([[0], np.cumsum(counts)]).astype(int),
@@ -239,8 +239,8 @@ def load_geometry(campaign_dir, cache_dir=None, refresh=False):
 
     if cache_path is not None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(cache_path, **geometry.__dict__)
-    return geometry
+        np.savez(cache_path, **training_set.__dict__)
+    return training_set
 
 
 def quaternions_from_axes(axes):
@@ -312,27 +312,27 @@ def make_ellipsoid_frame(centres, quaternions, hypers, cell=None, pbc=False):
     return stamp_ellipsoid(frame, quaternions, hypers)
 
 
-def ellipsoid_frames(geometry, hypers):
-    """A :class:`Geometry` as AniSOAP-ready one-bead-per-molecule frames.
+def ellipsoid_frames(training_set, hypers):
+    """A :class:`TrainingSet` as AniSOAP-ready one-bead-per-molecule frames.
 
     Cheap enough to redo per hyperparameter point: the quaternions do not depend
     on the hypers but the diameters do, and rebuilding costs far less than
     caching a frame list per point.
     """
     frames = []
-    for i in range(len(geometry)):
-        rows = geometry.frame_slice(i)
+    for i in range(len(training_set)):
+        rows = training_set.frame_slice(i)
         frames.append(
             make_ellipsoid_frame(
-                geometry.com[rows],
-                quaternions_from_axes(geometry.axes[rows]),
+                training_set.com[rows],
+                quaternions_from_axes(training_set.axes[rows]),
                 hypers,
             )
         )
     return frames
 
 
-def build_calculator(hypers):
+def anisoap_projection(hypers):
     """The configured ``EllipsoidalDensityProjection``.
 
     Imported lazily: ``anisoap`` pulls in a compiled extension and metatensor,
@@ -402,7 +402,7 @@ def _any_pair_within_cutoff(frames, cutoff):
     return False
 
 
-def descriptor_rows(frames, hypers, calculator=None):
+def descriptor_rows(frames, hypers, projection=None):
     """Raw per-centre power-spectrum rows and the frame each belongs to.
 
     Returns ``(values, structure_ids, n_features)``.
@@ -419,7 +419,7 @@ def descriptor_rows(frames, hypers, calculator=None):
     ``cg_combine``, because it takes a max over angular channels that do not exist.
     The right answer for our use case is an all-zero descriptor.
     """
-    calculator = calculator or build_calculator(hypers)
+    projection = projection or anisoap_projection(hypers)
     if not _any_pair_within_cutoff(frames, hypers.cutoff_radius):
         return (
             np.zeros((0, hypers.n_features), dtype=float),
@@ -427,7 +427,7 @@ def descriptor_rows(frames, hypers, calculator=None):
             hypers.n_features,
         )
 
-    tensor = calculator.power_spectrum(frames, mean_over_samples=False)
+    tensor = projection.power_spectrum(frames, mean_over_samples=False)
     block = tensor.block()
 
     # (rows, components, features), with a single l=0 component under lcut=0.
@@ -440,7 +440,7 @@ def descriptor_rows(frames, hypers, calculator=None):
     return values, ids, values.shape[1]
 
 
-def descriptors(frames, hypers, calculator=None):
+def descriptors(frames, hypers, projection=None):
     """Per-frame descriptors, ``(len(frames), n_features)``.
 
     Per-centre rows are summed into their frame, not averaged: the target is
@@ -452,14 +452,14 @@ def descriptors(frames, hypers, calculator=None):
     predict exactly zero interaction there. Paired with a no-intercept fit that gives
     the model the correct dissociation limit by construction.
     """
-    values, ids, n_features = descriptor_rows(frames, hypers, calculator=calculator)
+    values, ids, n_features = descriptor_rows(frames, hypers, projection=projection)
     matrix = np.zeros((len(frames), n_features), dtype=float)
     np.add.at(matrix, ids, values)
     return matrix
 
 
-def campaign_descriptors(geometry, hypers):
+def campaign_descriptors(training_set, hypers):
     """:func:`ellipsoid_frames` + :func:`descriptors` for a whole campaign."""
-    return descriptors(ellipsoid_frames(geometry, hypers), hypers)
+    return descriptors(ellipsoid_frames(training_set, hypers), hypers)
 
 

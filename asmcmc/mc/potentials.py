@@ -104,7 +104,7 @@ def calc_total_energy(frame, nl_cutoff, potential=None):
 
 # TODO: Class structure may need to be updated for AniSOAP implementation.  Currently
 # handles only pairwise potentials.  This change would also likely require changes to
-# MetropolisCalculator.
+# MetropolisSampler.
 class Potential(ABC):
     """Interface the Metropolis sampler depends on: a named, pairwise energy.
 

@@ -19,7 +19,7 @@ Delta-skill and worth keeping separate from it.
 **Three things are built once, before the loop**, because the alternative
 silently changes what is being measured:
 
-* the :class:`~asmcmc.delta_learning.descriptors.Geometry` -- parsed in the *parent*
+* the :class:`~asmcmc.delta_learning.descriptors.TrainingSet` -- parsed in the *parent*
   so spawned workers hit a warm ``.npz`` instead of each re-parsing 32 MB of
   extxyz concurrently;
 * the train/test split -- every point must be scored on identical held-out
@@ -75,7 +75,7 @@ from asmcmc.delta_learning.dataset import load_dataset_config
 from asmcmc.delta_learning.descriptors import (
     Hypers,
     campaign_descriptors,
-    load_geometry,
+    load_training_set,
 )
 from asmcmc.delta_learning.model import (
     AniSOAPDeltaPotential,
@@ -259,7 +259,7 @@ def _row_from_metrics(record):
     }
 
 
-def evaluate_point(hypers_dict, cfg):
+def fit_and_score_point(hypers_dict, cfg):
     """Fit and score one hyperparameter point, writing its three artifacts.
 
     Module-level and taking plain dicts so the payload pickles into a spawned
@@ -304,19 +304,19 @@ def evaluate_point(hypers_dict, cfg):
     # in any way the sweep is asking about. perf_counter, not time(): a monotonic
     # clock that cannot step under an NTP adjustment mid-point.
     timing = {}
-    geometry = load_geometry(cfg["campaign"], cache_dir=cfg["cache_dir"])
+    training_set = load_training_set(cfg["campaign"], cache_dir=cfg["cache_dir"])
 
     mark = time.perf_counter()
-    X = campaign_descriptors(geometry, hypers)
+    X = campaign_descriptors(training_set, hypers)
     timing["descriptors_s"] = round(time.perf_counter() - mark, 3)
 
     mark = time.perf_counter()
     result = fit_delta(
         X,
-        geometry.delta,
+        training_set.delta,
         np.asarray(cfg["train_idx"], dtype=int),
         np.asarray(cfg["test_idx"], dtype=int),
-        min_pair_r=geometry.min_pair_r,
+        min_pair_r=training_set.min_pair_r,
         hypers=hypers,
         cv_seed=cfg["cv_seed"],
     )
@@ -369,7 +369,7 @@ def write_comparison(path, records):
     return rows
 
 
-def main(
+def run_sweep(
     campaign=DEFAULT_CAMPAIGN,
     out_dir=DEFAULT_OUT,
     angular=DEFAULT_ANGULAR,
@@ -397,8 +397,8 @@ def main(
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
 
     # Parse the campaign here, once, so the workers inherit a warm cache.
-    geometry = load_geometry(campaign, cache_dir=cache_dir, refresh=refresh)
-    train_idx, test_idx = train_test_split(len(geometry), test_frac, split_seed)
+    training_set = load_training_set(campaign, cache_dir=cache_dir, refresh=refresh)
+    train_idx, test_idx = train_test_split(len(training_set), test_frac, split_seed)
 
     grid = build_grid(angular, radial, cutoffs)
     cfg = {
@@ -414,7 +414,7 @@ def main(
         "meta": {
             "campaign": str(campaign),
             "reference": reference,
-            "n_frames": len(geometry),
+            "n_frames": len(training_set),
             "n_train": int(len(train_idx)),
             "n_test": int(len(test_idx)),
             "test_frac": test_frac,
@@ -425,7 +425,7 @@ def main(
     }
 
     print(
-        f"{len(grid)} points over {len(geometry)} frames "
+        f"{len(grid)} points over {len(training_set)} frames "
         f"({len(train_idx)} train / {len(test_idx)} test), "
         f"gate={'regate ' + reference if cfg['regate'] else 'on' if gate else 'off'}"
     )
@@ -434,7 +434,7 @@ def main(
     if workers == 1 or len(grid) == 1:
         for hypers in tqdm(grid, desc="sweep", disable=not progress):
             try:
-                records.append(evaluate_point(hypers.to_dict(), cfg))
+                records.append(fit_and_score_point(hypers.to_dict(), cfg))
             except Exception as exc:
                 failures.append((hypers.key, exc))
                 print(f"\n  {hypers.key} failed: {exc!r}")
@@ -445,7 +445,7 @@ def main(
             max_workers=num_workers, mp_context=get_context("spawn")
         ) as pool:
             futures = {
-                pool.submit(evaluate_point, hypers.to_dict(), cfg): hypers.key
+                pool.submit(fit_and_score_point, hypers.to_dict(), cfg): hypers.key
                 for hypers in grid
             }
             for future in tqdm(
@@ -538,7 +538,7 @@ def build_parser():
 
 def cli(argv=None):
     args = build_parser().parse_args(argv)
-    return main(
+    return run_sweep(
         campaign=args.campaign,
         out_dir=args.out_dir,
         angular=tuple(args.angular),

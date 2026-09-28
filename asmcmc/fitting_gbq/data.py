@@ -9,7 +9,7 @@ import numpy as np
 # Targets are the ABSOLUTE per-molecule DFT energies (energy_pa * atoms_per_mol).
 # The intramolecular energy is frame-independent (rigid benzene), so it enters
 # the model as a single fitted constant E_intra, added once per molecule at the
-# frame level (fit.predict_per_mol) -- NOT inside the per-pair gbq() below.
+# frame level (fit.predict_per_mol) -- NOT inside the per-pair gbq_from_dots() below.
 #
 # extract_periodic_pairs returns every neighbour pair in BOTH directions (and
 # each periodic self-image once per direction), so a molecule's lattice energy
@@ -45,7 +45,7 @@ def extract_periodic_pairs(frame, orientation_key, cutoff):
 # on any fitted parameter, so the fit precomputes them once (FitData.gb_geom)
 # and threads them through to skip rebuilding them on every evaluation. Default
 # None recomputes them, keeping every caller (e.g. gbq) backward-compatible.
-def precompute_dots_gb_shape_func(a_i, a_j, b_ij, sigma0, kappa, sum_sq=None, diff_sq=None):
+def gb_shape_function_from_dots(a_i, a_j, b_ij, sigma0, kappa, sum_sq=None, diff_sq=None):
     chi = (kappa**2 - 1) / (kappa**2 + 1)
     if sum_sq is None:
         sum_sq = (a_i + a_j) ** 2
@@ -57,7 +57,7 @@ def precompute_dots_gb_shape_func(a_i, a_j, b_ij, sigma0, kappa, sum_sq=None, di
     return sigma
 
 
-def precompute_dots_gb_axial_energy(b_ij, kappa, b_sq=None):
+def gb_axial_energy_from_dots(b_ij, kappa, b_sq=None):
     chi = (kappa**2 - 1) / (kappa**2 + 1)
     if b_sq is None:
         b_sq = b_ij**2
@@ -65,7 +65,7 @@ def precompute_dots_gb_axial_energy(b_ij, kappa, b_sq=None):
     return 1 / np.sqrt(1 - (chi**2) * b_sq)
 
 
-def precompute_dots_gb_directional_energy(a_i, a_j, b_ij, kappa_prime, mu, sum_sq=None, diff_sq=None):
+def gb_directional_energy_from_dots(a_i, a_j, b_ij, kappa_prime, mu, sum_sq=None, diff_sq=None):
     chi_prime = (kappa_prime ** (1 / mu) - 1) / (kappa_prime ** (1 / mu) + 1)
     if sum_sq is None:
         sum_sq = (a_i + a_j) ** 2
@@ -76,17 +76,17 @@ def precompute_dots_gb_directional_energy(a_i, a_j, b_ij, kappa_prime, mu, sum_s
     return 1 - (chi_prime / 2) * (term1 + term2)
 
 
-def precompute_dots_gb_en_func(
+def gb_energy_function_from_dots(
     a_i, a_j, b_ij, eps0, kappa, kappa_prime, mu, nu, sum_sq=None, diff_sq=None, b_sq=None
 ):
-    eps1 = precompute_dots_gb_axial_energy(b_ij, kappa, b_sq=b_sq)
-    eps2 = precompute_dots_gb_directional_energy(
+    eps1 = gb_axial_energy_from_dots(b_ij, kappa, b_sq=b_sq)
+    eps2 = gb_directional_energy_from_dots(
         a_i, a_j, b_ij, kappa_prime, mu, sum_sq=sum_sq, diff_sq=diff_sq
     )
     return eps0 * (eps1**nu) * (eps2**mu)
 
 
-def precompute_dots_gb(
+def gb_from_dots(
     r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu, xi,
     sum_sq=None, diff_sq=None, b_sq=None,
 ):
@@ -96,11 +96,11 @@ def precompute_dots_gb(
         diff_sq = (a_i - a_j) ** 2
     if b_sq is None:
         b_sq = b_ij**2
-    eps = precompute_dots_gb_en_func(
+    eps = gb_energy_function_from_dots(
         a_i, a_j, b_ij, eps0, kappa, kappa_prime, mu, nu,
         sum_sq=sum_sq, diff_sq=diff_sq, b_sq=b_sq,
     )
-    sigma = precompute_dots_gb_shape_func(
+    sigma = gb_shape_function_from_dots(
         a_i, a_j, b_ij, sigma0, kappa, sum_sq=sum_sq, diff_sq=diff_sq
     )
     # sigma already folds in sigma0 (shape_func returns sigma0 / sqrt(...)), so
@@ -111,7 +111,7 @@ def precompute_dots_gb(
     return 4 * eps * t6 * (t6 - 1)
 
 
-def precompute_dots_quadrupole(r_mag, a_i, a_j, b_ij, Q):
+def quadrupole_from_dots(r_mag, a_i, a_j, b_ij, Q):
     prefactor = 0.75 * (Q**2) / (r_mag**5)
     s = (
         1
@@ -123,16 +123,16 @@ def precompute_dots_quadrupole(r_mag, a_i, a_j, b_ij, Q):
     return prefactor * s
 
 
-def gbq(r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q):
+def gbq_from_dots(r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q):
     """Pairwise GB + quadrupole energy (vectorises over pair arrays).
 
     E_intra is intentionally absent: it is a per-molecule constant added once
     per molecule in fit.predict_per_mol, not per pair.
     """
-    gb = precompute_dots_gb(
+    gb = gb_from_dots(
         r_mag, a_i, a_j, b_ij, sigma0, eps0, kappa, kappa_prime, mu, nu, xi
     )
-    q = precompute_dots_quadrupole(r_mag, a_i, a_j, b_ij, Q)
+    q = quadrupole_from_dots(r_mag, a_i, a_j, b_ij, Q)
     return gb + q
 
 
@@ -163,7 +163,7 @@ class FitData:
         """Per-frame, geometry-only quadrupole factor; quad energy = ``Q**2 *`` it.
 
         The quadrupole pair energy is ``Q**2`` times a purely geometric factor
-        (``0.75 * s / r^5``; see :func:`precompute_dots_quadrupole`), so a
+        (``0.75 * s / r^5``; see :func:`quadrupole_from_dots`), so a
         frame's quadrupole lattice energy factorises as
         ``Q**2 * quad_geom_per_frame``. ``Q`` is the only quadrupole parameter,
         so this array depends on geometry alone and is identical across every
@@ -193,7 +193,7 @@ class FitData:
         ``sum_sq = (a_i + a_j)**2``, ``diff_sq = (a_i - a_j)**2``,
         ``b_sq = b_ij**2`` -- the parameter-independent pieces of the GB shape /
         axial / directional terms. Precomputed once and threaded into
-        :func:`precompute_dots_gb` so they are not rebuilt on every fit
+        :func:`gb_from_dots` so they are not rebuilt on every fit
         evaluation. Memoised on first use (``cached_property``).
         """
         return (

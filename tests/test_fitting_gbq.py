@@ -3,7 +3,7 @@ import ase
 import pytest
 
 from asmcmc.mc.potentials import CACELLI_POTENTIAL, gb, quadrupole
-from asmcmc.fitting_gbq.data import gbq, extract_periodic_pairs, FitData
+from asmcmc.fitting_gbq.data import gbq_from_dots, extract_periodic_pairs, FitData
 from asmcmc.fitting_gbq.fit import (
     predict_per_mol,
     boltzmann_weights,
@@ -83,7 +83,7 @@ def _synthetic_fitdata(n_frames=4, pairs_per_frame=6, seed=1):
 
 
 def test_gbq_matches_potentials_gb_plus_quadrupole():
-    """gbq(invariants) == potentials.gb + quadrupole(vectors) on random pairs.
+    """gbq_from_dots(invariants) == potentials.gb + quadrupole(vectors) on random pairs.
 
     Guards the vectorised re-implementation in data.py from drifting away from
     the exact functions the MC uses.
@@ -100,7 +100,7 @@ def test_gbq_matches_potentials_gb_plus_quadrupole():
     a_j = np.einsum("pk,pk->p", r_hat, u2)
     b_ij = np.einsum("pk,pk->p", u1, u2)
 
-    got = gbq(r_mag, a_i, a_j, b_ij, *GB_PARAMS.values(), QQ)
+    got = gbq_from_dots(r_mag, a_i, a_j, b_ij, *GB_PARAMS.values(), QQ)
     ref = gb(u1, u2, r_vec, **GB_PARAMS) + np.squeeze(quadrupole(u1, u2, r_vec, QQ))
     np.testing.assert_allclose(got, ref, rtol=1e-10, atol=1e-12)
 

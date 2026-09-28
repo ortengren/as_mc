@@ -7,16 +7,16 @@ import pytest
 from ase.db import connect
 
 from asmcmc.mc.metropolis import (
-    MetropolisCalculator,
+    MetropolisSampler,
     MIN_VOL_DELT,
     MAX_VOL_DELT,
     MAX_OR_DELT,
+    continue_equilibration,
     npt_decide_accept,
 )
 from asmcmc.mc.initialize import RandomLatticeInitializer
 from asmcmc.mc.potentials import calc_total_energy
 from asmcmc.mc.trial_moves import calculate_vol_move
-from asmcmc.mc.metropolis import continue_point
 from asmcmc.mc.measurements import TrajectoryAnalyzer, AverageEnergy
 from asmcmc.units import BOLTZCONST
 
@@ -42,7 +42,7 @@ def four_particle_frame():
 
 
 def make_metro(frame, tmp_path, **kwargs):
-    return MetropolisCalculator(
+    return MetropolisSampler(
         temp=300,
         pressure=0.0,
         init_frame=frame,
@@ -196,7 +196,7 @@ def test_from_equilibration_restores_aniso_vol(four_particle_frame, tmp_path):
     the non-default value proves it is read back, not just re-defaulted."""
     metro = make_metro(four_particle_frame, tmp_path, aniso_vol=False)
     metro.equilibrate(num_steps=100, block_size=50, buffer_size=10)
-    resumed = MetropolisCalculator.from_equilibration(str(tmp_path / "sim"))
+    resumed = MetropolisSampler.from_equilibration(str(tmp_path / "sim"))
     assert resumed.aniso_vol is False
 
 
@@ -239,7 +239,7 @@ def test_resume_has_no_energy_jump(four_particle_frame, tmp_path):
     metro.equilibrate(num_steps=500, block_size=50, buffer_size=1, progress=False)
     last_step = metro.step_count
 
-    resumed = MetropolisCalculator.from_equilibration(str(tmp_path / "sim"))
+    resumed = MetropolisSampler.from_equilibration(str(tmp_path / "sim"))
     np.testing.assert_allclose(
         resumed.current_energy, metro.current_energy, rtol=1e-6, atol=1e-9,
         err_msg="energy jumped across resume — incremental drift was not re-synced",
@@ -509,7 +509,7 @@ def test_from_equilibration_restores_state(four_particle_frame, tmp_path):
     db = connect(out + "/equilibration.db")
     row = db.get(db.count())
 
-    resumed = MetropolisCalculator.from_equilibration(out)
+    resumed = MetropolisSampler.from_equilibration(out)
 
     # static run definition (from run_config.json)
     assert resumed.temp == metro.temp
@@ -539,13 +539,13 @@ def test_from_equilibration_resets_vol_delt(four_particle_frame, tmp_path):
     out = str(tmp_path / "sim")
     row = connect(out + "/equilibration.db").get(connect(out + "/equilibration.db").count())
 
-    reset = MetropolisCalculator.from_equilibration(out, vol_delt=0.05)
+    reset = MetropolisSampler.from_equilibration(out, vol_delt=0.05)
     assert reset.vol_delt == 0.05                 # overridden, not the carried value
     assert reset.pos_delt == row.pos_delta        # other deltas still from the db
     assert reset.or_delt == row.or_delta
     assert reset.step_count == row.step           # still resumes in place
 
-    kept = MetropolisCalculator.from_equilibration(out)  # default keeps tuned value
+    kept = MetropolisSampler.from_equilibration(out)  # default keeps tuned value
     assert kept.vol_delt == row.vol_delta
 
 
@@ -559,7 +559,7 @@ def test_from_equilibration_appends_and_continues(four_particle_frame, tmp_path)
     before = db.count()
     last_step = db.get(before).step
 
-    resumed = MetropolisCalculator.from_equilibration(str(tmp_path / "sim"))
+    resumed = MetropolisSampler.from_equilibration(str(tmp_path / "sim"))
     resumed.equilibrate(num_steps=last_step + 200, block_size=50, buffer_size=10)
 
     steps = [r.step for r in connect(db_path).select()]
@@ -575,7 +575,7 @@ def test_from_equilibration_preserves_run_config(four_particle_frame, tmp_path):
     cfg_path = tmp_path / "sim" / "run_config.json"
     original = cfg_path.read_text()
 
-    resumed = MetropolisCalculator.from_equilibration(str(tmp_path / "sim"))
+    resumed = MetropolisSampler.from_equilibration(str(tmp_path / "sim"))
     resumed.equilibrate(num_steps=300, block_size=50, buffer_size=10)
 
     assert cfg_path.read_text() == original
@@ -591,7 +591,7 @@ def test_equilibrate_is_reentrant(four_particle_frame, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# continue_point: resume a finished equilibration in place
+# continue_equilibration: resume a finished equilibration in place
 # ---------------------------------------------------------------------------
 
 
@@ -599,7 +599,7 @@ def _finished_equilibration(output_dir, seed, num_steps=4 * 27):
     """A 27-particle equilibration run dir, seeded so repeated builds match."""
     random.seed(seed)
     np.random.seed(seed)
-    metro = MetropolisCalculator(
+    metro = MetropolisSampler(
         temp=300.0,
         pressure=0.0,
         initializer=RandomLatticeInitializer(n_particles=27, density=0.3, seed=seed),
@@ -613,7 +613,7 @@ def _last_row(output_dir):
         return db.get(db.count())
 
 
-def test_continue_point_appends_and_advances_steps(tmp_path):
+def test_continue_equilibration_appends_and_advances_steps(tmp_path):
     """The db grows, the step axis advances past the original target, and the
     write-once run_config.json is preserved."""
     output_dir = str(tmp_path / "run" / "1")
@@ -625,7 +625,7 @@ def test_continue_point_appends_and_advances_steps(tmp_path):
     with open(os.path.join(output_dir, "run_config.json")) as f:
         config_before = f.read()
 
-    assert continue_point(output_dir, extra_steps=4 * 27, block_size=27) == output_dir
+    assert continue_equilibration(output_dir, extra_steps=4 * 27, block_size=27) == output_dir
 
     with connect(os.path.join(output_dir, "equilibration.db")) as db:
         assert db.count() > n_before
@@ -634,25 +634,25 @@ def test_continue_point_appends_and_advances_steps(tmp_path):
         assert f.read() == config_before
 
 
-def test_continue_point_resets_vol_delt(tmp_path):
+def test_continue_equilibration_resets_vol_delt(tmp_path):
     """vol_delt=X overrides the carried volume width before resuming. The short
     extension stays under one tuning window, so the reset value is recorded."""
     output_dir = str(tmp_path / "run" / "1")
     _finished_equilibration(output_dir, seed=1)
     reset_to = round(_last_row(output_dir).vol_delta + 0.123, 6)
 
-    continue_point(output_dir, extra_steps=4 * 27, block_size=27, vol_delt=reset_to)
+    continue_equilibration(output_dir, extra_steps=4 * 27, block_size=27, vol_delt=reset_to)
 
     assert _last_row(output_dir).vol_delta == reset_to
 
 
-def test_continue_point_deterministic(tmp_path):
+def test_continue_equilibration_deterministic(tmp_path):
     """Continuing the same run by the same budget reproduces the same state."""
 
     def run(dirname):
         output_dir = str(tmp_path / dirname / "7")
         _finished_equilibration(output_dir, seed=7)
-        continue_point(output_dir, extra_steps=4 * 27, block_size=27)
+        continue_equilibration(output_dir, extra_steps=4 * 27, block_size=27)
         return _last_row(output_dir)
 
     a, b = run("a"), run("b")
