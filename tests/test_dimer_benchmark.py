@@ -41,6 +41,17 @@ CONDENSED_REFIT = GBQPotential(
 )
 
 
+def test_condensed_refit_is_the_tracked_uniform_fit():
+    """CONDENSED_REFIT is results/fitting's uniform seed-0 fit, frozen inline."""
+    tracked = GBQPotential.from_json(
+        Path(__file__).resolve().parents[1]
+        / "results/fitting/multiseed/uniform/seed_0/uniform/params.json"
+    )
+    assert tracked.name == "multiseed/uniform/seed_0/uniform"
+    assert tracked.gb_params_dict() == CONDENSED_REFIT.gb_params_dict()
+    assert tracked.Q == CONDENSED_REFIT.Q
+
+
 @pytest.fixture(scope="module")
 def data():
     return load_cacelli_dimers()

@@ -155,7 +155,8 @@ class GBQPotential(Potential):
 
         ``name`` defaults to the path below a ``fitting/`` directory (e.g.
         ``multiseed/uniform/seed_0/uniform``), or else to the file stem
-        (``lit_gbq_params``).
+        (``lit_gbq_params``). A file without ``xi`` gets ``xi = 1``, the plain
+        Gay-Berne form those fits used.
         """
         path = Path(path)
         data = json.loads(path.read_text())
@@ -165,7 +166,8 @@ class GBQPotential(Potential):
                 name = "/".join(parts[parts.index("fitting") + 1 :])
             else:
                 name = path.stem
-        values = {k: data[k]["value"] for k in (*_GB_PARAM_KEYS, "Q")}
+        values = {"xi": 1.0}
+        values.update({k: data[k]["value"] for k in (*_GB_PARAM_KEYS, "Q") if k in data})
         return cls(name=name, **values)
 
     @property
