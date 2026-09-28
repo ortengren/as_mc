@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass
 from numpy import linalg as la
 from pathlib import Path
 
+from asmcmc.paths import data_path
+
 
 def gb_shape_function(uhat1, uhat2, rhat, kappa):
     chi = (kappa**2 - 1) / (kappa**2 + 1)
@@ -186,20 +188,9 @@ def potential_from_dict(d):
     return cls(**d)
 
 
-# Resolve the default potential relative to the package (not the cwd, and not
-# this file's depth) so imports work regardless of where the interpreter is
-# launched.
-#
-# DEFAULT_POTENTIAL = CACELLI_POTENTIAL (2026-09). It previously pointed at
-# data/my_fitted_gbq_params.json -- the condensed-phase GB+Q refit -- which
-# fails utils.validation.dimer_benchmark (well_rmse 4.10 kcal/mol vs Cacelli's
-# 0.44) and makes the cofacial stack repulsive (+2.61 kcal/mol vs UMA's
-# -2.02). Any MetropolisCalculator built without an explicit potential= was
-# silently getting that potential. See utils.validation for the physics gate a
-# candidate must clear before it may be the default; switch via
-# GBQPotential.from_json(<params.json>) once one does.
-from asmcmc.base.paths import data_path
-
+# The sampler's default: Cacelli et al.'s GBQIII parameterisation. A candidate
+# must pass delta_learning.dimer_benchmark before it replaces this; a good fit to
+# condensed-phase energies is not enough (see docs/findings.md).
 CACELLI_PARAMS_PATH = data_path("lit_gbq_params.json")
 CACELLI_POTENTIAL = GBQPotential.from_json(CACELLI_PARAMS_PATH)
 DEFAULT_POTENTIAL = CACELLI_POTENTIAL

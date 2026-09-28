@@ -6,19 +6,19 @@ import ase
 import pytest
 from ase.db import connect
 
-from asmcmc.base.metropolis import (
+from asmcmc.mc.metropolis import (
     MetropolisCalculator,
     MIN_VOL_DELT,
     MAX_VOL_DELT,
     MAX_OR_DELT,
-    BOLTZCONST,
     npt_decide_accept,
 )
-from asmcmc.base.initialize import RandomLatticeInitializer
-from asmcmc.base.potentials import calc_total_energy
-from asmcmc.base.trial_moves import calculate_vol_move
-from asmcmc.utils.equilibration import continue_point
-from asmcmc.utils.measurements import TrajectoryAnalyzer, AverageEnergy
+from asmcmc.mc.initialize import RandomLatticeInitializer
+from asmcmc.mc.potentials import calc_total_energy
+from asmcmc.mc.trial_moves import calculate_vol_move
+from asmcmc.mc.metropolis import continue_point
+from asmcmc.mc.measurements import TrajectoryAnalyzer, AverageEnergy
+from asmcmc.units import BOLTZCONST
 
 
 # ---------------------------------------------------------------------------

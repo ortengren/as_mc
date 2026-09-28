@@ -3,7 +3,7 @@ import json
 
 import ase
 import numpy as np
-from asmcmc.base.potentials import (
+from asmcmc.mc.potentials import (
     CACELLI_POTENTIAL,
     gb,
     quadrupole,

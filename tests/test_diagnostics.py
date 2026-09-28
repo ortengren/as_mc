@@ -9,16 +9,16 @@ import pytest
 
 from ase.db import connect
 
-from asmcmc.base.initialize import ColumnarLatticeInitializer
-from asmcmc.base.metropolis import MetropolisCalculator
-from asmcmc.utils.diagnostics import (
+from asmcmc.mc.initialize import ColumnarLatticeInitializer
+from asmcmc.mc.metropolis import MetropolisCalculator
+from asmcmc.mc.diagnostics import (
     PLOTS,
     TAIL_FRACTION,
     TAIL_MAX_FRAMES,
     load_run,
     render,
 )
-from asmcmc.utils.measurements import RadialDistributionFunction, nematic_q_tensor
+from asmcmc.mc.measurements import RadialDistributionFunction, nematic_q_tensor
 
 
 # ---------------------------------------------------------------------------

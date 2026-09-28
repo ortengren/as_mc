@@ -1,18 +1,18 @@
 """Unpacking, QA, and reduction over a cluster campaign.
 
 No MLIP: campaigns are driven through the generator with the same stub
-calculator ``test_cluster_dataset.py`` uses, so the suite stays runnable from a
+calculator the dataset tests use (see ``conftest.py``), so the suite stays runnable from a
 fresh clone without fairchem or a GPU.
 """
 
 import numpy as np
 import pytest
 
-from asmcmc.base.potentials import CACELLI_POTENTIAL
-from asmcmc.data_preparation.cluster_analysis import (
+from asmcmc.mc.potentials import CACELLI_POTENTIAL
+from asmcmc.units import EV_TO_KCAL
+from asmcmc.delta_learning.dataset_analysis import (
     COFACIAL,
     _configuration_signature,
-    EV_TO_KCAL,
     FAR_SLIPPED,
     PARALLEL_DISPLACED,
     T_SHAPED,
@@ -24,17 +24,8 @@ from asmcmc.data_preparation.cluster_analysis import (
     radial_profile,
     stack_coordinates,
 )
-from asmcmc.data_preparation.cluster_dataset import build_reference_benzene, main
+from asmcmc.delta_learning.dataset import build_reference_benzene, main
 
-from test_cluster_dataset import StubCalculator  # noqa: F401  (shared stub)
-
-
-@pytest.fixture
-def stub_uma(monkeypatch):
-    import asmcmc.data_preparation.cluster_dataset as cd
-
-    monkeypatch.setattr(cd, "load_uma_calculator", lambda *a, **k: StubCalculator())
-    return cd
 
 
 @pytest.fixture

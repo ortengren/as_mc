@@ -12,8 +12,10 @@ import numpy as np
 import pytest
 from ase.io import read
 
-from asmcmc.data_preparation.cluster_dataset import (
+from asmcmc.delta_learning.dataset import (
     CONFIG_NAME,
+    orthonormal_basis,
+    rotation_to_normal,
     SamplingSettings,
     build_reference_benzene,
     config_rng,
@@ -29,50 +31,12 @@ from asmcmc.data_preparation.cluster_dataset import (
     shard_path,
     subset_atoms,
 )
-from asmcmc.base.potentials import CACELLI_POTENTIAL
-
-EV_TO_KCAL = 23.060541945329334
+from asmcmc.mc.potentials import CACELLI_POTENTIAL
 
 
 @pytest.fixture(scope="module")
 def reference():
     return build_reference_benzene()
-
-
-class StubCalculator:
-    """A cheap stand-in for UMA: energy = -(number of atoms)/10, zero forces.
-
-    Deliberately *not* physical. These tests check the generator's plumbing --
-    decomposition algebra, sharding, resume -- and a stub makes the expected
-    numbers exact instead of approximate.
-    """
-
-    def __init__(self):
-        self.n_calls = 0
-
-    def get_potential_energy(self, atoms=None):
-        self.n_calls += 1
-        return -0.1 * len(atoms)
-
-    def get_forces(self, atoms=None):
-        return np.zeros((len(atoms), 3))
-
-    # ASE calls into the calculator through these on an attached Atoms.
-    def calculate(self, *a, **k):
-        pass
-
-    def get_property(self, name, atoms=None, allow_calculation=True):
-        if name == "energy":
-            return self.get_potential_energy(atoms)
-        if name == "forces":
-            return self.get_forces(atoms)
-        raise NotImplementedError(name)
-
-    def check_state(self, atoms):
-        return []
-
-    def get_stress(self, atoms=None):
-        raise NotImplementedError
 
 
 # --- radial sampling ---------------------------------------------------------
@@ -181,9 +145,9 @@ def test_retry_salt_changes_the_stream(reference):
 
 # --- energy decomposition ----------------------------------------------------
 
-def test_decomposition_algebra_is_exact(reference):
+def test_decomposition_algebra_is_exact(reference, make_stub_calculator):
     """interaction = E_cluster - sum E_mono."""
-    calc = StubCalculator()
+    calc = make_stub_calculator()
     cluster = make_cluster(reference, config_rng(13, 0), SamplingSettings())
     e_cluster = -0.1 * len(cluster)
 
@@ -194,15 +158,15 @@ def test_decomposition_algebra_is_exact(reference):
     assert out["interaction_energy"] == pytest.approx(e_cluster - e_mono.sum())
 
 
-def test_rigid_monomer_energy_skips_the_per_molecule_calls(reference):
+def test_rigid_monomer_energy_skips_the_per_molecule_calls(reference, make_stub_calculator):
     """The cost saving is real: passing the constant makes zero monomer calls."""
     cluster = make_cluster(reference, config_rng(13, 1), SamplingSettings())
 
-    calc = StubCalculator()
+    calc = make_stub_calculator()
     energy_decomposition(cluster, calc, -1.0, mode="monomers")
     assert calc.n_calls == 2
 
-    calc = StubCalculator()
+    calc = make_stub_calculator()
     out = energy_decomposition(
         cluster, calc, -1.0, mode="monomers", rigid_monomer_energy=-1.2
     )
@@ -210,9 +174,9 @@ def test_rigid_monomer_energy_skips_the_per_molecule_calls(reference):
     np.testing.assert_allclose(out["monomer_energies"], [-1.2, -1.2])
 
 
-def test_decomposition_none_is_empty(reference):
+def test_decomposition_none_is_empty(reference, make_stub_calculator):
     cluster = make_cluster(reference, config_rng(13, 2), SamplingSettings())
-    assert energy_decomposition(cluster, StubCalculator(), -1.0, mode="none") == {}
+    assert energy_decomposition(cluster, make_stub_calculator(), -1.0, mode="none") == {}
 
 
 def test_subset_atoms_selects_whole_molecules(reference):
@@ -280,15 +244,6 @@ def _run(tmp_path, n_configs, **kw):
         max_workers=1,
         **kw,
     )
-
-
-@pytest.fixture
-def stub_uma(monkeypatch):
-    """Swap UMA for the stub everywhere generate_shard reaches for it."""
-    import asmcmc.data_preparation.cluster_dataset as cd
-
-    monkeypatch.setattr(cd, "load_uma_calculator", lambda *a, **k: StubCalculator())
-    return cd
 
 
 def test_shard_plan_covers_the_request_exactly():
@@ -482,10 +437,59 @@ def test_progress_queue_reports_frames_already_on_disk(stub_uma, tmp_path):
 def test_drain_returns_everything_queued_without_blocking():
     import queue
 
-    from asmcmc.data_preparation.cluster_dataset import _drain
+    from asmcmc.delta_learning.dataset import _drain
 
     q = queue.Queue()
     for n in (1, 1, 3, 5):
         q.put(n)
     assert _drain(q) == 10
     assert _drain(q) == 0  # empty, and must not hang
+
+
+@pytest.fixture
+def rotation_rng():
+    return np.random.default_rng(20260811)
+
+
+# --- rotations ---------------------------------------------------------------
+
+
+def test_orthonormal_basis_is_orthonormal(rotation_rng):
+    u = rotation_rng.normal(size=(200, 3))
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    e1, e2 = orthonormal_basis(u)
+
+    for a, b in [(e1, e1), (e2, e2)]:
+        assert np.allclose(np.einsum("ni,ni->n", a, b), 1.0)
+    for a, b in [(e1, e2), (e1, u), (e2, u)]:
+        assert np.allclose(np.einsum("ni,ni->n", a, b), 0.0, atol=1e-12)
+
+
+def test_rotation_carries_the_reference_normal_onto_the_target(rotation_rng):
+    targets = rotation_rng.normal(size=(300, 3))
+    targets /= np.linalg.norm(targets, axis=1, keepdims=True)
+    spin = rotation_rng.uniform(0, 2 * np.pi, size=300)
+
+    rotations = rotation_to_normal(targets, spin)
+    mapped = np.einsum("nij,j->ni", rotations, np.array([0.0, 0.0, 1.0]))
+    assert np.allclose(mapped, targets, atol=1e-10)
+    assert np.allclose(np.linalg.det(rotations), 1.0)
+
+
+def test_rotation_handles_the_antipodal_target():
+    """cos = -1 is where the Rodrigues 1/(1+cos) form blows up."""
+    rotations = rotation_to_normal(np.array([[0.0, 0.0, -1.0]]), np.array([0.0]))
+    mapped = rotations[0] @ np.array([0.0, 0.0, 1.0])
+    assert np.allclose(mapped, [0.0, 0.0, -1.0], atol=1e-10)
+    assert np.linalg.det(rotations[0]) == pytest.approx(1.0)
+
+
+def test_spin_leaves_the_normal_alone_but_moves_the_molecule():
+    """Spin is a real atomistic degree of freedom the CG coordinates cannot see."""
+    target = np.array([[0.0, 0.0, 1.0]])
+    a = rotation_to_normal(target, np.array([0.0]))[0]
+    b = rotation_to_normal(target, np.array([0.7]))[0]
+
+    positions = build_reference_benzene().get_positions()
+    assert not np.allclose(positions @ a.T, positions @ b.T)
+    assert np.allclose(a @ np.array([0, 0, 1.0]), b @ np.array([0, 0, 1.0]), atol=1e-12)

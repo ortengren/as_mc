@@ -1,7 +1,7 @@
 """Geometry helpers for turning atomistic molecular frames into ellipsoids.
 
 Kept free of ``anisoap``/``metatensor`` (unlike
-:mod:`asmcmc.fitting_anisoap.data`, which pulls in the optional ``[anisoap]``
+:mod:`asmcmc.delta_learning.descriptors`, which pulls in the optional ``[anisoap]``
 extra) so the coarse-graining can be imported and tested from the base install.
 
 **Why this exists: molecules that straddle a periodic boundary.** ASE's
@@ -20,7 +20,6 @@ accumulating the true bond displacement vectors, yielding contiguous
 import numpy as np
 from ase import Atoms
 from ase.neighborlist import natural_cutoffs, neighbor_list
-from scipy.spatial.transform import Rotation
 
 # Bond detection: covalent radii scaled by this factor. 1.2 is the usual ASE
 # working value -- comfortably above C-H (1.09 A) and aromatic C-C (1.39 A)
@@ -90,26 +89,12 @@ def centre_of_mass(positions, masses=None):
     return (masses[:, None] * positions).sum(axis=0) / masses.sum()
 
 
-def quat_to_or_vec(quats):
-    """Convert stored ``c_q`` quaternions to ``or_vec`` disc normals.
-
-    The datasets store ``c_q`` in ``(w, x, y, z)`` order and take the body
-    **z** axis -- the short semiaxis of the oblate ellipsoid -- as the disc
-    normal. Verified against ``ellipsoids_with_axes_and_energies.xyz``
-    (dot product 1.000000).
-    """
-    quats = np.atleast_2d(np.asarray(quats, dtype=float))
-    # scipy wants (x, y, z, w); the files store (w, x, y, z).
-    rotations = Rotation.from_quat(np.roll(quats, -1, axis=1))
-    return rotations.apply(np.array([0.0, 0.0, 1.0]))
-
-
 def coarse_grain_frame(frame, mult=BOND_CUTOFF_MULT, mass_weighted=True):
     """Map an atomistic ``frame`` to one ellipsoid centre per molecule.
 
     Returns an :class:`ase.Atoms` of ``X`` sites carrying an ``or_vec`` array
     (unit disc normals), sharing ``frame``'s cell and pbc -- the layout
-    :func:`asmcmc.base.potentials.calc_total_energy` and
+    :func:`asmcmc.mc.potentials.calc_total_energy` and
     ``fitting_gbq.data.extract_periodic_pairs`` expect.
     """
     masses = frame.get_masses() if mass_weighted else None

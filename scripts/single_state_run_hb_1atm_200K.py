@@ -1,7 +1,7 @@
-from asmcmc.base.initialize import HerringboneLatticeInitializer
-from asmcmc.base.metropolis import MetropolisCalculator
-from asmcmc.base.potentials import CACELLI_POTENTIAL
-from asmcmc.utils.measurements import (
+from asmcmc.mc.initialize import HerringboneLatticeInitializer
+from asmcmc.mc.metropolis import MetropolisCalculator
+from asmcmc.mc.potentials import CACELLI_POTENTIAL
+from asmcmc.mc.measurements import (
     TrajectoryAnalyzer,
     RadialDistributionFunction,
     OrientationalCorrelationFunction,
@@ -9,7 +9,7 @@ from asmcmc.utils.measurements import (
     NematicOrderParameter,
     AverageEnthalpy,
 )
-from asmcmc.utils.equilibration import continue_point
+from asmcmc.mc.metropolis import continue_point
 
 import pickle
 import json

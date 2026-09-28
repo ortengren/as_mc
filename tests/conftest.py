@@ -32,3 +32,54 @@ def two_particle_frame():
 @pytest.fixture
 def identity_quat():
     return np.array([1., 0., 0., 0.])
+
+
+class StubCalculator:
+    """A cheap stand-in for UMA: energy = -(number of atoms)/10, zero forces.
+
+    Deliberately *not* physical. These tests check the generator's plumbing --
+    decomposition algebra, sharding, resume -- and a stub makes the expected
+    numbers exact instead of approximate.
+    """
+
+    def __init__(self):
+        self.n_calls = 0
+
+    def get_potential_energy(self, atoms=None):
+        self.n_calls += 1
+        return -0.1 * len(atoms)
+
+    def get_forces(self, atoms=None):
+        return np.zeros((len(atoms), 3))
+
+    # ASE calls into the calculator through these on an attached Atoms.
+    def calculate(self, *a, **k):
+        pass
+
+    def get_property(self, name, atoms=None, allow_calculation=True):
+        if name == "energy":
+            return self.get_potential_energy(atoms)
+        if name == "forces":
+            return self.get_forces(atoms)
+        raise NotImplementedError(name)
+
+    def check_state(self, atoms):
+        return []
+
+    def get_stress(self, atoms=None):
+        raise NotImplementedError
+
+
+@pytest.fixture
+def make_stub_calculator():
+    """Factory for fresh ``StubCalculator`` instances (each counts its own calls)."""
+    return StubCalculator
+
+
+@pytest.fixture
+def stub_uma(monkeypatch):
+    """Replace UMA with ``StubCalculator`` wherever the dataset generator loads it."""
+    import asmcmc.delta_learning.dataset as dataset
+
+    monkeypatch.setattr(dataset, "load_uma_calculator", lambda *a, **k: StubCalculator())
+    return dataset

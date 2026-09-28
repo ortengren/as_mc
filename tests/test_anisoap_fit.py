@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from ase.io import write
 
-from asmcmc.fitting_anisoap.data import (
+from asmcmc.delta_learning.descriptors import (
     Hypers,
     descriptors,
     ellipsoid_frames,
@@ -22,12 +22,12 @@ from asmcmc.fitting_anisoap.data import (
     make_ellipsoid_frame,
     quaternions_from_normals,
 )
-from asmcmc.fitting_anisoap.fit import (
+from asmcmc.delta_learning.model import (
     AniSOAPDeltaPotential,
     fit_delta,
     train_test_split,
 )
-from asmcmc.fitting_anisoap.sweep import (
+from asmcmc.delta_learning.sweep import (
     COMPARISON_NAME,
     MODEL_NAME,
     POINTS_DIRNAME,
@@ -36,7 +36,7 @@ from asmcmc.fitting_anisoap.sweep import (
     load_model,
     main,
 )
-from asmcmc.base.potentials import CACELLI_POTENTIAL
+from asmcmc.mc.potentials import CACELLI_POTENTIAL
 
 Z_HAT = np.array([0.0, 0.0, 1.0])
 

@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 from ase import Atoms
 
-from asmcmc.utils.geometry import (
+from asmcmc.mc.coarse_graining import (
     coarse_grain_frame,
     disc_normal,
     molecule_fragments,
-    quat_to_or_vec,
 )
+from asmcmc.mc.trial_moves import quat_to_or_vec
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 PBCA_CIF = _REPO_ROOT / "data/benzene_pbca_cod_7238223.cif"

@@ -12,6 +12,7 @@ import os
 import numpy as np
 
 from asmcmc.fitting_gbq.fit import predict_per_mol, PARAM_NAMES
+from asmcmc.units import KJ_PER_MOL_IN_EV
 
 # Unit annotation per parameter, so the serialised values are self-describing.
 # Q enters the potential only as Q^2, so its natural unit is (energy*length^5)^1/2.
@@ -29,7 +30,6 @@ PARAM_UNITS = {
 
 # Benzene sublimation enthalpy ~ 44 kJ/mol -> eV/molecule; a rough magnitude the
 # deepest per-molecule lattice energy should be in the ballpark of.
-KJ_PER_MOL_IN_EV = 0.01036410
 BENZENE_SUBLIMATION_EV_PER_MOL = -44.0 * KJ_PER_MOL_IN_EV  # ~ -0.456
 
 

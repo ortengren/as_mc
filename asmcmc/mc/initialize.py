@@ -4,9 +4,9 @@ import numpy as np
 import ase
 import ase.io
 from scipy.spatial.transform import Rotation
-from asmcmc.base.potentials import DEFAULT_POTENTIAL
-from asmcmc.base.trial_moves import calc_or_vec
-from asmcmc.base.paths import data_path
+from asmcmc.mc.potentials import DEFAULT_POTENTIAL
+from asmcmc.mc.trial_moves import quat_to_or_vec
+from asmcmc.paths import data_path
 
 # Package-default shape (from DEFAULT_POTENTIAL). Used only when no potential is
 # supplied; the geometry a config is built at must match the potential the MC
@@ -305,7 +305,7 @@ def generate_random_config(n_particles=210, density=0.6, seed=None, sigma0=None)
     # scipy uses scalar-last [x,y,z,w]; roll to scalar-first [w,x,y,z] for c_q
     rot = Rotation.random(n_particles, random_state=int(rng.integers(2**31)))
     quats = np.roll(rot.as_quat(), 1, axis=-1)
-    or_vecs = np.array([calc_or_vec(q).squeeze() for q in quats])
+    or_vecs = quat_to_or_vec(quats)
 
     frame = ase.Atoms(
         symbols="X" * n_particles,
@@ -406,7 +406,7 @@ def generate_columnar_config(
     angles = rng.uniform(0, tilt, n_particles)
     rot = Rotation.from_rotvec(axes * angles[:, None])
     quats = np.roll(rot.as_quat(), 1, axis=-1)
-    or_vecs = np.array([calc_or_vec(q).squeeze() for q in quats])
+    or_vecs = quat_to_or_vec(quats)
 
     frame = ase.Atoms(
         symbols="X" * n_particles,

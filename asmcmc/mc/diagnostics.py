@@ -23,12 +23,12 @@ import matplotlib
 matplotlib.use("Agg")  # batch run: write figures to file, never open a window
 import matplotlib.pyplot as plt
 
-from asmcmc.utils.measurements import (
+from asmcmc.mc.measurements import (
     OrientationalCorrelationFunction,
     RadialDistributionFunction,
     nematic_q_tensor,
 )
-from asmcmc.base.metropolis import TARGET_ACC_RATE
+from asmcmc.mc.metropolis import TARGET_ACC_RATE
 
 # Window of recorded frames averaged into the RDF/OCF. A single frame's g(r) is
 # too noisy at N~500 to read a phase off, so a tail is averaged rather than one

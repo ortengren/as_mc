@@ -1,4 +1,4 @@
-"""What a :mod:`asmcmc.data_preparation.cluster_dataset` campaign says about itself.
+"""What a :mod:`asmcmc.delta_learning.dataset` campaign says about itself.
 
 Two questions, which is why this exists as one module rather than notebook cells:
 
@@ -21,16 +21,18 @@ against a recomputation via ``CACELLI_POTENTIAL.pair_energy``.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 
-from asmcmc.base.potentials import CACELLI_POTENTIAL
-from asmcmc.data_preparation.cluster_dataset import CONFIG_NAME, dataset_frames
+from asmcmc.mc.potentials import CACELLI_POTENTIAL
+from asmcmc.units import EV_TO_KCAL
+from asmcmc.delta_learning.dataset import (
+    dataset_frames,
+    load_dataset_config,
+    minimum_inter_molecular_distance,
+)
 
-EV_TO_KCAL = 23.060541945329334
 
 # Motif cuts in (|b|, slip). Reporting labels, not a taxonomy: these quantities
 # are rotation- and inversion-invariant, so they name a contact and cannot
@@ -60,10 +62,7 @@ DEFAULT_RADIAL_EDGES = (3.4, 5.0, 6.0, 7.0, 9.0, 15.0, np.inf)
 
 def load_campaign(out_dir):
     """``(frames, config)`` for a campaign directory."""
-    out_dir = Path(out_dir)
-    config_path = out_dir / CONFIG_NAME
-    config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    return dataset_frames(out_dir), config
+    return dataset_frames(out_dir), load_dataset_config(out_dir)
 
 
 def _normals(frame):
@@ -253,9 +252,8 @@ def _min_intermolecular_distance(frame):
     groups = [positions[ids == m] for m in range(int(ids.max()) + 1)]
     best = np.inf
     for a in range(len(groups)):
-        for b_ in range(a + 1, len(groups)):
-            delta = groups[a][:, None, :] - groups[b_][None, :, :]
-            best = min(best, float(np.sqrt(np.min(np.sum(delta**2, axis=-1)))))
+        for b in range(a + 1, len(groups)):
+            best = min(best, minimum_inter_molecular_distance(groups[a], groups[b]))
     return best
 
 

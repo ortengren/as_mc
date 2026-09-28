@@ -1,7 +1,7 @@
 """The hyperparameter sweep: which AniSOAP representation buys Delta-skill.
 
-This module owns **all** persistence for the fit. :mod:`asmcmc.fitting_anisoap.data`
-and :mod:`asmcmc.fitting_anisoap.fit` are pure computation with no notion of an
+This module owns **all** persistence for the fit. :mod:`asmcmc.delta_learning.descriptors`
+and :mod:`asmcmc.delta_learning.model` are pure computation with no notion of an
 output directory, so moving the bookkeeping elsewhere (signac, a queue) touches
 this file and nothing else -- ``Hypers.to_dict`` is already shaped as a valid
 state point for exactly that.
@@ -19,12 +19,12 @@ Delta-skill and worth keeping separate from it.
 **Three things are built once, before the loop**, because the alternative
 silently changes what is being measured:
 
-* the :class:`~asmcmc.fitting_anisoap.data.Geometry` -- parsed in the *parent*
+* the :class:`~asmcmc.delta_learning.descriptors.Geometry` -- parsed in the *parent*
   so spawned workers hit a warm ``.npz`` instead of each re-parsing 32 MB of
   extxyz concurrently;
 * the train/test split -- every point must be scored on identical held-out
   frames or the sweep compares splits as much as representations;
-* the dimer probe table -- :func:`~asmcmc.utils.validation.load_reference_dimers`
+* the dimer probe table -- :func:`~asmcmc.delta_learning.dimer_benchmark.load_reference_dimers`
   re-reads the file on every call otherwise.
 
 **The physics probe is recorded, not enforced.** Every point is scored against
@@ -71,19 +71,19 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-from asmcmc.fitting_anisoap.data import (
+from asmcmc.delta_learning.dataset import load_dataset_config
+from asmcmc.delta_learning.descriptors import (
     Hypers,
     campaign_descriptors,
-    load_campaign_config,
     load_geometry,
 )
-from asmcmc.fitting_anisoap.fit import (
+from asmcmc.delta_learning.model import (
     AniSOAPDeltaPotential,
     DeltaModel,
     fit_delta,
     train_test_split,
 )
-from asmcmc.utils.validation import (
+from asmcmc.delta_learning.dimer_benchmark import (
     DEFAULT_REFERENCE,
     REFERENCES,
     dimer_benchmark,
@@ -211,7 +211,7 @@ def load_model(point_dir):
 
     The consumer-facing entry point: this is what turns a finished sweep into a
     potential the sampler can run, via
-    :class:`~asmcmc.fitting_anisoap.fit.AniSOAPDeltaPotential`.
+    :class:`~asmcmc.delta_learning.model.AniSOAPDeltaPotential`.
     """
     with np.load(Path(point_dir) / MODEL_NAME) as handle:
         return DeltaModel(
@@ -420,7 +420,7 @@ def main(
             "test_frac": test_frac,
             "split_seed": split_seed,
             "cv_seed": cv_seed,
-            "campaign_config": load_campaign_config(campaign),
+            "campaign_config": load_dataset_config(campaign),
         },
     }
 
@@ -489,7 +489,7 @@ def main(
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="python -m asmcmc.fitting_anisoap.sweep",
+        prog="python -m asmcmc.delta_learning.sweep",
         description="AniSOAP Delta-learning hyperparameter sweep.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

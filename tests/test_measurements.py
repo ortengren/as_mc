@@ -1,7 +1,7 @@
 import numpy as np
 import ase
 import pytest
-from asmcmc.utils.measurements import (
+from asmcmc.mc.measurements import (
     AverageEnergy,
     AverageEnthalpy,
     RadialDistributionFunction,
@@ -11,15 +11,13 @@ from asmcmc.utils.measurements import (
     HeatCapacity,
     EffectiveSampleSize,
     integrated_autocorr_time,
-    BOLTZCONST,
     BENZENE_FUNDAMENTALS,
-    EV_PER_K_TO_J_PER_MOL_K,
-    HC_OVER_K,
     einstein_function,
     vibrational_heat_capacity,
 )
-from asmcmc.base.metropolis import npt_decide_accept
-from asmcmc.base.potentials import calc_total_energy
+from asmcmc.mc.metropolis import npt_decide_accept
+from asmcmc.units import BOLTZCONST, EV_PER_K_TO_J_PER_MOL_K, HC_OVER_K
+from asmcmc.mc.potentials import calc_total_energy
 
 # --- AverageEnergy ---
 

@@ -33,10 +33,10 @@ import numpy as np
 from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.model_selection import KFold
 
-from asmcmc.base.potentials import CACELLI_POTENTIAL
-from asmcmc.data_preparation.cluster_analysis import WELL_RANGE
-from asmcmc.fitting_anisoap.data import (
-    EV_TO_KCAL,
+from asmcmc.mc.potentials import CACELLI_POTENTIAL
+from asmcmc.delta_learning.dataset_analysis import WELL_RANGE
+from asmcmc.units import EV_TO_KCAL
+from asmcmc.delta_learning.descriptors import (
     Hypers,
     descriptors,
     make_ellipsoid_frame,
@@ -48,7 +48,7 @@ from asmcmc.fitting_anisoap.data import (
 DEFAULT_ALPHAS = np.logspace(-10, 2, 25)
 
 # A frame counts as "well region" if any pair is inside the Cacelli well range.
-# cluster_analysis.WELL_RANGE is the same cut its radial tables use, imported
+# dataset_analysis.WELL_RANGE is the same cut its radial tables use, imported
 # rather than restated so the two cannot drift apart.
 WELL_MAX_R = WELL_RANGE[1]
 
@@ -70,7 +70,7 @@ def train_test_split(n, test_frac=0.2, seed=0):
 class DeltaModel:
     """A fitted correction: ``Delta_hat = (X / scale) @ coef``, in eV.
 
-    Carries its own :class:`~asmcmc.fitting_anisoap.data.Hypers` because a
+    Carries its own :class:`~asmcmc.delta_learning.descriptors.Hypers` because a
     descriptor matrix is meaningless without the hypers that produced it, so the
     two must travel together into deployment and into the dimer gate.
     """
@@ -226,7 +226,7 @@ class AniSOAPDeltaPotential:
     """A fitted correction wearing the ``Potential`` pair interface.
 
     Exists so a candidate can be scored by the **existing**
-    ``asmcmc.utils.validation.dimer_benchmark`` without that module learning
+    ``asmcmc.delta_learning.dimer_benchmark.dimer_benchmark`` without that module learning
     anything about AniSOAP: it only ever calls ``pair_energy`` and reads
     ``name``. Per the GB+Q refit postmortem, fit parity is never sufficient --
     a correction that is repulsive at the cofacial stack is rejected however good

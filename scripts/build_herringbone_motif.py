@@ -30,7 +30,7 @@ import ase.io
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from asmcmc.utils.geometry import coarse_grain_frame
+from asmcmc.mc.coarse_graining import coarse_grain_frame
 
 ROOT = Path(__file__).resolve().parent.parent
 SHAPE = (2.5, 2.5, 1.0)  # ellipsoid semiaxes, as in export_ideal_crystals.py
@@ -42,7 +42,7 @@ def or_vec_to_quat(u):
     """Minimal rotation carrying z-hat onto each unit normal ``u``.
 
     Returned scalar-first [w,x,y,z], the convention `c_q` uses, so that
-    `trial_moves.calc_or_vec(q)` (which is R @ z-hat) round-trips back to ``u``.
+    `trial_moves.quat_to_or_vec(q)` round-trips back to ``u``.
     The spin about the particle's own normal is unobservable for a uniaxial
     disc, so picking the minimal rotation costs nothing.
     """

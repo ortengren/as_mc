@@ -1,6 +1,6 @@
 import numpy as np
-from asmcmc.base.trial_moves import (
-    calc_or_vec,
+from asmcmc.mc.trial_moves import (
+    quat_to_or_vec,
     calculate_com_move,
     calculate_quat_move,
     calculate_vol_move,
@@ -9,19 +9,27 @@ from asmcmc.base.trial_moves import (
 )
 
 
-# --- calc_or_vec ---
+# --- quat_to_or_vec ---
 
-def test_calc_or_vec_identity(identity_quat):
+def test_quat_to_or_vec_identity(identity_quat):
     """Identity quaternion should leave the z-axis unchanged."""
-    result = calc_or_vec(identity_quat).squeeze()
+    result = quat_to_or_vec(identity_quat)
     np.testing.assert_allclose(result, [0., 0., 1.], atol=1e-10)
 
 
-def test_calc_or_vec_unit_length():
+def test_quat_to_or_vec_unit_length():
     """Output orientation vector should be a unit vector."""
     quat = np.array([0.5, 0.5, 0.5, 0.5])
-    result = calc_or_vec(quat).squeeze()
+    result = quat_to_or_vec(quat)
     assert abs(np.linalg.norm(result) - 1.0) < 1e-10
+
+
+def test_quat_to_or_vec_batch_matches_single():
+    """A stack of quaternions gives the same normals as one at a time."""
+    quats = np.random.default_rng(3).normal(size=(50, 4))
+    batch = quat_to_or_vec(quats)
+    assert batch.shape == (50, 3)
+    np.testing.assert_array_equal(batch, [quat_to_or_vec(q) for q in quats])
 
 
 # --- calculate_com_move ---

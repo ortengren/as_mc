@@ -9,27 +9,26 @@ CSR-style arrays cached as one small ``.npz``. The shards are ~32 MB of extxyz w
 
 Geometry is read from the stored ``molecular_com``/``principal_axes`` rather
 than re-coarse-graining the atoms, for the same reason
-``cluster_analysis.pair_records`` does: the numbers are then exactly the ones the
+``dataset_analysis.pair_records`` does: the numbers are then exactly the ones the
 generator labelled, not a re-derivation that might differ in the last digits.
 
 **2. Turn it into AniSOAP input.** :func:`ellipsoid_frames` stamps ``c_q``
 and ``c_diameter[1..3]``. The quaternion comes from the principal-axis frame via
 :func:`quaternions_from_axes`, which round-trips through
-``asmcmc.utils.geometry.quat_to_or_vec`` back to the stored ``or_vec``.
+``asmcmc.mc.trial_moves.quat_to_or_vec`` back to the stored ``or_vec``.
 
 **3. Compute descriptors that line up with the targets.**
 :func:`descriptors` is where the one genuinely dangerous property of the AniSOAP
 API is handled -- see :func:`descriptor_rows`.
 
 This module is pure computation and has no output directories or result files. All
-persistence lives in :mod:`asmcmc.fitting_anisoap.sweep`, so swapping the sweep's
+persistence lives in :mod:`asmcmc.delta_learning.sweep`, so swapping the sweep's
 bookkeeping (e.g. onto signac) touches that module and nothing here.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -37,7 +36,7 @@ import numpy as np
 from ase import Atoms
 from scipy.spatial.transform import Rotation
 
-from asmcmc.data_preparation.cluster_dataset import dataset_frames
+from asmcmc.delta_learning.dataset import dataset_frames
 
 # The frames are isolated clusters (pbc=False), so we set the cell far larger than
 # the campaign's 15 Å max centre separation, so it cannot interact with anything.
@@ -48,8 +47,6 @@ NONPERIODIC_CELL = 100.0
 # bead here is the same species -- so the name alone is not trustworthy and
 # _structure_column validates whatever it picks. See descriptor_rows.
 STRUCTURE_ALIASES = ("structure", "system", "type")
-
-EV_TO_KCAL = 23.060541945329334
 
 
 @dataclass(frozen=True)
@@ -97,7 +94,7 @@ class Hypers:
         Needed because :func:`descriptor_rows` has to know the shape even when
         AniSOAP returns nothing at all to measure it from (every centre beyond
         the cutoff). AniSOAP does not expose this, so it is *derived*, and
-        ``tests/test_fitting_anisoap.py`` pins it against the realised width
+        ``tests/test_anisoap_fit.py`` pins it against the realised width
         across the grid corners rather than trusting the arithmetic.
         """
         return (self.max_radial + 1) ** 2 * (self.max_angular + 1)
@@ -250,7 +247,7 @@ def quaternions_from_axes(axes):
     """``(w, x, y, z)`` quaternions from stacked principal-axis matrices.
 
     ``axes`` is ``(n, 3, 3)`` with **columns** as axes, the layout
-    ``cluster_dataset`` writes, whose third column is the disc normal. A
+    ``dataset`` writes, whose third column is the disc normal. A
     principal-axis matrix is orthogonal but not necessarily a *rotation*: the
     eigenvector signs are arbitrary, so roughly half come out left-handed.
     Flipping the third column on those fixes the handedness without moving the
@@ -339,7 +336,7 @@ def build_calculator(hypers):
     """The configured ``EllipsoidalDensityProjection``.
 
     Imported lazily: ``anisoap`` pulls in a compiled extension and metatensor,
-    and nothing in ``base/``/``utils/`` should need either in order to import.
+    and importing ``asmcmc`` must not require either.
     """
     from anisoap.representations import EllipsoidalDensityProjection
 
@@ -466,7 +463,3 @@ def campaign_descriptors(geometry, hypers):
     return descriptors(ellipsoid_frames(geometry, hypers), hypers)
 
 
-def load_campaign_config(campaign_dir):
-    """The campaign's ``dataset_config.json``, for provenance in reports."""
-    path = Path(campaign_dir) / "dataset_config.json"
-    return json.loads(path.read_text()) if path.exists() else {}

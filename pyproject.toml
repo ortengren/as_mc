@@ -17,14 +17,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# AniSOAP feature generation (asmcmc.data_preparation.generate_cg_reps)
+# AniSOAP descriptors and the ridge Delta-model (asmcmc.delta_learning)
 anisoap = [
     "anisoap",
     "metatensor",
-    "scikit-matter",
     "scikit-learn",
-    "networkx",
 ]
+# UMA labels (asmcmc.delta_learning.dataset, scripts/uma_cacelli_dimers.py)
+uma = ["fairchem-core"]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]

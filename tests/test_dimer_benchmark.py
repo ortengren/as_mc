@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from asmcmc.base.potentials import CACELLI_POTENTIAL, DEFAULT_POTENTIAL, GBQPotential
-from asmcmc.utils.validation import (
+from asmcmc.mc.potentials import CACELLI_POTENTIAL, DEFAULT_POTENTIAL, GBQPotential
+from asmcmc.delta_learning.dimer_benchmark import (
     DEFAULT_REFERENCE,
     UMA_DIMER_PATH,
     DimerBenchmark,
@@ -152,7 +152,7 @@ def test_default_potential_clears_the_gate(data):
     ``potential=`` is passed -- used to be ``data/my_fitted_gbq_params.json``,
     a fit with exactly ``CONDENSED_REFIT``'s failure mode above (well_rmse 4.10
     kcal/mol, cofacial stack +2.61 vs UMA's -2.02). A candidate must clear this
-    gate, per ``utils.validation``'s module docstring, before it may be the
+    gate, per the ``dimer_benchmark`` module docstring, before it may be the
     default; this pins that the current default actually does.
     """
     bench = dimer_benchmark(DEFAULT_POTENTIAL, data)

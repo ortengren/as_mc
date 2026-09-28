@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass, fields
-from asmcmc.base.potentials import potential_from_dict
+from asmcmc.mc.potentials import potential_from_dict
 
 import json
 import warnings

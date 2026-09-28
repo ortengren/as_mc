@@ -2,9 +2,8 @@ from ase.db import connect
 import numpy as np
 from abc import ABC, abstractmethod
 from tqdm.auto import tqdm
-from asmcmc.base.potentials import calc_total_energy
-
-BOLTZCONST = 8.617e-5  # eV / K
+from asmcmc.mc.potentials import calc_total_energy
+from asmcmc.units import BOLTZCONST, HC_OVER_K
 
 
 def nematic_q_tensor(or_vecs):
@@ -249,11 +248,6 @@ class NematicOrderParameter(Measurement):
             "S_lab": float(eigvals[-1]),
         }
 
-
-HC_OVER_K = 1.438777  # h c / k_B in cm K -- converts a wavenumber to a Theta
-
-# eV/K per molecule -> J/(mol K), for comparison against calorimetry tables.
-EV_PER_K_TO_J_PER_MOL_K = 96485.33
 
 # (wavenumber [cm^-1], degeneracy) for the 20 distinct fundamentals of benzene.
 # Shimanouchi's "selected frequency" values (NSRDS-NBS 39, 1972) received from

@@ -43,10 +43,10 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from asmcmc.base.paths import data_path
-from asmcmc.base.potentials import CACELLI_POTENTIAL
+from asmcmc.paths import data_path
+from asmcmc.mc.potentials import CACELLI_POTENTIAL
+from asmcmc.units import EV_TO_KCAL
 
-EV_TO_KCAL = 23.060541945329334
 EULER_SEQ = "zyx"
 
 CACELLI_DIMER_PATH = data_path("new_data", "3648_1_supplements", "abinitio.energies.txt")

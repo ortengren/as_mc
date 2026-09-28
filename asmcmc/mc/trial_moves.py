@@ -3,10 +3,14 @@ import random as rand
 from scipy.spatial.transform import Rotation
 
 
-def calc_or_vec(quat):
-    R = Rotation.from_quat(np.roll(quat, -1))
-    or_vec = R.as_matrix() @ [[0], [0], [1]]
-    return or_vec
+def quat_to_or_vec(quats):
+    """Disc normals (the body z-axis) of scalar-first ``(w, x, y, z)`` quaternions.
+
+    Takes one quaternion ``(4,)`` or a stack ``(n, 4)``; returns ``(3,)`` or ``(n, 3)``.
+    """
+    quats = np.asarray(quats, dtype=float)
+    # scipy wants scalar-last (x, y, z, w); column 2 of R is R @ z-hat.
+    return Rotation.from_quat(np.roll(quats, -1, axis=-1)).as_matrix()[..., :, 2]
 
 
 def calculate_com_move(r, delta):
