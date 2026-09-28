@@ -197,24 +197,24 @@ def test_frame_initializer_wraps_supplied_frame():
 
 # --- MetropolisSampler frame-source resolution ---
 
-def test_calculator_defaults_to_random_lattice_initializer():
+def test_sampler_defaults_to_random_lattice_initializer():
     mc = MetropolisSampler(temp=300, pressure=0.0)
     assert isinstance(mc.initializer, RandomLatticeInitializer)
 
 
-def test_calculator_wraps_init_frame_in_frame_initializer():
+def test_sampler_wraps_init_frame_in_frame_initializer():
     frame = generate_random_config(27, density=0.3, seed=0)
     mc = MetropolisSampler(temp=300, pressure=0.0, init_frame=frame)
     assert isinstance(mc.initializer, FrameInitializer)
 
 
-def test_calculator_accepts_explicit_initializer():
+def test_sampler_accepts_explicit_initializer():
     init = RandomLatticeInitializer(n_particles=27, density=0.3, seed=0)
     mc = MetropolisSampler(temp=300, pressure=0.0, initializer=init)
     assert mc.initializer is init
 
 
-def test_calculator_rejects_both_init_frame_and_initializer():
+def test_sampler_rejects_both_init_frame_and_initializer():
     frame = generate_random_config(27, density=0.3, seed=0)
     init = RandomLatticeInitializer(n_particles=27, density=0.3, seed=0)
     with pytest.raises(ValueError, match="at most one"):
@@ -340,7 +340,7 @@ def test_columnar_initializer_provenance_records_packing():
     assert prov["init_tilt"] == pytest.approx(0.15)
 
 
-def test_calculator_accepts_columnar_initializer():
+def test_sampler_accepts_columnar_initializer():
     init = ColumnarLatticeInitializer(n_particles=50, density=1.0, seed=0)
     mc = MetropolisSampler(temp=300, pressure=0.0, initializer=init)
     assert mc.initializer is init
@@ -388,7 +388,7 @@ def test_columnar_initializer_reads_shape_from_potential():
     assert prov["init_kappa"] == 0.5
 
 
-def test_calculator_propagates_potential_shape_to_initializer():
+def test_sampler_propagates_potential_shape_to_initializer():
     """The footgun fix: an initializer built without a potential adopts the one
     passed to the calculator, so geometry can't silently use the default shape."""
     pot = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=6.0, kappa=0.5)
@@ -400,8 +400,8 @@ def test_calculator_propagates_potential_shape_to_initializer():
     assert 64 * 6.0**3 / mc.init_frame.get_volume() == pytest.approx(1.0, rel=1e-10)
 
 
-def test_explicit_initializer_potential_wins_over_calculator():
-    """An initializer given its own potential keeps that shape; the calculator's
+def test_explicit_initializer_potential_wins_over_sampler():
+    """An initializer given its own potential keeps that shape; the sampler's
     set_potential does not override an explicit choice."""
     pot_init = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=6.0, kappa=0.5)
     pot_calc = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=9.0, kappa=0.7)
@@ -535,7 +535,7 @@ def test_herringbone_initializer_provenance_records_packing_and_jitter():
     assert prov["init_or_jitter"] == pytest.approx(DEFAULT_HERRINGBONE_OR_JITTER)
 
 
-def test_calculator_accepts_herringbone_initializer():
+def test_sampler_accepts_herringbone_initializer():
     init = HerringboneLatticeInitializer(n_particles=125, seed=0)
     mc = MetropolisSampler(temp=100, pressure=0.0, initializer=init)
     assert mc.initializer is init

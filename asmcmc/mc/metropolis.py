@@ -221,7 +221,7 @@ class MetropolisSampler:
         config_name="run_config.json",
         vol_delt=None,
     ):
-        """Rebuild a calculator from an equilibration run so it can be continued.
+        """Rebuild a sampler from an equilibration run so it can be continued.
 
         Static run definition (temp, pressure, ensemble, neighborlist, potential) comes
         from ``{output_dir}/{config_name}``.  Evolving state (latest frame, tuned move
@@ -604,7 +604,7 @@ class MetropolisSampler:
         # the original config when resuming
         if os.path.exists(path):
             return
-        RunConfig.from_calculator(self, run=run).save(path)
+        RunConfig.from_sampler(self, run=run).save(path)
 
     def equilibrate(
         self,
