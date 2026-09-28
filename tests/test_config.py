@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from asmcmc.base.config import RunConfig
 from asmcmc.base.potentials import DEFAULT_POTENTIAL, potential_from_dict
 from asmcmc.base.metropolis import MetropolisCalculator

@@ -4,7 +4,7 @@ import numpy as np
 import ase
 import ase.io
 from scipy.spatial.transform import Rotation
-from asmcmc.base.potentials import GB_PARAMS
+from asmcmc.base.potentials import DEFAULT_POTENTIAL
 from asmcmc.base.trial_moves import calc_or_vec
 from asmcmc.base.paths import data_path
 
@@ -13,8 +13,8 @@ from asmcmc.base.paths import data_path
 # actually runs (different sigma0/kappa => different contact distances and a
 # different meaning for the reduced density rho* = N*sigma0^3/V), so callers
 # pass the simulated potential and the builders read sigma0/kappa from it.
-SIGMA0 = GB_PARAMS["sigma0"]
-KAPPA = GB_PARAMS["kappa"]
+SIGMA0 = DEFAULT_POTENTIAL.sigma0
+KAPPA = DEFAULT_POTENTIAL.kappa
 
 DEFAULT_N_PARTICLES = 210
 DEFAULT_DENSITY = 0.6

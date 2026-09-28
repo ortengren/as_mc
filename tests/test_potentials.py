@@ -3,15 +3,16 @@ import json
 
 import ase
 import numpy as np
-import pytest
 from asmcmc.base.potentials import (
+    CACELLI_POTENTIAL,
     gb,
     quadrupole,
     calc_total_energy,
     GBQPotential,
-    GB_PARAMS,
-    QQ,
 )
+
+GB_PARAMS = CACELLI_POTENTIAL.gb_params_dict()
+QQ = CACELLI_POTENTIAL.Q
 
 
 # Helpers: unit-vector pairs and a displacement array shaped (1, 3)

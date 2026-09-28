@@ -17,7 +17,6 @@ from asmcmc.base.potentials import Potential, calc_total_energy, DEFAULT_POTENTI
 import random
 import ase
 from ase.neighborlist import NeighborList
-from ase.io import Trajectory
 import datetime
 import os
 from ase.db import connect

@@ -1,4 +1,3 @@
-import ase
 from ase.db import connect
 import numpy as np
 from abc import ABC, abstractmethod

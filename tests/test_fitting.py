@@ -2,7 +2,7 @@ import numpy as np
 import ase
 import pytest
 
-from asmcmc.base.potentials import gb, quadrupole, GB_PARAMS, QQ
+from asmcmc.base.potentials import CACELLI_POTENTIAL, gb, quadrupole
 from asmcmc.fitting_gbq.data import gbq, extract_periodic_pairs, FitData
 from asmcmc.fitting_gbq.fit import (
     predict_per_mol,
@@ -33,6 +33,9 @@ from asmcmc.fitting_gbq.run import (
     DEFAULT_CUTOFF,
     DEFAULT_OUT,
 )
+
+GB_PARAMS = CACELLI_POTENTIAL.gb_params_dict()
+QQ = CACELLI_POTENTIAL.Q
 
 # theta order: [sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q, E_intra]
 THETA = [*GB_PARAMS.values(), QQ, 0.0]

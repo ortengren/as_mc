@@ -1,4 +1,3 @@
-import ase
 import json
 import numpy as np
 from abc import ABC, abstractmethod
@@ -6,11 +5,6 @@ from ase.neighborlist import neighbor_list
 from dataclasses import asdict, dataclass
 from numpy import linalg as la
 from pathlib import Path
-import pandas as pd
-import random
-from scipy.spatial.transform import Rotation
-
-EPS_0 = 8.8541878188e-22  # F / Å
 
 
 def gb_shape_function(uhat1, uhat2, rhat, kappa):
@@ -72,28 +66,6 @@ def quadrupole(uhat1, uhat2, r, Q):
         + 35 * (a1**2) * (a2**2)
     )
     return prefactor * s
-
-
-def get_total_energy(M, sigma0, eps0, kappa, kappa_prime, mu, nu, xi, Q):
-    # M should have shape (N, 1431, 3, 3) where N is the number of frames
-    E_GB = gb(
-        M[:, :, 0, :],
-        M[:, :, 1, :],
-        M[:, :, 2, :],
-        sigma0,
-        eps0,
-        kappa,
-        kappa_prime,
-        mu,
-        nu,
-        xi,
-    )
-    E_QQ = quadrupole(M[:, :, 0, :], M[:, :, 1, :], M[:, :, 2, :], Q)
-    E_QQ = np.squeeze(E_QQ)
-    pw_energies = E_GB + E_QQ
-    # pw_energies should have shape (N, 1431)
-    energies = np.sum(pw_energies, axis=-1)
-    return energies
 
 
 def calc_total_energy(frame, nl_cutoff, potential=None):
@@ -193,7 +165,7 @@ class GBQPotential(Potential):
         return tuple(getattr(self, k) for k in _GB_PARAM_KEYS)
 
     def gb_params_dict(self):
-        """GB parameters as a dict (matches the legacy ``GB_PARAMS`` mapping)."""
+        """GB parameters as keyword arguments for ``gb``."""
         return {k: getattr(self, k) for k in _GB_PARAM_KEYS}
 
     def pair_energy(self, uhat1, uhat2, r):
@@ -232,8 +204,3 @@ CACELLI_PARAMS_PATH = data_path("lit_gbq_params.json")
 CACELLI_POTENTIAL = GBQPotential.from_json(CACELLI_PARAMS_PATH)
 DEFAULT_POTENTIAL = CACELLI_POTENTIAL
 
-# Backward-compatible aliases, derived from the active default so dependents
-# (initialize.py lattice spacing, nvt_scan.py reduced-unit scales) stay
-# consistent with whatever potential the sampler uses.
-GB_PARAMS = DEFAULT_POTENTIAL.gb_params_dict()
-QQ = DEFAULT_POTENTIAL.Q
