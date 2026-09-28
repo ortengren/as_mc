@@ -24,7 +24,6 @@ data/xyz_files/duped_benzenes.xyz
 data/xyz_files/duped_ellipsoids_with_axes.xyz
 data/xyz_files/ellipsoids_with_axes.xyz
 data/xyz_files/two_ells_with_axes.xyz
-data/new_data/
 
 # Literature and references
 literature/
@@ -34,3 +33,6 @@ todo_list.odt
 
 # Packaging
 *.egg-info/
+
+# Regenerable by scripts/uma_cacelli_dimers.py (viewing only)
+data/uma_dimers/dimers.xyz

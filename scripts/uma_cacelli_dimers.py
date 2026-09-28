@@ -1,26 +1,17 @@
-"""Score the UMA MLIP against the Cacelli et al. ab initio benzene dimers.
+"""Regenerate the UMA reference energies for the 197 Cacelli et al. dimers.
 
-The 197 MP2/6-31G* interaction energies in `data/new_data/3648_1_supplements`
-are the repo's only near-ground-truth pair data, and they are the reference
-`asmcmc/validation.py` scores every candidate coarse-grained potential
-against. They are also few, orientation-sparse, and of modest quantum-chemistry
-quality. If UMA reproduces them, it can label orders of magnitude more dimer
-geometries than 197 -- which is what a Delta-learning or AniSOAP pair model
-needs.
+Rebuilds each row of ``data/cacelli_2004_dimers`` as the 24-atom dimer it
+describes, evaluates it with the UMA MLIP, and writes what the dimer benchmark
+and ``notebooks/uma_vs_cacelli.ipynb`` read, so neither needs fairchem:
 
-This rebuilds each ab initio row as the 24-atom dimer it describes
-(`validation.cacelli_dimer_frames`), evaluates it with UMA, and reports the
-result through the same `DimerBenchmark` the coarse-grained benchmark uses --
-so MP2, UMA and the GBQIII pair potential land on one set of axes.
+    dimer_energies.csv  per row: geometry, family, MP2, UMA and GBQIII energies
+    family_curves.csv   dense cofacial / parallel-displaced / T-shaped scans
+    dimers.xyz          the 197 rebuilt frames, for viewing (not tracked)
+
+It also prints UMA and GBQIII scored against the supplement's MP2 energies.
+Needs the ``uma`` extra and a Hugging Face login for the gated checkpoint.
 
     python scripts/uma_cacelli_dimers.py [--device cuda]
-
-Everything is cached to `--out-dir` so the notebook that plots this never has
-to import fairchem:
-
-    dimer_energies.csv  per row: geometry, family, MP2, UMA, GBQIII
-    dimers.xyz          the 197 rebuilt frames, energies in info
-    family_curves.csv   dense cofacial / PD / T-shaped scans
 """
 
 import argparse
@@ -42,7 +33,7 @@ from asmcmc.delta_learning.dimer_benchmark import (
     family_labels,
     family_scan_geometry,
     load_cacelli_dimers,
-    score_model_energies,
+    score_energies,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -67,7 +58,7 @@ def parse_args():
         "from the ab initio rows themselves).",
     )
     parser.add_argument(
-        "--out-dir", type=Path, default=REPO_ROOT / "results/validation/uma_cacelli"
+        "--out-dir", type=Path, default=REPO_ROOT / "data/uma_dimers"
     )
     return parser.parse_args()
 
@@ -150,10 +141,10 @@ def main():
         if args.scan_points
         else None
     )
-    bench_uma = score_model_energies(
+    bench_uma = score_energies(
         e_uma, data, name=f"UMA {args.model}", scan_fn=uma_scan
     )
-    bench_gbq = score_model_energies(
+    bench_gbq = score_energies(
         e_gbq,
         data,
         name=CACELLI_POTENTIAL.name,

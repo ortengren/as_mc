@@ -1,39 +1,27 @@
-"""Physics validation benchmarks for candidate potentials.
+"""The physics gate: score a potential on the benzene dimers of Cacelli et al. (2004).
 
-A potential can reproduce condensed-phase per-configuration energies almost
-perfectly and still get the *pair interaction* badly wrong (a per-molecule
-energy is a sum over many pairs, so wrong pair energies cancel in the fit
-target). MC then samples exactly the geometries the fit never constrained.
-The GB+Q refit to the PBE-D3 crystal dataset is the cautionary example: test
-RMSE ~3 kcal/mol on the crystals, yet *repulsive* at the 3.9 A cofacial
-stacking distance and anti-correlated with the true dimer wells.
+A potential can fit condensed-phase energies well and still get the pair
+interaction wrong, because a per-molecule energy is a sum over many pairs and the
+errors cancel. Every candidate is therefore scored here, on the 197 dimer
+geometries of Cacelli et al., J. Chem. Phys. 120, 3648 (2004)
+(``data/cacelli_2004_dimers``), before it is trusted in MC.
 
-This module scores an energy model against pair data independent of any
-condensed-phase fit, over the benzene dimer geometries of Cacelli et al.,
-J. Chem. Phys. 120, 3648 (2004) (``data/new_data/3648_1_supplements``).
+The reference energies are UMA's (:data:`DEFAULT_REFERENCE`). The supplement's own
+MP2 energies load with ``reference="mp2"`` as a diagnostic only: GBQIII was fitted
+to them, so they reward leaving GBQIII unchanged. The verdict is
+:attr:`DimerBenchmark.improves_on_baseline`. The geometries are a structural probe
+(dense rays through the three wells), not a held-out test set.
 
-**The reference is UMA, not MP2** (:data:`DEFAULT_REFERENCE`). MP2 remains
-loadable via ``reference="mp2"`` as a tracked diagnostic, but is never the
-thing to optimise against: GBQIII was fitted to those MP2 rows, so scoring a
-correction against them rewards staying put. The geometries are kept as a
-**structural probe, not a held-out test set** — dense, physically meaningful
-rays that check well depth, position and smoothness, which is the failure mode
-a random split cannot catch. Statistical generalisation belongs to the
-campaign's own held-out split.
+Geometry convention (supplement README): molecule A sits at the origin with its
+ring in the xz-plane, so its disc normal is +y; each row gives molecule B's centre
+of mass (X, Y, Z) and Euler angles (alpha, beta, gamma) in degrees. The README
+does not name the Euler sequence; :data:`EULER_SEQ` is scipy's extrinsic ``"zyx"``,
+under which the (0, 90, 90) rows form the T-shaped family. ``docs/findings.md``
+records which rows the convention leaves ambiguous.
 
-The verdict that matters is :attr:`DimerBenchmark.improves_on_baseline` —
-whether the correction beats the uncorrected potential — not
-:attr:`~DimerBenchmark.stacking_bound`, which a bad model can also pass.
-
-Geometry convention (from the supplement README): molecule A is fixed at the
-origin with its ring in the xz-plane, so its disc normal is +y. Each row
-gives molecule B's centre of mass (X, Y, Z) and Euler angles (alpha, beta,
-gamma) in degrees; B's normal is the Euler rotation applied to +y. The Euler
-sequence is not stated in the README — ``zyx`` (intrinsic) was identified by
-scanning all standard conventions against the 53 angle-carrying rows
-(r = 0.86 vs 0.37 for the worst) and confirmed physically: the
-(beta=90, gamma=90) family maps +y -> +z, the T-shaped geometry, and lands
-on the known T-shaped well (~ -2.3 kcal/mol near 5.0 A).
+The atomistic helpers at the end rebuild the same rows as 24-atom dimers, so an
+ASE calculator (UMA) can be scored through :func:`score_energies` too; that is
+how ``scripts/uma_cacelli_dimers.py`` regenerates the UMA reference.
 """
 
 import csv
@@ -41,21 +29,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from ase.build import molecule
 from scipy.spatial.transform import Rotation
 
 from asmcmc.paths import data_path
+from asmcmc.delta_learning.uma import frame_energy
 from asmcmc.mc.potentials import CACELLI_POTENTIAL
 from asmcmc.units import EV_TO_KCAL
 
 EULER_SEQ = "zyx"
 
-CACELLI_DIMER_PATH = data_path("new_data", "3648_1_supplements", "abinitio.energies.txt")
+CACELLI_DIMER_PATH = data_path("cacelli_2004_dimers", "abinitio.energies.txt")
 UMA_DIMER_PATH = data_path("uma_dimers", "dimer_energies.csv")
 
 REFERENCES = ("uma", "mp2")
 
-#: Which reference a benchmark scores against unless told otherwise. UMA is the
-#: project's chosen ground truth; see the reference note in ``CLAUDE.md``.
+#: The reference a benchmark scores against unless told otherwise.
 DEFAULT_REFERENCE = "uma"
 
 # A's disc normal: ring in the xz-plane.
@@ -67,9 +56,9 @@ class DimerData:
     """The Cacelli ab initio dimer set as ready-to-evaluate geometries.
 
     ``uhat1``/``uhat2``/``r`` are shaped ``(n, 3)`` and feed straight into
-    ``Potential.pair_energy``; ``energy_kcal`` is the MP2 interaction energy.
-    ``euler_deg`` keeps the raw (alpha, beta, gamma) so geometry families can
-    be selected downstream.
+    ``Potential.pair_energy``; ``energy_kcal`` is the reference interaction
+    energy (``reference`` says which). ``euler_deg`` keeps the raw
+    (alpha, beta, gamma) so geometry families can be selected downstream.
     """
 
     uhat1: np.ndarray
@@ -114,14 +103,13 @@ def load_uma_dimers(path=None):
     Geometry comes from :func:`load_cacelli_dimers`, never from the CSV, so both
     references describe the same 197 dimers; the CSV's own coordinates are
     checked against it and a mismatch raises rather than silently scoring a
-    different set. Regenerate with
-    ``python scripts/uma_cacelli_dimers.py --out-dir data/uma_dimers``.
+    different set. Regenerate with ``python scripts/uma_cacelli_dimers.py``.
     """
     path = UMA_DIMER_PATH if path is None else Path(path)
     if not path.exists():
         raise FileNotFoundError(
             f"UMA dimer reference not found at {path}. Regenerate it with:\n"
-            "  python scripts/uma_cacelli_dimers.py --out-dir data/uma_dimers"
+            "  python scripts/uma_cacelli_dimers.py"
         )
 
     with open(path, newline="") as fh:
@@ -176,8 +164,7 @@ def dimer_scan(potential, uhat1, uhat2, rhat, dists):
     return potential.pair_energy(u1, u2, r) * EV_TO_KCAL
 
 
-# Canonical dimer families, matching how the ab initio set samples them.
-# Each entry: (uhat2, rhat, data-row mask builder, dense scan grid).
+# Axes of the canonical dimer families' scans.
 _Y = np.array([0.0, 1.0, 0.0])
 _Z = np.array([0.0, 0.0, 1.0])
 
@@ -289,23 +276,62 @@ class DimerBenchmark:
         return "\n".join(lines)
 
 
-def dimer_benchmark(potential, data=None, baseline=CACELLI_POTENTIAL):
-    """Score ``potential`` (anything with ``pair_energy``) against the reference
-    dimers; returns a :class:`DimerBenchmark`.
+def family_labels(data):
+    """Per-row family name: ``cofacial``, ``parallel_displaced``, ``t_shaped`` or ``other``."""
+    labels = np.full(len(data), "other", dtype=object)
+    for fam, mask in _family_masks(data).items():
+        labels[mask] = fam
+    return labels
 
-    This is a **structural probe, not a held-out test set**: the geometries are
-    dense, physically meaningful rays that check well depth, well position and
-    smoothness — the failure mode a random split cannot catch. Statistical
-    generalisation is the campaign's own held-out split.
+
+def family_scan_geometry(family, data, i_min, n_points=601):
+    """The dense scan a family's well is searched along: ``(uhat2, offsets, distances)``.
+
+    ``cofacial`` and ``t_shaped`` sweep the centre-centre distance along their
+    axis. ``parallel_displaced`` slips laterally at the height of the reference
+    minimum (row ``i_min``), since its well is not on a ray through the origin.
+    """
+    if family == "cofacial":
+        dists = np.linspace(3.0, 9.0, n_points)
+        return _Y, dists[:, None] * _Y[None, :], dists
+    if family == "t_shaped":
+        dists = np.linspace(4.0, 10.0, n_points)
+        return _Z, dists[:, None] * _Z[None, :], dists
+    if family == "parallel_displaced":
+        y0 = float(data.r[i_min][1])
+        slips = np.linspace(0.0, 3.0, max(2, n_points // 2 + 1))
+        offsets = np.column_stack([np.zeros_like(slips), np.full_like(slips, y0), slips])
+        return _Y, offsets, np.linalg.norm(offsets, axis=1)
+    raise ValueError(f"unknown family: {family}")
+
+
+def cg_scan(potential, n_points=601):
+    """A ``scan_fn`` for :func:`score_energies` that evaluates a pair potential."""
+
+    def scan(family, data, i_min):
+        u2, offsets, dists = family_scan_geometry(family, data, i_min, n_points)
+        n = len(offsets)
+        curve = (
+            potential.pair_energy(np.tile(_NORMAL_A, (n, 1)), np.tile(u2, (n, 1)), offsets)
+            * EV_TO_KCAL
+        )
+        return curve, dists
+
+    return scan
+
+
+def score_energies(model_kcal, data, name, scan_fn=None, baseline_kcal=None, baseline_name=""):
+    """Score per-row model energies (kcal/mol) against the reference dimers.
 
     Global metrics cover all rows and the attractive subset (E < 0, where MC
-    spends its time); the repulsive wall's dynamic range otherwise dominates.
-    ``baseline`` is the uncorrected potential a candidate has to beat; pass
-    ``None`` to skip it.
+    spends its time); the repulsive wall's dynamic range would otherwise dominate.
+    ``scan_fn(family, data, i_min) -> (energies_kcal, distances)`` finds each
+    family's model minimum on a dense scan, so a shifted well is still measured;
+    without one, the well is taken from the family's own rows. ``baseline_kcal``
+    are the uncorrected potential's energies on the same rows, which a candidate
+    has to beat.
     """
-    if data is None:
-        data = load_reference_dimers()
-    model = potential.pair_energy(data.uhat1, data.uhat2, data.r) * EV_TO_KCAL
+    model = np.asarray(model_kcal, dtype=float)
     ab = data.energy_kcal
 
     def _scores(mask):
@@ -318,64 +344,157 @@ def dimer_benchmark(potential, data=None, baseline=CACELLI_POTENTIAL):
     full_r, full_rmse = _scores(np.ones(len(data), dtype=bool))
     well_r, well_rmse = _scores(ab < 0.0)
 
-    masks = _family_masks(data)
-    dense = {
-        "cofacial": (_Y, _Y, np.linspace(3.0, 9.0, 601)),
-        "t_shaped": (_Z, _Z, np.linspace(4.0, 10.0, 601)),
-    }
-
     wells = {}
-    for fam, mask in masks.items():
+    for fam, mask in _family_masks(data).items():
         i_min = np.where(mask)[0][np.argmin(ab[mask])]
         ab_depth = float(ab[i_min])
         ab_r = float(np.linalg.norm(data.r[i_min]))
         model_at_ab_min = float(model[i_min])
-        if fam in dense:
-            u2, rhat, dists = dense[fam]
-            curve = dimer_scan(potential, _NORMAL_A, u2, rhat, dists)
+        if scan_fn is None:
+            rows = np.where(mask)[0]
+            k = rows[int(np.argmin(model[rows]))]
+            model_depth, model_r = float(model[k]), float(np.linalg.norm(data.r[k]))
+        else:
+            curve, dists = scan_fn(fam, data, i_min)
             k = int(np.argmin(curve))
             model_depth, model_r = float(curve[k]), float(dists[k])
-        else:
-            # parallel-displaced: slip laterally at the ab initio stacking
-            # height rather than along a single ray through the origin
-            y0 = float(data.r[i_min][1])
-            slips = np.linspace(0.0, 3.0, 301)
-            r = np.column_stack([np.zeros_like(slips), np.full_like(slips, y0), slips])
-            n = len(slips)
-            curve = (
-                potential.pair_energy(
-                    np.tile(_NORMAL_A, (n, 1)), np.tile(_NORMAL_A, (n, 1)), r
-                )
-                * EV_TO_KCAL
-            )
-            k = int(np.argmin(curve))
-            model_depth = float(curve[k])
-            model_r = float(np.linalg.norm(r[k]))
         wells[fam] = FamilyWell(ab_depth, ab_r, model_at_ab_min, model_depth, model_r)
 
-    # cofacial stacking check at the reference minimum-energy separation
-    cof = wells["cofacial"]
-
-    baseline_name, baseline_full, baseline_well = "", float("nan"), float("nan")
-    if baseline is not None:
-        base = baseline.pair_energy(data.uhat1, data.uhat2, data.r) * EV_TO_KCAL
+    baseline_full, baseline_well = float("nan"), float("nan")
+    if baseline_kcal is not None:
+        base = np.asarray(baseline_kcal, dtype=float)
         attractive = ab < 0.0
-        baseline_name = getattr(baseline, "name", type(baseline).__name__)
         baseline_full = float(np.sqrt(np.mean((base - ab) ** 2)))
-        baseline_well = float(
-            np.sqrt(np.mean((base[attractive] - ab[attractive]) ** 2))
-        )
+        baseline_well = float(np.sqrt(np.mean((base[attractive] - ab[attractive]) ** 2)))
 
     return DimerBenchmark(
-        name=getattr(potential, "name", type(potential).__name__),
+        name=name,
         full_pearson_r=full_r,
         full_rmse_kcal=full_rmse,
         well_pearson_r=well_r,
         well_rmse_kcal=well_rmse,
-        stacking_energy_kcal=cof.model_at_ab_min,
+        # the cofacial stack evaluated at the reference minimum-energy separation
+        stacking_energy_kcal=wells["cofacial"].model_at_ab_min,
         wells=wells,
         reference=data.reference,
         baseline_name=baseline_name,
         baseline_full_rmse_kcal=baseline_full,
         baseline_well_rmse_kcal=baseline_well,
     )
+
+
+def dimer_benchmark(potential, data=None, baseline=CACELLI_POTENTIAL):
+    """Score ``potential`` (anything with ``pair_energy``) on the reference dimers.
+
+    ``baseline`` is the uncorrected potential a candidate has to beat; pass
+    ``None`` to skip it. Returns a :class:`DimerBenchmark`.
+    """
+    if data is None:
+        data = load_reference_dimers()
+    model = potential.pair_energy(data.uhat1, data.uhat2, data.r) * EV_TO_KCAL
+    baseline_kcal, baseline_name = None, ""
+    if baseline is not None:
+        baseline_kcal = baseline.pair_energy(data.uhat1, data.uhat2, data.r) * EV_TO_KCAL
+        baseline_name = getattr(baseline, "name", type(baseline).__name__)
+    return score_energies(
+        model,
+        data,
+        name=getattr(potential, "name", type(potential).__name__),
+        scan_fn=cg_scan(potential),
+        baseline_kcal=baseline_kcal,
+        baseline_name=baseline_name,
+    )
+
+
+# --- atomistic reconstruction, for scoring an ASE calculator such as UMA -------
+
+
+def benzene_monomer():
+    """Molecule A as the supplement defines it: ring in the xz-plane, two C-H bonds on z.
+
+    ASE's g2 benzene (ideal D6h: C-C 1.395 A, C-H 1.087 A) lies in the z = 0
+    plane with C-H bonds along +/-y; a -90 degree turn about x puts it in the
+    supplement's frame. Cacelli et al.'s MP2 monomer was not published.
+    """
+    mol = molecule("C6H6")
+    mol.positions = Rotation.from_euler("x", -90, degrees=True).apply(mol.positions)
+    mol.set_pbc(False)
+    mol.translate(-mol.get_center_of_mass())
+    mol.info.update({"charge": 0, "spin": 1})
+    return mol
+
+
+def cacelli_dimer_frames(data=None, monomer=None, euler_seq=EULER_SEQ):
+    """The dimer rows as rigid 24-atom ``Atoms`` (A at the origin, B placed by the row).
+
+    B is rotated by the same ``Rotation.from_euler`` that gives ``data.uhat2``, so
+    the atomistic and coarse-grained geometries agree by construction. Each frame
+    carries ``arrays["molecule_id"]`` (0 for A, 1 for B), the ``charge``/``spin``
+    UMA needs, and the row's provenance in ``info``.
+    """
+    data = load_cacelli_dimers() if data is None else data
+    mono = benzene_monomer() if monomer is None else monomer
+    ref = mono.get_positions()
+    rotations = Rotation.from_euler(euler_seq, data.euler_deg, degrees=True)
+
+    frames = []
+    for k, rot in enumerate(rotations):
+        dimer = mono.copy()
+        b = mono.copy()
+        b.set_positions(rot.apply(ref) + data.r[k])
+        dimer += b
+        dimer.set_pbc(False)
+        dimer.set_cell(np.zeros((3, 3)))
+        dimer.arrays["molecule_id"] = np.repeat([0, 1], len(mono)).astype(np.int32)
+        dimer.info.update(
+            {
+                "charge": 0,
+                "spin": 1,
+                "n_molecules": 2,
+                "row_index": k,
+                "reference_kcal": float(data.energy_kcal[k]),
+                "euler_deg": np.asarray(data.euler_deg[k], dtype=float),
+                "euler_seq": euler_seq,
+                "com": np.asarray(data.r[k], dtype=float),
+                "com_sep": float(np.linalg.norm(data.r[k])),
+            }
+        )
+        frames.append(dimer)
+    return frames
+
+
+def atomistic_pair_energies(frames, calculator, monomer=None):
+    """Interaction energies (kcal/mol), ``E_dimer - 2 E_monomer``, under an ASE calculator.
+
+    The monomers are rigid copies of one geometry, so the monomer energy is
+    evaluated once.
+    """
+    mono = benzene_monomer() if monomer is None else monomer
+    e_mono = frame_energy(mono, calculator)
+    dimer = np.array([frame_energy(f, calculator) for f in frames])
+    return (dimer - 2.0 * e_mono) * EV_TO_KCAL
+
+
+def atomistic_scan(calculator, monomer=None, euler_seq=EULER_SEQ, n_points=121):
+    """A ``scan_fn`` for :func:`score_energies` that rebuilds and evaluates dimers.
+
+    B keeps the orientation of the family's reference-minimum row. ``n_points`` is
+    far below :func:`cg_scan`'s default because an MLIP call costs ~0.2 s.
+    """
+    mono = benzene_monomer() if monomer is None else monomer
+    ref = mono.get_positions()
+    e_mono = frame_energy(mono, calculator)
+
+    def scan(family, data, i_min):
+        _, offsets, dists = family_scan_geometry(family, data, i_min, n_points)
+        rotated = Rotation.from_euler(euler_seq, data.euler_deg[i_min], degrees=True).apply(ref)
+        curve = []
+        for offset in offsets:
+            dimer = mono.copy()
+            b = mono.copy()
+            b.set_positions(rotated + offset)
+            dimer += b
+            curve.append(frame_energy(dimer, calculator) - 2.0 * e_mono)
+        return np.array(curve) * EV_TO_KCAL, dists
+
+    return scan

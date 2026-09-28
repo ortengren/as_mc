@@ -1,3 +1,6 @@
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -6,20 +9,25 @@ from asmcmc.delta_learning.dimer_benchmark import (
     DEFAULT_REFERENCE,
     UMA_DIMER_PATH,
     DimerBenchmark,
+    benzene_monomer,
+    cacelli_dimer_frames,
+    cg_scan,
     dimer_benchmark,
     dimer_scan,
+    family_labels,
     load_cacelli_dimers,
     load_reference_dimers,
     load_uma_dimers,
+    score_energies,
 )
+from asmcmc.mc.coarse_graining import disc_normal
+from asmcmc.units import EV_TO_KCAL
 
 
-# A frozen copy of the condensed-phase GB+Q refit (data/my_fitted_gbq_params.json
-# as of 2026-07): fits the PBE-D3 crystal energies well (test RMSE ~3 kcal/mol)
-# yet is repulsive at the cofacial stacking distance and anti-correlated with
-# the ab initio dimer wells. Kept inline so the test still documents the
-# failure mode this benchmark exists to catch even after the default fit is
-# replaced by something better.
+# The GB+Q refit to the DFT crystal energies, frozen inline. It fits those energies
+# well (test RMSE ~3 kcal/mol) yet is repulsive at the cofacial stacking distance
+# and anti-correlated with the dimer wells: the failure this benchmark exists to
+# catch.
 CONDENSED_REFIT = GBQPotential(
     name="condensed_phase_refit_2026_07",
     sigma0=7.070314502548505,
@@ -251,3 +259,137 @@ def test_summary_names_the_reference_and_baseline(uma_data):
     s = dimer_benchmark(CACELLI_POTENTIAL, uma_data).summary()
     assert "reference: uma" in s
     assert "vs baseline" in s
+
+
+# --- atomistic reconstruction (geometry only; no MLIP needed) ---
+
+
+@pytest.fixture(scope="module")
+def frames(data):
+    return cacelli_dimer_frames(data)
+
+
+def test_monomer_matches_supplement_frame():
+    """README: ring in the xz-plane, two C-H bonds on the z-axis."""
+    mol = benzene_monomer()
+    assert mol.get_chemical_formula() == "C6H6"
+    pos = mol.get_positions()
+    assert np.allclose(mol.get_center_of_mass(), 0.0, atol=1e-9)
+    assert np.abs(pos[:, 1]).max() < 1e-9  # planar in xz
+    on_z = np.abs(pos[:, [0, 1]]).max(axis=1) < 1e-9
+    assert on_z[:6].sum() == 2 and on_z[6:].sum() == 2  # two C-H bonds on z
+    assert np.allclose(np.abs(disc_normal(pos)), [0.0, 1.0, 0.0], atol=1e-9)
+    assert mol.info["charge"] == 0 and mol.info["spin"] == 1
+
+
+def test_frames_are_two_rigid_benzenes(frames, data):
+    assert len(frames) == len(data) == 197
+    for f in frames[:5]:
+        assert len(f) == 24
+        assert np.bincount(f.arrays["molecule_id"]).tolist() == [12, 12]
+        assert not f.pbc.any()
+        assert f.info["charge"] == 0 and f.info["spin"] == 1
+    ref = benzene_monomer().get_all_distances()
+    for f in frames[::40]:
+        for half in (slice(0, 12), slice(12, 24)):
+            assert np.allclose(f[half].get_all_distances(), ref, atol=1e-9)
+
+
+def test_frames_agree_with_coarse_grained_data(frames, data):
+    """B's centre and disc normal reproduce ``data.r`` and ``data.uhat2``, so UMA is
+    scored on the same geometries as the pair potentials."""
+    for k, f in enumerate(frames):
+        b = f[12:]
+        assert np.allclose(b.get_center_of_mass(), data.r[k], atol=1e-8)
+        assert abs(abs(disc_normal(b.get_positions()) @ data.uhat2[k]) - 1) < 1e-6
+
+
+def test_zero_angle_rows_are_pure_translations(frames, data):
+    """144 of 197 rows carry no angles, so no Euler convention is involved."""
+    ang0 = np.all(data.euler_deg == 0.0, axis=1)
+    assert ang0.sum() == 144
+    for k in np.where(ang0)[0]:
+        pos = frames[k].get_positions()
+        assert np.allclose(pos[12:] - pos[:12], data.r[k], atol=1e-9)
+
+
+def test_euler_seq_threads_through_to_geometry(data):
+    default = cacelli_dimer_frames(data)
+    other = cacelli_dimer_frames(data, euler_seq="xyz")
+    ang0 = np.all(data.euler_deg == 0.0, axis=1)
+    for k in np.where(ang0)[0][:5]:
+        assert np.allclose(default[k].get_positions(), other[k].get_positions())
+    moved = sum(
+        not np.allclose(default[k].get_positions(), other[k].get_positions())
+        for k in np.where(~ang0)[0]
+    )
+    assert moved > 0
+
+
+# --- scoring precomputed energies ---
+
+
+def test_score_energies_reproduces_dimer_benchmark(data, cacelli_bench):
+    """The generic scorer and the pair-potential entry point agree exactly."""
+    model = CACELLI_POTENTIAL.pair_energy(data.uhat1, data.uhat2, data.r) * EV_TO_KCAL
+    b = score_energies(
+        model, data, name=CACELLI_POTENTIAL.name, scan_fn=cg_scan(CACELLI_POTENTIAL)
+    )
+    assert b.full_pearson_r == cacelli_bench.full_pearson_r
+    assert b.full_rmse_kcal == cacelli_bench.full_rmse_kcal
+    assert b.well_pearson_r == cacelli_bench.well_pearson_r
+    assert b.well_rmse_kcal == cacelli_bench.well_rmse_kcal
+    assert b.wells == cacelli_bench.wells
+
+
+def test_score_without_scan_falls_back_to_data_rows(data, cacelli_bench):
+    """scan_fn=None still finds each family's well, from the rows themselves."""
+    model = CACELLI_POTENTIAL.pair_energy(data.uhat1, data.uhat2, data.r) * EV_TO_KCAL
+    b = score_energies(model, data, name="rows-only")
+    for fam, well in b.wells.items():
+        assert well.model_depth <= cacelli_bench.wells[fam].model_at_ab_min + 1e-9
+        assert well.model_depth == pytest.approx(cacelli_bench.wells[fam].model_depth, abs=0.3)
+
+
+def test_family_labels_partition_the_rows(data):
+    labels = family_labels(data)
+    assert len(labels) == len(data)
+    counts = {name: int((labels == name).sum()) for name in set(labels)}
+    for fam in ("cofacial", "parallel_displaced", "t_shaped"):
+        assert counts[fam] > 0
+    assert sum(counts.values()) == len(data)
+
+
+# --- the regeneration script, with UMA replaced by a stub ---
+
+
+def _load_script(name):
+    path = Path(__file__).resolve().parents[1] / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_regeneration_script_writes_a_reference_the_benchmark_accepts(
+    tmp_path, monkeypatch, make_stub_calculator
+):
+    """``scripts/uma_cacelli_dimers.py`` end to end, without fairchem."""
+
+    class PairwiseStub(make_stub_calculator):
+        def get_potential_energy(self, atoms=None):
+            self.n_calls += 1
+            d = atoms.get_all_distances()
+            return -float(np.sum(1.0 / d[np.triu_indices(len(atoms), k=1)]))
+
+    script = _load_script("uma_cacelli_dimers")
+    monkeypatch.setattr(script, "load_uma_calculator", lambda *a, **k: PairwiseStub())
+    monkeypatch.setattr(
+        "sys.argv", ["uma_cacelli_dimers.py", "--out-dir", str(tmp_path), "--scan-points", "3"]
+    )
+    script.main()
+
+    reference = load_uma_dimers(tmp_path / "dimer_energies.csv")
+    assert len(reference) == 197 and reference.reference == "uma"
+    assert np.all(np.isfinite(reference.energy_kcal))
+    assert (tmp_path / "family_curves.csv").exists()
