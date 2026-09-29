@@ -84,17 +84,18 @@ def calculate_aniso_vol_move(cell, curr_vol, delta):
     """Anisotropic log-uniform volume move: rescale a single, randomly chosen
     lattice vector by s = exp(U(-delta, delta)), leaving the other two axes fixed.
 
-    Where ``calculate_vol_move`` scales all three axes by the same s_v**(1/3) (an
-    isotropic *size* change), this changes one box length at a time, so the box can
-    relax its *aspect ratio* over many moves — needed to reach the ordered
-    anisotropic (columnar / nematic) phases these oblate particles form, which an
-    isotropic move can never reach from a differently-shaped start.
+    ``calculate_vol_move`` scales all three axes by the same s_v**(1/3), which
+    only changes the box's size. This move changes one box length at a time, so
+    over many moves the box can change its aspect ratio as well. That's needed to
+    reach the ordered anisotropic (columnar or nematic) phases these oblate
+    particles form, which isotropic moves can't reach from a box of a different
+    shape.
 
     Only one axis scales, so V'/V = s exactly, and the (N+1)*ln(V'/V) term in
-    ``npt_decide_accept`` is therefore unchanged — it depends only on the total
-    volume ratio, not on which or how many axes moved. Sampling ln(s) ~
-    U(-delta, delta) keeps the proposal symmetric in ln(V) (the detailed-balance
-    requirement for that criterion) and s > 0 for any delta.
+    ``npt_decide_accept`` still applies, since it depends only on the total volume
+    ratio and not on which axes moved. Drawing ln(s) from U(-delta, delta) keeps
+    the proposal symmetric in ln(V), which detailed balance requires for that
+    criterion, and keeps s > 0 for any delta.
     """
     s = np.exp(rand.uniform(-delta, delta))
     axis = rand.randrange(3)

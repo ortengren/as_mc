@@ -108,8 +108,9 @@ def test_vol_move_log_uniform_and_symmetric():
     """ln(V'/V) is uniform on [-delta, delta] and symmetric about 0.
 
     Symmetry in ln(V) is the detailed-balance requirement for the (N+1)*ln(V'/V)
-    acceptance criterion in npt_decide_accept; an asymmetric proposal (e.g. the old
-    uniform-in-V move) would need a Hastings correction and biases the volume.
+    acceptance criterion in npt_decide_accept. An asymmetric proposal (such as one
+    uniform in V) would need a Hastings correction, and without one it biases the
+    volume.
     """
     cell = np.diag([10., 10., 10.])
     old_vol = np.linalg.det(cell)
@@ -182,7 +183,7 @@ def test_aniso_vol_move_changes_one_axis_only():
 
 
 def test_aniso_vol_move_stays_orthorhombic():
-    """A diagonal (orthorhombic) cell stays diagonal — a box length changes but no
+    """A diagonal (orthorhombic) cell stays diagonal: a box length changes, but no
     shear is introduced."""
     cell = np.diag([10., 12., 15.])
     old_vol = np.linalg.det(cell)
@@ -193,7 +194,7 @@ def test_aniso_vol_move_stays_orthorhombic():
 
 
 def test_aniso_vol_move_log_uniform_and_symmetric():
-    """ln(V'/V) is uniform on [-delta, delta] and symmetric about 0 — the same
+    """ln(V'/V) is uniform on [-delta, delta] and symmetric about 0, the same
     detailed-balance requirement the (N+1)*ln(V'/V) criterion places on the
     isotropic move (see test_vol_move_log_uniform_and_symmetric)."""
     cell = np.diag([10., 12., 15.])

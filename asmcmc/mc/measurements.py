@@ -62,9 +62,9 @@ class AverageEnergy(Measurement):
 
     def compute(self, frame, scalar_data, array_data):
         if self.recompute:
-            # A frame read back from a db (row.toatoms()) keeps positions/cell/
-            # pbc but drops custom arrays such as or_vec, which calc_total_energy
-            # needs -- restore it from array_data when present.
+            # A frame read back from a db (row.toatoms()) keeps positions, cell
+            # and pbc but drops custom arrays such as or_vec, which
+            # calc_total_energy needs, so restore it from array_data if present.
             if array_data is not None and "or_vec" in array_data:
                 frame = frame.copy()
                 frame.set_array("or_vec", np.asarray(array_data["or_vec"]))
@@ -299,11 +299,11 @@ def einstein_function(x):
 
     with the crossover at x ~ 1. Accepts a scalar or any array shape.
 
-    Note this is the Einstein *function*, which is exact for an independent
-    harmonic oscillator -- not the Einstein *model* of a solid, whose single
-    shared frequency famously misses the T^3 law that acoustic branches give.
-    Molecular vibrations really are independent oscillators at fixed measured
-    frequencies, so no Einstein-model approximation is involved here.
+    This is the Einstein *function*, which is exact for an independent harmonic
+    oscillator. It isn't the Einstein *model* of a solid, whose single shared
+    frequency misses the T^3 law that acoustic branches give. Molecular
+    vibrations are independent oscillators with fixed, measured frequencies, so
+    the Einstein model's approximation doesn't come into it.
     """
     x = np.asarray(x, dtype=float)
     # Clipping keeps sinh finite at both ends; f_E underflows to 0 long before
@@ -320,23 +320,23 @@ def vibrational_heat_capacity(temperature, fundamentals=BENZENE_FUNDAMENTALS):
 
     over the distinct fundamentals j with degeneracies g_j. The modes are
     independent, so ln q_vib is a sum over modes and every extensive quantity
-    decomposes mode by mode; the zero-point term is T-independent and so
-    contributes to U and H but exactly nothing here.
+    decomposes mode by mode. The zero-point term doesn't depend on T, so it
+    contributes to U and H but not to the heat capacity.
 
-    This is the piece a rigid-body MC trajectory cannot contain. The sampler
-    gives each molecule 6 degrees of freedom (3 translational + 3 rotational),
-    which ``HeatCapacity`` already accounts for via its 3 k_B kinetic term plus
-    the configurational fluctuation. Real benzene has 3 x 12 = 36, so what is
-    missing is exactly the 30 intramolecular vibrations -- and only those. Do
-    not add a q_rot or q_trans on top; the MC samples both.
+    A rigid-body MC trajectory can't contain this term. The sampler gives each
+    molecule 6 degrees of freedom (3 translational and 3 rotational), which
+    ``HeatCapacity`` already covers through its 3 k_B kinetic term and the
+    configurational fluctuation. Real benzene has 3 x 12 = 36, so what's missing
+    is exactly the 30 intramolecular vibrations. Don't add rotational or
+    translational partition functions on top, because the MC samples both.
 
     The additivity relies on the intramolecular Hamiltonian being separable
     from the intermolecular one and independent of V. That independence is what
     lets q_vib factor out of the NPT volume integral, so this same term adds to
     C_p in NPT exactly as it adds to C_v in NVT (no P V work is done by an
-    intramolecular mode). It holds well for benzene's stiff ring and CH modes;
-    it is the lattice modes, which the MC does sample, that carry the large
-    volume dependence.
+    intramolecular mode). This holds well for benzene's stiff ring and CH modes.
+    The strong volume dependence is in the lattice modes, which the MC does
+    sample.
 
     ``temperature`` may be a scalar or an array (the result matches its shape).
     Multiply by ``asmcmc.units.EV_PER_K_TO_J_PER_MOL_K`` to compare against calorimetry.
@@ -460,9 +460,9 @@ class EffectiveSampleSize(Measurement):
         sem          standard error of the mean, std / sqrt(ess); a 95% CI on
                      ``mean`` is mean +/- 1.96 * sem
 
-    SEM uses ESS. Valid for a *stationary* series and
-    for the mean itself; for nonlinear observables (heat capacity, ratios) block
-    bootstrap/jackknife the trajectory instead.
+    The SEM uses the ESS rather than M. It's only valid for a stationary series,
+    and only for the mean itself. For nonlinear observables (heat capacity,
+    ratios), use a block bootstrap or jackknife over the trajectory instead.
     """
 
     def __init__(self, observable):

@@ -105,10 +105,10 @@ def test_tail_covers_the_requested_window(tmp_path):
 
 
 def test_tail_average_differs_from_a_single_frame(tmp_path):
-    """Averaging must be real -- a tail g(r) is not the last frame's g(r).
+    """The tail g(r) must really be an average, not just the last frame's g(r).
 
-    This is the whole reason the tail exists: one frame at these particle counts
-    is too noisy to read a phase off.
+    That's the reason for averaging over a tail at all: a single frame at these
+    particle counts is too noisy to identify the phase from.
     """
     d = _point(str(tmp_path / "scan"), num_steps=40 * 27)
     trace = load_run(d)

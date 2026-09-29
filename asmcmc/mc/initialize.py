@@ -28,8 +28,8 @@ DEFAULT_COLUMNAR_DENSITY = 1.4
 # Herringbone start: the experimental benzene Pbca crystal, coarse-grained to one
 # oblate particle per molecule (see data/README.md for how it is built).
 DEFAULT_HERRINGBONE_MOTIF = data_path("benzene_herringbone_cg.xyz")
-# Small default jitters: a thermal wiggle giving replica independence that leaves
-# the herringbone order intact. Set both to 0 for a pristine crystal start.
+# The default jitters are small: enough to make replicas independent while
+# keeping the herringbone order. Set both to 0 to start from the exact crystal.
 DEFAULT_HERRINGBONE_POS_JITTER = 0.1  # Angstrom
 DEFAULT_HERRINGBONE_OR_JITTER = 0.1  # radians
 
@@ -132,10 +132,10 @@ class ColumnarLatticeInitializer(Initializer):
     """Generate a fresh, ordered columnar config via
     :func:`generate_columnar_config`.
 
-    Builds discs stacked face-to-face into columns at near-equilibrium density —
-    the *fast* equilibration direction for these oblate particles (melting an
-    ordered start is barrier-free; freezing a disordered one is not). Seeded
-    per-replica jitter/tilt keeps repeat trials statistically independent.
+    The discs are stacked face-to-face into columns at close to the equilibrium
+    density. For these oblate particles an ordered start equilibrates faster than
+    a disordered one, because melting has no barrier and freezing does. A seeded
+    jitter and tilt keeps repeat runs statistically independent.
     """
 
     def __init__(
@@ -176,13 +176,13 @@ class HerringboneLatticeInitializer(Initializer):
     :func:`generate_herringbone_config`.
 
     Tiles the coarse-grained experimental benzene unit cell (Pbca) into a
-    supercell: a T-shaped, low-nematic (S~0.25) arrangement — benzene's *real*
-    crystal. This is the *validation* start (compare density/energy/order to
-    experiment), as opposed to the parallel-stacked columnar polymorph. N is
-    quantized to whole unit cells (4*nx*ny*nz), so ``n_particles`` is a target
-    the realized count snaps to (e.g. 125 -> 128). Seeded position/orientation
-    jitter (small by default) keeps repeat trials independent while preserving
-    the herringbone order.
+    supercell. This is benzene's real crystal structure, a T-shaped arrangement
+    with low nematic order (S ~ 0.25), and it's the start we use to compare
+    density, energy and order with experiment. N has to be a whole number of unit
+    cells (4*nx*ny*nz), so ``n_particles`` is a target and the actual count is the
+    nearest tiling (e.g. 125 -> 128). A small seeded jitter in position and
+    orientation keeps repeat runs independent without disturbing the herringbone
+    order.
     """
 
     def __init__(
@@ -330,15 +330,15 @@ def generate_columnar_config(
     For oblate Gay-Berne particles (kappa < 1) the face-to-face contact distance
     is kappa*sigma0 (axial) and the side-to-side contact is sigma0 (in-plane), so
     columns reach densities the random simple-cubic start cannot (rho* up to
-    ~1/kappa). This is the ordered, near-equilibrium start that equilibrates in
-    the fast direction for the dense phases.
+    ~1/kappa). Because it starts ordered and close to equilibrium, dense phases
+    equilibrate quickly from it.
 
     density : reduced number density rho* = N * sigma0^3 / V (realized exactly;
               box is sized for N). Raises if too high to place without overlaps.
     seed    : integer RNG seed for reproducibility (None for random); distinct
               seeds give statistically independent starts for repeat trials.
-    tilt    : max per-particle orientation jitter (radians) about the column
-              axis — breaks the perfect-alignment symmetry while keeping high S.
+    tilt    : maximum tilt of each particle away from the column axis (radians).
+              It breaks the perfect alignment while keeping S high.
     sigma0,
     kappa   : particle size and aspect ratio setting the in-plane (sigma0) and
               axial (kappa*sigma0) contact distances; default to the package
@@ -362,7 +362,7 @@ def generate_columnar_config(
 
     # Box sized for N at the requested density. Every in-plane spacing equals s
     # and the axial spacing is kappa*s, so both reach contact (sigma0 in-plane,
-    # kappa*sigma0 axial) together — a single condition (s >= sigma0) guarantees
+    # kappa*sigma0 axial) together, and a single condition (s >= sigma0) guarantees
     # no overlaps. V = n_grid * kappa * s^3 fixes s for the requested density.
     volume = n_particles * sigma0**3 / density
     spacing_xy = (volume / (n_grid * kappa)) ** (1 / 3)
@@ -474,12 +474,12 @@ def generate_herringbone_config(
     Build an ASE Atoms frame of N oblate particles in the benzene *herringbone*
     crystal by tiling the coarse-grained experimental Pbca unit cell.
 
-    The motif (``motif_path``, default the tracked benzene coarse-graining) holds
-    4 particles on the crystal's inversion centers with the experimental
-    ring-normal orientations — a low-nematic (S~0.25), T-shaped arrangement, i.e.
-    benzene's real crystal. This is the *validation* start: it puts the system in
-    benzene's actual structure so its density/energy/order can be compared to
-    experiment, unlike the columnar start (a parallel-stacked polymorph).
+    The motif (``motif_path``, by default the tracked coarse-grained benzene
+    crystal) has 4 particles on the crystal's inversion centres, with the
+    experimental ring-normal orientations. That is benzene's real crystal, a
+    T-shaped arrangement with low nematic order (S ~ 0.25). Starting from it lets
+    density, energy and order be compared with experiment, which the columnar
+    start (a parallel-stacked polymorph) doesn't.
 
     n_particles : target particle count. N is quantized to 4*nx*ny*nz (whole unit
                   cells keep the crystal intact); the supercell nearest the target
@@ -491,9 +491,8 @@ def generate_herringbone_config(
                   dense that centers close inside the kappa*sigma0 contact).
     seed        : RNG seed; distinct seeds give independent jittered starts.
     pos_jitter  : max per-particle position displacement (Angstrom, per axis).
-    or_jitter   : max per-particle orientation libration (radians) about a random
-                  axis — keep small so the herringbone order is preserved (a
-                  thermal wiggle, not a re-randomization).
+    or_jitter   : maximum rotation of each particle (radians) about a random
+                  axis. Keep it small so the herringbone order survives.
     sigma0,
     kappa       : particle size / aspect ratio; sigma0 sets rho*, kappa sets the
                   overlap floor (kappa*sigma0). Default to the package default;

@@ -3,8 +3,8 @@
 No campaign on disk and no UMA anywhere: every test either builds a handful of
 ellipsoid frames directly or drives the sweep over a tiny synthetic campaign
 written into ``tmp_path``, so the suite runs from a fresh clone. AniSOAP itself
-*is* exercised -- it is the thing under test -- but only ever on two- and
-three-bead frames.
+does run, since it's what is being tested, but only on frames with two or three
+beads.
 """
 
 import csv
@@ -48,9 +48,9 @@ from asmcmc.mc.potentials import CACELLI_POTENTIAL
 
 Z_HAT = np.array([0.0, 0.0, 1.0])
 
-# Enough frames that the RidgeCV folds are non-degenerate -- below ~20 every
-# alpha scores nan and the search picks arbitrarily, which would make the
-# resume assertions vacuous.
+# Enough frames for the RidgeCV folds to work. Below about 20, every alpha scores
+# nan and the search picks one arbitrarily, so the resume checks would prove
+# nothing.
 N_CAMPAIGN = 24
 
 
@@ -67,13 +67,13 @@ def dimer_frame(separation, hypers, normals=None):
 
 
 def test_spin_about_a_uniaxial_normal_moves_no_descriptor():
-    """The invariance that licenses inventing an azimuth in deployment.
+    """This invariance is what allows MC frames to be given an arbitrary azimuth.
 
-    An MC frame carries only ``or_vec`` -- a disc normal, 2 DOF -- so
-    ``quaternions_from_normals`` has to make up the third. That is sound only
-    because both in-plane semiaxes are equal, making spin about the normal
-    unobservable. If this ever fails, ``Hypers`` has grown a biaxial ellipsoid
-    and the deployment path is silently wrong rather than noisily broken.
+    An MC frame only has ``or_vec``, a disc normal with 2 degrees of freedom, so
+    ``quaternions_from_normals`` has to make up the third. That's only valid
+    because both in-plane semiaxes are equal, so spinning a particle about its
+    normal changes nothing. If this test fails, ``Hypers`` has become biaxial and
+    the descriptors of MC frames would be silently wrong.
     """
     hypers = Hypers()
     rng = np.random.default_rng(0)
@@ -93,11 +93,10 @@ def test_spin_about_a_uniaxial_normal_moves_no_descriptor():
 
 
 def test_a_batch_entirely_outside_the_cutoff_is_all_zero_not_an_error():
-    """AniSOAP raises here rather than returning nothing; the guard is the fix.
+    """AniSOAP raises an error here instead of returning nothing, and our check handles it.
 
-    Reachable in normal use, not a corner: ``dimer_scan`` walks a dimer past
-    the cutoff on every gate call, and sweeping ``cutoff_radius`` downward
-    makes it the common case.
+    This happens in normal use: ``dimer_scan`` moves a dimer past the cutoff
+    every time the benchmark runs, and it's common at small ``cutoff_radius``.
     """
     hypers = Hypers()
     frames = [dimer_frame(r, hypers) for r in (20.0, 25.0)]
@@ -116,10 +115,10 @@ def test_only_the_far_frame_is_zeroed_in_a_mixed_batch():
 
 @pytest.mark.parametrize("max_angular,max_radial", [(3, 3), (3, 6), (9, 3), (9, 6)])
 def test_derived_feature_count_matches_the_realised_width(max_angular, max_radial):
-    """``Hypers.n_features`` is arithmetic AniSOAP never confirms -- pin it.
+    """``Hypers.n_features`` is our own formula, which AniSOAP doesn't provide, so check it.
 
-    The guard above needs a width when there is nothing to measure one from, so
-    a mismatch would silently produce wrongly-shaped all-zero rows.
+    The case above needs a width when there's nothing to measure it from, so a
+    wrong formula would silently give all-zero rows of the wrong shape.
     """
     hypers = Hypers(max_angular=max_angular, max_radial=max_radial)
     assert descriptors([dimer_frame(4.5, hypers)], hypers).shape[1] == hypers.n_features
@@ -149,11 +148,11 @@ def _toy_fit(hypers, n=24, seed=0):
 
 
 def test_a_zero_descriptor_predicts_exactly_zero_delta():
-    """Not "small" -- exactly zero.
+    """Exactly zero, not just small.
 
-    In deployment the per-centre energies are summed over N=400 particles, so a
-    constant per centre becomes a large spurious extensive shift. This is what
-    forbids an intercept and feature centring.
+    In MC the per-centre energies are summed over N = 400 particles, so a
+    constant per centre would become a large, spurious shift in the total
+    energy. This is why the model has no intercept and no feature centring.
     """
     hypers = Hypers()
     model = _toy_fit(hypers).model
@@ -251,11 +250,11 @@ def test_a_point_writes_its_three_artifacts_and_the_model_round_trips(campaign, 
 
 
 def test_the_descriptor_build_and_the_fit_are_timed_separately(campaign, tmp_path):
-    """The two hyperparameter-dependent stages, and only those.
+    """Only the two stages that depend on the hyperparameters are timed.
 
-    Timed ``>= 0`` rather than ``> 0``: on a 24-frame synthetic campaign the fit
-    genuinely rounds to 0.000 s, and the point of the test is that the two
-    stages are attributed separately, not their magnitude.
+    The check is ``>= 0`` rather than ``> 0`` because on a 24-frame synthetic
+    campaign the fit really does round to 0.000 s. What's being tested is that
+    the two stages are timed separately, not how long they take.
     """
     hypers = Hypers(max_angular=3, max_radial=3, cutoff_radius=6.0)
     train, test = train_test_split(N_CAMPAIGN, 0.25, 0)
@@ -272,8 +271,8 @@ def test_the_descriptor_build_and_the_fit_are_timed_separately(campaign, tmp_pat
     }
     timing = fit_and_score_point(hypers.to_dict(), cfg)["timing"]
 
-    # Exactly these two -- the geometry load and the gate are deliberately not
-    # measured, so a stray extra key means something crept back in.
+    # Exactly these two. Loading the geometry and running the benchmark aren't
+    # timed, so an extra key means one of them has started being timed.
     assert set(timing) == set(TIMING_COLUMNS)
     assert all(np.isfinite(v) and v >= 0 for v in timing.values())
     assert timing["descriptors_s"] > 0
@@ -343,7 +342,7 @@ def test_an_interrupted_sweep_resumes_to_the_same_comparison(campaign, tmp_path)
 
 
 def test_the_sweep_records_the_gate_without_filtering_on_it(campaign, tmp_path):
-    """Both verdicts are legitimate results; nothing is dropped for failing."""
+    """Points that fail the benchmark are recorded like any other; nothing is dropped."""
     records = run_sweep(
         campaign=str(campaign),
         out_dir=str(tmp_path / "gated"),
@@ -365,12 +364,13 @@ def test_the_sweep_records_the_gate_without_filtering_on_it(campaign, tmp_path):
 
 
 def test_regate_rescores_a_finished_point_without_refitting(campaign, tmp_path):
-    """The reference belongs to the probe, not to the fit.
+    """The reference only affects the benchmark, not the fit.
 
-    The load-bearing one for re-scoring a finished sweep: the skip path returns
-    a stored gate verbatim, so a changed ``reference`` alone reports the *old*
-    reference's verdict. ``regate`` is what makes the switch actually happen,
-    and it must do so without disturbing the model or the fit metrics.
+    This is the test that matters for re-scoring a finished sweep. A finished
+    point returns its stored benchmark result unchanged, so changing
+    ``reference`` on its own still reports the old reference's verdict.
+    ``regate`` is what actually switches it, and it must do so without touching
+    the model or the fit metrics.
     """
     kwargs = dict(
         campaign=str(campaign),
@@ -393,7 +393,7 @@ def test_regate_rescores_a_finished_point_without_refitting(campaign, tmp_path):
     first = run_sweep(reference="mp2", **kwargs)[0]
     model_before = model_path.read_bytes()
 
-    # Without regate the stale gate comes back untouched -- the trap.
+    # Without regate, the old benchmark result comes back unchanged.
     stale = run_sweep(reference="uma", **kwargs)[0]
     assert stale["gate"]["reference"] == "mp2"
 

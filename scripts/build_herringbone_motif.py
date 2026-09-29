@@ -1,13 +1,13 @@
 """Coarse-grain a benzene Pbca cif into the 4-molecule herringbone motif.
 
 `HerringboneLatticeInitializer` tiles this motif into a supercell, so the motif's
-cell *is* the starting density of every herringbone run. That makes the choice of
-cif a physical input, not bookkeeping: the tracked default
-(`data/benzene_herringbone_cg.xyz`, COD 7238223) is an in-situ cryo-grown crystal
-reported at 150 K whose cell is ~4% larger than benzene actually is at that
-temperature -- 123.58 A^3/molecule, rho 1.050, against an accepted rho of
-~1.09-1.10. Every run started from it therefore has to collapse ~4% further to
-reach the Cacelli potential's preferred density.
+cell sets the starting density of every herringbone run, and the choice of cif
+matters physically. The tracked default (`data/benzene_herringbone_cg.xyz`, from
+COD 7238223) is a crystal grown in situ at cryogenic temperature and reported at
+150 K. Its cell is about 4% larger than benzene's really is at that temperature:
+123.58 A^3 per molecule, or rho = 1.050 against an accepted 1.09-1.10. Every run
+started from it therefore has to shrink about 4% further to reach the density the
+Cacelli potential prefers.
 
 Cacelli et al. (J. Chem. Phys. 120, 3648) start from the 138 K neutron structure
 of their ref 39 (Bacon, Curry & Wilson, Proc. R. Soc. A 279, 98 (1964) = CSD
@@ -17,9 +17,9 @@ BENZEN01 = CCDC 1108750), which is `data/benzene_Pbca_csd_1108750.cif` here.
         --cif data/benzene_Pbca_csd_1108750.cif \
         --out data/benzene_herringbone_cg_138K.xyz
 
-The density check is an assertion, not a print: a cif whose coarse-grained
-density disagrees with its own `_exptl_crystal_density_diffrn` means the symmetry
-expansion or the fragment split went wrong, and that must not reach a run.
+The script stops with an error if the coarse-grained density disagrees with the
+cif's own `_exptl_crystal_density_diffrn`. That would mean the symmetry expansion
+or the split into molecules went wrong, and such a motif mustn't reach a run.
 """
 
 import argparse
@@ -69,9 +69,9 @@ def cif_density(path):
 
 def build(cif, out):
     with warnings.catch_warnings():
-        # ASE warns that it cannot interpret the orthorhombic setting of #61;
-        # the assertions below (density, centre count) are what actually
-        # establish the expansion was right.
+        # ASE warns that it can't interpret the orthorhombic setting of space
+        # group 61. The checks below (density and number of centres) are what
+        # confirm the expansion was right.
         warnings.simplefilter("ignore")
         atoms = ase.io.read(str(cif))
 

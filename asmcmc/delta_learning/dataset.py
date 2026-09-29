@@ -92,7 +92,7 @@ def rotation_to_normal(normals, spin, reference_normal=REFERENCE_NORMAL):
     """Rotations carrying ``reference_normal`` onto each of ``normals``.
 
     ``spin`` is an additional rotation about the target normal. It leaves the
-    coarse-grained system unchanged, but it does move the atoms, so it is a genuine
+    coarse-grained system unchanged but does move the atoms, so it's a real
     degree of freedom of the atomistic configuration and is drawn uniformly.
     """
     normals = np.atleast_2d(np.asarray(normals, dtype=float))
@@ -189,13 +189,13 @@ def sample_dimer_geometry(rng, radial=None):
 class SamplingSettings:
     """Geometry of the sampled dimers.
 
-    ``min_com_distance``/``max_com_distance`` bound the centre-centre draw.
-    ``min_atom_distance``/``max_atom_distance`` bound the closest atom-atom
-    distance between the two molecules, and are what actually shapes a dataset.
-    Below ~3 A the pair is a hard-core clash, which MC never visits (it stays
-    beyond ~3.6 A) but which would dominate the squared fit error. Beyond UMA's
-    6 A interaction horizon the label is exactly zero, so ``Delta = -E_GBQ``
-    there is an artefact of the labeller (see docs/findings.md).
+    ``min_com_distance`` and ``max_com_distance`` bound the centre-centre
+    distance that is drawn. ``min_atom_distance`` and ``max_atom_distance`` bound
+    the closest atom-atom distance between the two molecules, and these are what
+    really shape a dataset. Below about 3 A the pair is a hard-core clash, which
+    MC never visits (it stays beyond about 3.6 A) but which would dominate the
+    squared fit error. Beyond UMA's 6 A cutoff the label is exactly zero, so
+    ``Delta = -E_GBQ`` there is an artefact of UMA (see docs/findings.md).
     """
 
     min_com_distance: float = 3.4
@@ -207,10 +207,10 @@ class SamplingSettings:
     max_placement_attempts: int = 500
 
     def __post_init__(self):
-        """Validate here, not at four scattered call sites.
+        """Check the settings when they're created.
 
-        A frozen dataclass is the one place every construction path goes
-        through, so a setting cannot reach the generator unchecked.
+        Every way of building a ``SamplingSettings`` passes through here, so no
+        setting can reach the generator unchecked.
         """
         if self.radial_sampling not in RADIAL_SAMPLINGS:
             raise ValueError(
@@ -312,10 +312,10 @@ def make_dimer(
 ) -> Atoms:
     """One non-periodic dimer whose closest atom-atom distance is inside the window.
 
-    Draws from :func:`sample_dimer_geometry` until a placement fits. Rejection
-    costs no MLIP call, only geometry, so the low acceptance of random
-    orientations at close range (a few percent at 3.6 A) costs CPU time, not
-    labelling budget.
+    Draws from :func:`sample_dimer_geometry` until a placement fits. A rejected
+    draw only costs a geometry check, not a UMA call, so the low acceptance of
+    random orientations at close range (a few percent at 3.6 A) costs a little
+    CPU time and none of the labelling budget.
     """
     for _ in range(settings.max_placement_attempts):
         u0, u1, r_vec = sample_dimer_geometry(rng, settings.radial())
@@ -473,9 +473,9 @@ def shard_count(path: Path) -> int:
     """Frames already complete in a shard, tolerating a truncated final one.
 
     A run killed mid-write can leave a partial frame, which makes
-    ``ase.io.read`` raise on the whole file. Counting extxyz frame headers
-    (natoms line + comment line + natoms body lines) instead means a resume
-    drops only the torn frame rather than the entire shard.
+    ``ase.io.read`` fail on the whole file. Counting extxyz frames by their
+    headers (natoms line, comment line, natoms body lines) instead means a
+    resumed run only drops the incomplete frame, not the whole shard.
     """
     path = Path(path)
     if not path.exists():
@@ -497,10 +497,10 @@ def shard_count(path: Path) -> int:
 def config_rng(seed: int, index: int, attempt: int = 0) -> np.random.Generator:
     """Independent generator for one configuration.
 
-    Seeding per *configuration* rather than per shard is what makes resume
-    exact: config ``index`` is byte-identical whether it was produced in the
-    first pass or after an interruption. Advancing a single shard-wide stream
-    could not do that.
+    Seeding each configuration separately, rather than each shard, is what makes
+    resuming exact: configuration ``index`` comes out byte-identical whether it
+    was produced in the first pass or after an interruption. A single random
+    stream per shard couldn't guarantee that.
     """
     return np.random.default_rng([int(seed), int(index), int(attempt)])
 
@@ -518,16 +518,16 @@ def generate_shard(
     progress: bool = False,
     progress_queue=None,
 ) -> dict:
-    """Generate one shard, appending incrementally so a crash loses ~nothing.
+    """Generate one shard, appending frames as they're made so a crash loses very little.
 
-    Takes ``settings_dict`` rather than a ``SamplingSettings`` so the payload
-    pickles cleanly into a spawned worker.
+    Takes ``settings_dict`` rather than a ``SamplingSettings`` so the arguments
+    can be pickled for a spawned worker.
 
-    Progress is reported one of two ways because the two call paths differ.
-    ``progress_queue`` is for the pooled path: a spawned worker cannot draw to the
-    terminal without shards fighting over the same lines, so it posts counts and the
-    parent owns the single bar. ``progress`` alone drives a local bar for the
-    in-process single-shard path.
+    Progress is reported in one of two ways, depending on how this is called.
+    ``progress_queue`` is used when shards run in a process pool: a spawned worker
+    can't draw to the terminal without the shards overwriting each other's lines,
+    so it sends counts to the parent, which draws a single bar. ``progress`` on its
+    own draws a local bar when a single shard runs in-process.
     """
     out_dir = Path(out_dir)
     settings = SamplingSettings(**settings_dict)
@@ -654,8 +654,8 @@ def generate_dataset(
 ) -> list[dict]:
     """Run a sharded, resumable generation campaign.
 
-    Idempotent: a shard already holding its target count is skipped, so
-    re-running the same command finishes an interrupted campaign.
+    A shard that already has its target count is skipped, so re-running the same
+    command finishes an interrupted campaign.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -819,8 +819,8 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--max-atom-distance",
         type=float,
         default=default_settings.max_atom_distance,
-        help="Ceiling on the closest atom-atom distance; UMA returns exactly zero "
-        "interaction past its 6 A horizon, so nothing beyond it is learnable.",
+        help="Upper limit on the closest atom-atom distance. UMA returns exactly zero "
+        "interaction beyond its 6 A cutoff, so there's nothing to learn past it.",
     )
     geometry.add_argument(
         "--max-placement-attempts",

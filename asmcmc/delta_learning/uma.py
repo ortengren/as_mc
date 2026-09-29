@@ -1,17 +1,17 @@
-"""Thin wrapper around Meta FAIR Chemistry's OMol-trained UMA MLIP.
+"""A thin wrapper around UMA, Meta FAIR Chemistry's machine-learned potential.
 
-`fairchem-core` is a heavy optional dependency (it pulls in PyTorch) and the
-UMA checkpoints are gated on Hugging Face, so the import happens inside
-:func:`load_uma_calculator` -- importing ``asmcmc`` must not require either.
+``fairchem-core`` is a heavy optional dependency (it pulls in PyTorch), and the
+UMA checkpoints are gated on Hugging Face, so fairchem is only imported inside
+:func:`load_uma_calculator`. Importing ``asmcmc`` needs neither.
 
-The calculator returned here is an ordinary ASE calculator; the OMol task
-expects ``charge`` and ``spin`` in ``Atoms.info`` (neutral benzene: 0 and 1).
+The calculator returned here is an ordinary ASE calculator. The OMol task expects
+``charge`` and ``spin`` in ``Atoms.info`` (0 and 1 for neutral benzene).
 """
 
 import inspect
 
-# fairchem 2.12 ships uma-s-1{,p1} and uma-m-1p1; newer releases add 1p2. Ask
-# for what is actually registered here and let callers override.
+# fairchem 2.12 ships uma-s-1, uma-s-1p1 and uma-m-1p1, and newer releases add
+# 1p2. The default is one that 2.12 has; callers can ask for another.
 DEFAULT_UMA_MODEL = "uma-s-1p1"
 
 _INSTALL_HINT = (
@@ -28,8 +28,8 @@ def load_uma_calculator(
 ):
     """Build a ``FAIRChemCalculator`` for the pretrained ``model``.
 
-    ``seed`` is forwarded only when the installed fairchem accepts it -- the
-    kwarg exists in some releases and not others (2.12 has no ``seed``).
+    ``seed`` is only passed on if the installed fairchem accepts it. Some
+    releases have that argument and others, including 2.12, don't.
     """
     try:
         from fairchem.core import FAIRChemCalculator, pretrained_mlip
@@ -46,11 +46,11 @@ def load_uma_calculator(
 
 
 def frame_energy(atoms, calculator, charge=0, spin=1):
-    """Potential energy (eV) of a copy of ``atoms``, OMol bookkeeping applied.
+    """Potential energy (eV) of a copy of ``atoms``, with the charge and spin OMol needs.
 
-    Works on a copy so the caller's frame keeps whatever calculator (or none)
-    it already had -- attaching a live MLIP to frames that are about to be
-    written out is how stale calculators end up in trajectories.
+    It works on a copy so the caller's frame keeps whatever calculator it had (or
+    none). Attaching a live MLIP to frames that are about to be written out
+    leaves stale calculators in trajectories.
     """
     at = atoms.copy()
     at.set_pbc(atoms.pbc)

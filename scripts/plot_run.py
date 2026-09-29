@@ -1,15 +1,15 @@
 """
-plot_run.py — Render diagnostics for one run directory.
+Plot diagnostics for one run directory.
 
-Thin CLI over :mod:`asmcmc.mc.diagnostics`; the plotting itself lives in the package
-so a notebook can import it without an argparse entry point.
+This is a thin command-line wrapper around :mod:`asmcmc.mc.diagnostics`. The
+plotting code lives in the package so that notebooks can use it too.
 
     python scripts/plot_run.py RUN_DIR                       # all four figures
     python scripts/plot_run.py RUN_DIR --phase --structure   # just those two
     python scripts/plot_run.py RUN_DIR --db simulation.db    # the production run
 
-Figures are written into RUN_DIR, prefixed with the db stem, so rendering a
-production trajectory never clobbers the equilibration figures.
+Figures are written into RUN_DIR with the db's name at the start of each file
+name, so plotting a production run never overwrites the equilibration figures.
 """
 
 import argparse
@@ -36,8 +36,8 @@ def main(argv=None):
         )
     args = parser.parse_args(argv)
 
-    # No plot flags at all means "everything" -- the common case is looking at a
-    # run you just finished, not picking one panel.
+    # With no plot flags, draw everything: usually you're looking at a run that
+    # just finished rather than picking out one panel.
     selected = [name for name in PLOTS if getattr(args, name)] or None
 
     written = render(

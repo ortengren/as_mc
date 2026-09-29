@@ -28,7 +28,8 @@ from asmcmc.fitting_gbq.report import write_artifacts
 from asmcmc.fitting_gbq.plots import write_plots
 
 DEFAULT_DATA = "data/benzene_crystals/ellipsoids_with_axes_and_energies.xyz"
-# Lattice-sum cutoff (Angstrom); matches the MC neighbour radius (nl_radius=15).
+# Pair-distance cutoff (Angstrom) for the lattice sums. The sampler's nl_radius is
+# a per-particle radius instead, so its pair cutoff is 2 * nl_radius.
 DEFAULT_CUTOFF = 15.0
 DEFAULT_OUT = "results/fit_gb"
 

@@ -166,9 +166,10 @@ def test_benchmark_discriminates(cacelli_bench, refit_bench):
 
 
 def test_default_potential_clears_the_gate(data):
-    """``DEFAULT_POTENTIAL``, which every ``MetropolisSampler`` gets when no
-    ``potential=`` is passed, must itself clear the gate: a default with
-    ``CONDENSED_REFIT``'s failure mode would silently corrupt every run.
+    """``DEFAULT_POTENTIAL``, which every ``MetropolisSampler`` uses unless given
+    a ``potential=``, must bind the cofacial stack and fit the wells reasonably.
+    A default that failed the way ``CONDENSED_REFIT`` does would silently
+    corrupt every run.
     """
     bench = dimer_benchmark(DEFAULT_POTENTIAL, data)
     assert bench.stacking_bound
@@ -184,7 +185,7 @@ def test_summary_is_printable(cacelli_bench):
     for token in ("cofacial", "parallel_displaced", "t_shaped", "RMSE", "bound"):
         assert token in s
 
-# --- UMA as ground truth ---
+# --- UMA as the reference ---
 # The project scores corrections against UMA, not MP2: GBQIII was *fitted* to
 # these MP2 rows, so scoring a correction against them rewards standing still.
 # The geometries survive as a structural probe; see the module docstring.
@@ -200,7 +201,7 @@ def test_default_reference_is_uma():
 
 
 def test_uma_shares_the_cacelli_geometry(data, uma_data):
-    """Same 197 dimers, different energies -- the point of the swap."""
+    """Same 197 dimers, different energies."""
     assert len(uma_data) == len(data)
     assert uma_data.reference == "uma" and data.reference == "mp2"
     for attr in ("uhat1", "uhat2", "r", "euler_deg"):
@@ -251,11 +252,11 @@ def test_baseline_may_be_skipped(uma_data):
 
 
 def test_uma_wants_every_well_deeper_than_gbq(uma_data):
-    """Why the reference swap changes the sign of the verdict.
+    """Against UMA, a correct correction deepens every well.
 
-    Under UMA all three families bind deeper than GB+Q does, so the correct
-    correction *deepens* every well -- exactly the move the MP2-referenced
-    score recorded as 'over-binding the cofacial stack'.
+    All three families bind more strongly under UMA than under GB+Q. Scored
+    against MP2 instead, deepening the cofacial well would count as
+    over-binding it, which is why the choice of reference matters.
     """
     b = dimer_benchmark(CACELLI_POTENTIAL, uma_data)
     for family, well in b.wells.items():
@@ -333,7 +334,7 @@ def test_euler_seq_threads_through_to_geometry(data):
     assert moved > 0
 
 
-# --- the Euler convention, pinned by the supplement's own energies ---
+# --- the Euler convention, checked against the supplement's own energies ---
 
 
 def _contacts(frame):

@@ -256,7 +256,7 @@ def test_columnar_no_overlaps():
 
 def test_columnar_default_density_is_usable():
     """At the (tight) default density the config places without overlaps and has
-    finite energy — i.e. it is a usable starting frame, not a blown-up core."""
+    finite energy, so it's a usable starting frame."""
     from asmcmc.mc.potentials import calc_total_energy
 
     f = generate_columnar_config(50, density=DEFAULT_COLUMNAR_DENSITY, seed=0)
@@ -389,8 +389,8 @@ def test_columnar_initializer_reads_shape_from_potential():
 
 
 def test_sampler_propagates_potential_shape_to_initializer():
-    """The footgun fix: an initializer built without a potential adopts the one
-    passed to the calculator, so geometry can't silently use the default shape."""
+    """An initializer built without a potential adopts the one passed to the
+    sampler, so the geometry can't silently use the default shape."""
     pot = dataclasses.replace(DEFAULT_POTENTIAL, sigma0=6.0, kappa=0.5)
     init = ColumnarLatticeInitializer(n_particles=64, density=1.0, seed=0)
     mc = MetropolisSampler(

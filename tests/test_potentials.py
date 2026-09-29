@@ -102,11 +102,11 @@ def test_calc_total_energy_two_particles(two_particle_frame):
 def test_calc_total_energy_counts_periodic_self_images():
     """A lone molecule in a small cell still interacts with its own images.
 
-    Regression: deduplicating pairs with ``i < j`` also discarded every
-    ``i == j`` self-image pair, so any cell with a lattice vector shorter than
-    the cutoff was under-counted -- and a one-molecule cell came back as
-    exactly 0.0. Only cells smaller than the cutoff are affected; MC boxes are
-    much larger, so sampler results are unchanged.
+    Keeping only pairs with ``i < j`` would also drop every ``i == j``
+    self-image pair, so any cell with a lattice vector shorter than the cutoff
+    would be under-counted, and a one-molecule cell would come out as exactly
+    0.0. Only cells smaller than the cutoff are affected; MC boxes are much
+    larger.
     """
     frame = ase.Atoms("X", positions=[[0., 0., 0.]], cell=[6., 6., 6.], pbc=True)
     frame.arrays["or_vec"] = np.array([[0., 0., 1.]])
@@ -133,7 +133,7 @@ def test_calc_total_energy_counts_periodic_self_images():
 # --- GBQPotential (loading + provenance) ---
 
 def _write_params_json(path, values):
-    """Write a fit params.json in the {value, unit} schema asmcmc.fitting emits."""
+    """Write a fit params.json in the {value, unit} format asmcmc.fitting_gbq writes."""
     payload = {k: {"value": v, "unit": "x"} for k, v in values.items()}
     payload["E_intra"] = {"value": -1601.0, "unit": "eV/molecule"}  # ignored on load
     path.write_text(json.dumps(payload))

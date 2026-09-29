@@ -1,28 +1,28 @@
-"""Coarse-graining: atomistic frames to one ellipsoid (centre + disc normal) per molecule.
+"""Map atomistic frames to one ellipsoid (centre and disc normal) per molecule.
 
-Needs no optional dependencies, so it can be imported and tested from the base
-install.
+This module has no optional dependencies, so it can be imported and tested from
+the base install.
 
-**Molecules that straddle a periodic boundary.** ASE's
-connectivity is PBC-aware, so identifying *which* atoms form a molecule works
-on any frame. Their *positions*, however, come back wrapped into the cell, and
-a molecule split across a face then has atoms at both edges — its naive
-centroid lands near the cell centre and its principal axes are meaningless.
-On the experimental Pbca benzene crystal
-(``data/benzene_pbca_cod_7238223.cif``) every molecule wraps, and the
-unguarded mapping collapses all four ring centres onto the same point.
-:func:`molecule_fragments` avoids this by walking the bond graph and
-accumulating the true bond displacement vectors, yielding contiguous
-(possibly outside-the-cell) coordinates that are safe to average.
+The main subtlety is molecules that straddle a periodic boundary. ASE's
+connectivity is PBC-aware, so working out which atoms belong to each molecule
+works on any frame. The positions, however, come back wrapped into the cell, so a
+molecule that crosses a cell face has atoms on both sides of the box. Its naive
+centroid then lands near the middle of the cell and its principal axes are
+meaningless. In the experimental Pbca benzene crystal
+(``data/benzene_pbca_cod_7238223.cif``) every molecule is wrapped like this, and
+a naive mapping puts all four ring centres on the same point.
+:func:`molecule_fragments` avoids the problem by walking the bond graph and adding
+up the true bond vectors, which gives contiguous coordinates (possibly outside
+the cell) that are safe to average.
 """
 
 import numpy as np
 from ase import Atoms
 from ase.neighborlist import natural_cutoffs, neighbor_list
 
-# Bond detection: covalent radii scaled by this factor. 1.2 is the usual ASE
-# working value -- comfortably above C-H (1.09 A) and aromatic C-C (1.39 A)
-# while staying below benzene's shortest intermolecular contacts.
+# Bonds are detected from covalent radii scaled by this factor. 1.2 is the usual
+# ASE value: well above C-H (1.09 A) and aromatic C-C (1.39 A) bond lengths, and
+# still below benzene's shortest intermolecular contacts.
 BOND_CUTOFF_MULT = 1.2
 
 

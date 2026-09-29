@@ -2,16 +2,15 @@
 
 Each function takes the already-computed per-frame predictions and targets
 (eV/molecule) rather than ``(theta, data)``, so a caller predicts once (e.g. via
-``predict_per_mol``) and threads the same arrays through every figure. Figures
-are written with the Agg backend -- this is a batch/reporting module, never an
-interactive one.
+``predict_per_mol``) and passes the same arrays to every figure. Figures are
+drawn with the non-interactive Agg backend and written to files.
 """
 
 import os
 
 import matplotlib
 
-matplotlib.use("Agg")  # batch reporting: write figures to file, never open a window
+matplotlib.use("Agg")  # write figures to files; never open a window
 import matplotlib.pyplot as plt
 import numpy as np
 

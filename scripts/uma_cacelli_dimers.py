@@ -124,8 +124,8 @@ def main():
     def recording(source, scan, n_points):
         def wrapped(family, data_, i_min):
             energies, r_values = scan(family, data_, i_min)
-            # Same call the scan used, so the offsets line up point for point
-            # -- the two sources scan at different resolutions.
+            # Use the same call as the scan so the offsets line up point for
+            # point, since the two sources scan at different resolutions.
             offsets = family_scan_geometry(family, data_, i_min, n_points)[1]
             curves.setdefault(family, {})[source] = (energies, r_values, offsets)
             return energies, r_values

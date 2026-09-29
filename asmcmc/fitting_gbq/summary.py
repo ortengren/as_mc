@@ -19,7 +19,7 @@ import re
 
 import matplotlib
 
-matplotlib.use("Agg")  # batch reporting: write figures to file, never open a window
+matplotlib.use("Agg")  # write figures to files; never open a window
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -43,9 +43,9 @@ MULTISEED_SUBDIR = "multiseed"
 # weighted-sweep reference.
 UNIFORM_CAMPAIGN = "uniform"
 BOLTZMANN_CAMPAIGN = "alpha_2.90"
-# The split is held fixed across the whole campaign (run_fit_seeds.sh pins
-# --split-seed 0; run_fits.sh leaves it at the default 0), so the held-out test
-# frames are identical for every run and we can reconstruct them here.
+# The split is the same across the whole campaign (run_fit_seeds.sh passes
+# --split-seed 0 and run_fits.sh leaves it at the default of 0), so every run has
+# the same held-out test frames and we can reconstruct them here.
 SPLIT_SEED = 0
 TEST_FRAC = 0.2
 # A representative sweep alpha used only to illustrate Boltzmann-weighting
@@ -217,19 +217,19 @@ def _test_metrics_by_region(theta, data, test_idx):
 def alpha_quality_plot(data, alpha_runs, uniform_theta, test_idx, path=None):
     """Held-out test error vs Boltzmann alpha, with uniform placed at alpha = 0.
 
-    Every fit is scored on the same yardstick -- the *unweighted* test error on
-    the shared held-out frames -- so the weighted and unweighted objectives are
-    comparable (their raw objective values are not, each being normalised by its
-    own ``sum(w)``). The uniform (unweighted) fit is the alpha -> 0 limit
-    (``w_k = exp(-0 * E_k) = 1``), so it is plotted at x = 0 -- but as a *detached*
-    marker, not joined to the weighted curve, since no fits were run between 0 and
-    the lowest sampled alpha and a connecting line there would imply unsampled
-    interpolation. Two panels (RMSE, R^2) each carry three curves: overall,
-    attractive (below the dataset-mean energy), and repulsive (above it). A
-    A vertical marker flags the production fit -- the uniform (unweighted) one at
-    alpha = 0. A weighting that earns its keep should lower attractive-region
-    error as alpha grows from 0, even as overall/repulsive error rises; here it
-    does not, which is why uniform was chosen.
+    Every fit is scored the same way, by its unweighted error on the shared
+    held-out frames, so weighted and unweighted fits can be compared. (Their raw
+    objective values can't, because each is normalised by its own ``sum(w)``.)
+    The uniform (unweighted) fit is the alpha -> 0 limit (``w_k = exp(-0 * E_k) =
+    1``), so it's plotted at x = 0. It's drawn as a separate marker rather than
+    joined to the weighted curve, because no fits were run between 0 and the
+    lowest sampled alpha, and a connecting line would suggest otherwise. Each of
+    the two panels (RMSE and R^2) has three curves: all frames, attractive frames
+    (below the dataset-mean energy) and repulsive frames (above it). A vertical
+    line marks the production fit, which is the uniform one at alpha = 0. A
+    weighting that's worth using should lower the attractive-region error as alpha
+    grows from 0, even if the overall and repulsive errors rise. Here it doesn't,
+    which is why the uniform fit was chosen.
     """
     region_styles = {
         "all": ("C0", "o"),
@@ -279,27 +279,28 @@ def seed_reproducibility_plot(
 ):
     """Agreement across differential_evolution seeds at fixed settings/split.
 
-    The ``run_fit_seeds.sh`` repeats vary only the DE seed, so disagreement among
-    them is the optimiser failing to relocate the same minimum -- not a data or
-    model effect. ``label`` names the weighting campaign (uniform production vs
-    the alpha=2.90 Boltzmann reference) for the figure title. Two panels:
+    The ``run_fit_seeds.sh`` repeats differ only in the DE seed, so any
+    disagreement between them means the optimiser didn't find the same minimum
+    each time; it isn't an effect of the data or the model. ``label`` names the
+    weighting campaign (the uniform production fit or the alpha=2.90 Boltzmann
+    reference) in the figure title. There are two panels.
 
-    - **Left (parameter spread):** each parameter's three seed values as dots,
-      with a min--max whisker, expressed as % deviation from that parameter's
-      cross-seed mean (so the 8 wildly different scales/units share one axis).
-      A well-determined, reproducible minimum sits as a tight cluster on the 0%
-      line; a tall whisker flags a parameter the DE seed moves (a sloppy /
-      poorly constrained direction). Unlike a single CV number, this shows the
-      actual scatter -- e.g. one outlying seed vs. evenly split.
-    - **Right (prediction agreement):** the empirical CDF of the per-frame
-      cross-seed prediction spread (std of the predicted energy across seeds,
-      meV/molecule) -- the fraction of test frames whose seeds agree to within a
-      given tolerance. Parameters can differ slightly yet predict identically (a
-      flat objective direction); this checks agreement at the level that actually
-      feeds the MC. A curve that shoots to 1 hard against 0 (median + 95th pct
-      marked) means the seeds are interchangeable. The energy axis is dropped
-      because the spread is uniformly negligible, not because its location
-      matters.
+    The left panel shows the spread of each parameter: each seed's value as a
+    dot, with a whisker from min to max, as a % deviation from that parameter's
+    mean over seeds, so the 8 parameters' very different scales share one axis.
+    A well-determined minimum shows up as a tight cluster on the 0% line, and a
+    tall whisker marks a parameter that moves with the seed (a poorly
+    constrained direction). Unlike a single coefficient of variation, this shows
+    the actual scatter, for example one outlying seed versus an even split.
+
+    The right panel shows how well the predictions agree: the empirical CDF of
+    the per-frame spread in predicted energy across seeds (std, meV/molecule),
+    i.e. the fraction of test frames on which the seeds agree to within a given
+    tolerance. Parameters can differ slightly and still give the same
+    predictions (along a flat direction of the objective), so this checks
+    agreement in the quantity the MC actually uses. If the curve rises to 1
+    right at 0 (the median and 95th percentile are marked), the seeds are
+    interchangeable.
 
     Returns the Figure (and saves to ``path`` when given).
     """
@@ -332,9 +333,9 @@ def seed_reproducibility_plot(
     ax.set_title("Spread of each fitted parameter across seeds")
     ax.legend(title="DE seed", fontsize="small")
 
-    # ECDF of the per-frame cross-seed prediction spread: fraction of test frames
-    # whose seeds agree to within a given tolerance. Curve hard against 0 = the
-    # seeds are interchangeable at the level (predicted energy) the MC consumes.
+    # ECDF of the per-frame prediction spread across seeds: the fraction of test
+    # frames on which the seeds agree to within a given tolerance. A curve that
+    # rises right at 0 means the seeds give interchangeable energies.
     spread_sorted = np.sort(pred_std_mev)
     ecdf = np.arange(1, spread_sorted.size + 1) / spread_sorted.size
     median = float(np.median(pred_std_mev))
@@ -397,23 +398,25 @@ def weight_concentration_plot(
 ):
     """How many frames actually constrain the Boltzmann-weighted fit.
 
-    A Boltzmann objective puts almost all weight on the most-bound frames, so the
-    fit can be determined by far fewer than the nominal 6826 frames -- the central
-    validity question behind the alpha choice (fit.py: higher alpha "deprioritizes
-    too much of the dataset"). Computed on the *training* frames, since that is
-    what the objective sees. Two panels:
+    A Boltzmann objective puts almost all of its weight on the most strongly
+    bound frames, so the fit can be determined by far fewer than the nominal
+    6826 frames. That's the main thing to check when choosing alpha (fit.py
+    notes that a higher alpha "deprioritizes too much of the dataset"). It's
+    computed on the training frames, since those are what the objective sees.
+    There are two panels.
 
-    - **Left (effective sample size vs alpha):** Kish ESS over a fine alpha grid,
-      from ``N_train`` at alpha=0 (uniform) decaying toward 1. The reference
-      alpha and the sampled sweep alphas are marked; a low ESS there means the
-      potential rests on a small subset of configurations.
-    - **Right (weight concentration at the reference alpha):** the cumulative
-      ("Lorenz") curve -- fraction of total objective weight held by the top-k
-      heaviest frames -- against the uniform diagonal. Annotated with the share of
-      frames that together hold 90% of the weight.
+    The left panel shows the Kish effective sample size over a fine grid of
+    alpha, falling from ``N_train`` at alpha = 0 (uniform) towards 1. The
+    reference alpha and the alphas used in the sweep are marked; a low ESS there
+    means the potential depends on a small subset of configurations.
 
-    This concentration is exactly why the production fit is the *uniform* one:
-    the reference alpha is shown only to make that trade-off visible.
+    The right panel shows how concentrated the weight is at the reference alpha:
+    the cumulative (Lorenz) curve of the fraction of total weight held by the
+    k heaviest frames, against the uniform diagonal. It's annotated with the
+    share of frames that together hold 90% of the weight.
+
+    This concentration is why the production fit is the uniform one; the
+    reference alpha is only shown to make the trade-off visible.
 
     Returns the Figure (and saves to ``path`` when given).
     """

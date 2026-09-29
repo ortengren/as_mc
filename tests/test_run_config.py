@@ -48,7 +48,7 @@ def test_runconfig_aniso_vol_round_trip(tmp_path):
 
 def test_runconfig_aniso_vol_defaults_false_for_legacy(tmp_path):
     """A run_config.json predating the flag (no aniso_vol key) loads as isotropic
-    (False) — faithful to the moves those runs actually used."""
+    (False), which is what those runs actually used."""
     path = tmp_path / "run_config.json"
     _default_config(aniso_vol=True).save(path)
     data = json.loads(path.read_text())

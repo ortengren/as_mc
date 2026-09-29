@@ -124,8 +124,8 @@ def test_invariants_are_blind_to_normal_sign():
 
     for a, b in zip(gb_invariants(up), gb_invariants(down)):
         assert np.allclose(a, b)
-    # ... and the raw signed quantity genuinely did change, so the test is not
-    # passing because both sides are identical.
+    # ... while the raw signed quantity did change, so the test isn't passing
+    # just because both sides are the same.
     assert not np.allclose(up["b"], down["b"])
 
 
@@ -149,7 +149,7 @@ def test_radial_profile_partitions_the_records():
 
 
 def test_radial_profile_reports_kcal_not_ev():
-    """Unit slips here would silently rescale every conclusion about Delta."""
+    """A unit mix-up here would silently rescale every conclusion about Delta."""
     frames = [_dimer([0.0, 0.0, 4.0])]
     records = pair_records(frames)
     rows = radial_profile(records, edges=(3.4, 5.0))
@@ -228,8 +228,8 @@ def test_qa_passes_on_a_clean_campaign(campaign):
 
 
 def test_qa_flags_a_hard_core_violation(campaign):
-    """The clash filter is the one guarantee a generated frame cannot self-check
-    after the fact, so QA has to be able to see a breach."""
+    """A generated frame can't show by itself that it passed the clash filter,
+    so QA has to be able to catch a violation."""
     frames, config = campaign
     config = {**config, "settings": {**config["settings"], "min_atom_distance": 99.0}}
 
@@ -283,8 +283,8 @@ def test_qa_records_disjoint_shard_seeds(campaign):
 
 def test_a_genuine_duplicate_is_caught(campaign):
     frames, config = campaign
-    # The frame itself, not a .copy() -- copying drops the SinglePointCalculator
-    # and qa_report's energy check would raise before reaching the duplicate.
+    # The frame itself, not a .copy(): copying drops the SinglePointCalculator,
+    # and qa_report's energy check would fail before reaching the duplicate.
     frames.append(frames[0])
     report = qa_report(frames, config)
     assert report.duplicate_signatures == 1

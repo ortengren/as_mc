@@ -1,16 +1,16 @@
-"""Render what one run directory's db says about the run.
+"""Diagnostic figures for one run directory, drawn from its db.
 
-Four figures, each answering one question:
+:func:`render` writes four figures:
 
-    structure.png    tail-averaged RDF g(r) + orientational correlation: which phase?
-    phase.png        nematic order S + density vs cycle: when did it settle?
-    acceptance.png   position / orientation / volume acceptance vs cycle
-    energy.png       energy per particle vs cycle: has it converged?
+    structure.png    g(r) and orientational correlation at the end of the run (which phase?)
+    phase.png        nematic order S and density against cycle (when did it settle?)
+    acceptance.png   position, orientation and volume acceptance against cycle
+    energy.png       energy per particle against cycle (has it converged?)
 
-Output names are prefixed with the db stem (``equilibration_energy.png``,
-``simulation_energy.png``), so production figures never overwrite equilibration
-ones. The command-line wrappers are ``scripts/plot_run.py`` and
-``scripts/export_xyz.py``.
+File names start with the db's name (``equilibration_energy.png``,
+``simulation_energy.png``), so production figures never overwrite the
+equilibration ones. ``scripts/plot_run.py`` and ``scripts/export_xyz.py`` are the
+command-line wrappers.
 """
 
 import math
@@ -22,7 +22,7 @@ import ase.io
 from ase.db import connect
 import matplotlib
 
-matplotlib.use("Agg")  # batch run: write figures to file, never open a window
+matplotlib.use("Agg")  # write figures to files; never open a window
 import matplotlib.pyplot as plt
 
 from asmcmc.mc.measurements import (
@@ -50,12 +50,12 @@ GRID = "#e5e4e0"
 
 @dataclass
 class RunTrace:
-    """One run directory's recorded blocks, reduced to plottable arrays.
+    """One run directory's recorded blocks, reduced to arrays that can be plotted.
 
-    ``or_vec`` is *not* retained: a long equilibration holds one (N, 3) array per
-    recorded block, so keeping them would cost hundreds of MB for a quantity that
-    reduces to a single scalar. :func:`load_run` collapses each frame to its
-    nematic S during the read and discards the array.
+    The ``or_vec`` arrays aren't kept. A long equilibration has one (N, 3) array
+    per recorded block, which would take hundreds of MB, and the plots only need
+    one number per frame. :func:`load_run` reduces each frame to its nematic S as
+    it reads, then drops the array.
     """
 
     run_dir: str
@@ -80,18 +80,18 @@ class RunTrace:
 
 
 def load_run(run_dir, db_name="equilibration.db", r_max=R_MAX, num_bins=NUM_BINS):
-    """Stream a run dir's db once and return a :class:`RunTrace`.
+    """Read a run directory's db once and return a :class:`RunTrace`.
 
-    One pass, because a long equilibration db is expensive to re-read and the four
-    plots would otherwise each pay for it. Per-frame scalars are collected for
-    every block; the last ``TAIL_FRACTION`` of frames are additionally fed to the
-    RDF/OCF accumulators via their per-frame ``compute()`` API. (``TrajectoryAnalyzer``
-    is not used here: it always consumes the whole db, and the point of the tail is
-    to describe where the run ended up.)
+    The db is read only once because a long equilibration db is slow to read, and
+    otherwise each of the four plots would read it again. Per-frame scalars are
+    collected for every block, and the frames in the last ``TAIL_FRACTION`` of the
+    run are also passed to the RDF and OCF accumulators through their per-frame
+    ``compute()`` method. ``TrajectoryAnalyzer`` isn't used because it always
+    reads the whole db, whereas the tail is meant to show where the run ended up.
 
-    Rows are read in write order, which is step order — a resumed run appends. The
-    step axis is asserted monotonic rather than sorted, so a db that violates that
-    is reported instead of being silently reordered.
+    Rows are read in the order they were written, which is step order because a
+    resumed run appends to the db. If the steps aren't increasing, an error is
+    raised rather than the rows being silently re-sorted.
     """
     path = os.path.join(run_dir, db_name)
     with connect(path) as db:
@@ -128,10 +128,9 @@ def load_run(run_dir, db_name="equilibration.db", r_max=R_MAX, num_bins=NUM_BINS
             s_vals.append(float(np.linalg.eigvalsh(nematic_q_tensor(or_vec))[-1]))
 
             if i in sampled:
-                # One toatoms() shared by both measurements -- it is not free, and
-                # each of them additionally builds its own mic distance matrix.
-                # toatoms() does not carry or_vec; OCF reads it out of array_data,
-                # which is exactly what row.data is.
+                # Both measurements share one toatoms() call, because each of them
+                # also builds its own distance matrix. toatoms() doesn't carry
+                # or_vec, so the OCF reads it from array_data, which is row.data.
                 frame = row.toatoms()
                 rdf.compute(frame, row.key_value_pairs, row.data)
                 ocf.compute(frame, row.key_value_pairs, row.data)
@@ -162,7 +161,7 @@ def load_run(run_dir, db_name="equilibration.db", r_max=R_MAX, num_bins=NUM_BINS
 
 
 def _chrome(ax):
-    """Recessive grid and axes so the data carries the ink."""
+    """Light grid and axes, so the data stands out."""
     ax.grid(True, color=GRID, lw=0.6)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
@@ -181,11 +180,11 @@ def _finish(fig, trace, path):
 
 
 def plot_structure(trace, path):
-    """Tail-averaged g(r) and orientational correlation — the phase read.
+    """g(r) and orientational correlation averaged over the end of the run.
 
-    A crystal shows sharp, well-separated g(r) peaks and structured s2(r); a liquid
-    shows one broad first shell decaying to g=1 and s2 to 0. Reference lines mark
-    both uncorrelated limits so the eye has an anchor.
+    These identify the phase. A crystal has sharp, well-separated g(r) peaks and
+    a structured s2(r). A liquid has one broad first shell, after which g(r)
+    decays to 1 and s2(r) to 0. Reference lines mark both of those limits.
     """
     fig, axs = plt.subplots(1, 2, figsize=(11, 4.2), sharex=True)
 
@@ -209,11 +208,11 @@ def plot_structure(trace, path):
 
 
 def plot_phase(trace, path):
-    """Nematic order and density vs cycle — when the run picked its basin.
+    """Nematic order and density against cycle, showing when the run settled.
 
-    Stacked on a shared cycle axis because they answer the same question from two
-    sides: an ordered phase holds S up *and* sits at the denser volume, and the two
-    should move together at a transition.
+    The two panels share a cycle axis because an ordered phase has both a high S
+    and a higher density, so the two curves should change together at a
+    transition.
     """
     fig, axs = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
 
@@ -231,12 +230,12 @@ def plot_phase(trace, path):
 
 
 def plot_acceptance(trace, path):
-    """Acceptance per move type vs cycle, against the tuner's target.
+    """Acceptance rate of each move type against cycle, with the tuner's target.
 
-    The panel that says whether the move widths are right — the whole point of the
-    calibrate-then-fix protocol. Under fixed widths these should sit flat near the
-    target; a curve drifting away means the configuration moved out from under the
-    width it was calibrated at.
+    This shows whether the move widths are right. The widths are tuned during
+    equilibration and then fixed, so in production these curves should stay flat
+    near the target. A curve that drifts away means the configuration has changed
+    since the width was tuned.
     """
     fig, ax = plt.subplots(figsize=(9, 4.5))
 
@@ -257,7 +256,7 @@ def plot_acceptance(trace, path):
 
 
 def plot_energy(trace, path):
-    """Total energy vs cycle — the convergence check, per molecule as well."""
+    """Energy per particle against cycle, to check convergence."""
     fig, ax = plt.subplots(figsize=(9, 4.5))
     ax.plot(trace.cycles, trace.energy / trace.n_particles, lw=2, color=SERIES["pos"])
     ax.set_xlabel("cycle  (N attempted moves)")
@@ -278,9 +277,9 @@ def render(run_dir, which=None, db_name="equilibration.db", out_dir=None):
     """Render the selected diagnostics for ``run_dir``; return ``{name: png_path}``.
 
     ``which`` defaults to every plot in :data:`PLOTS`. The db is loaded once and
-    shared across them. Output names are prefixed with the db stem
-    (``equilibration_structure.png``, ``simulation_structure.png``) so rendering a
-    production trajectory never clobbers the equilibration figures.
+    shared by all of them. File names start with the db's name
+    (``equilibration_structure.png``, ``simulation_structure.png``), so plotting a
+    production run never overwrites the equilibration figures.
     """
     which = list(PLOTS) if which is None else list(which)
     unknown = [w for w in which if w not in PLOTS]

@@ -270,10 +270,10 @@ def test_vol_delt_floored_on_rejected_volume_moves(four_particle_frame, tmp_path
 # ---------------------------------------------------------------------------
 
 def test_acceptance_decreases_with_vol_delta(four_particle_frame, tmp_path):
-    """The log-uniform proposal paired with the (N+1) criterion gives a
-    monotonically decreasing acceptance(delta) — i.e. a unique well-defined
-    optimum for the tuner to converge to. (The old uniform-in-V proposal made
-    this flat/rising, so the tuner had no fixed point.)"""
+    """The log-uniform proposal with the (N+1) criterion makes acceptance fall
+    steadily as delta grows, so there's a single well-defined width for the tuner
+    to converge to. (A proposal uniform in V makes this curve flat or rising, and
+    the tuner then has no fixed point.)"""
     metro = make_metro(four_particle_frame, tmp_path)
     frame = metro.current_frame
     nl, pot = metro.nl_cutoffs, metro.potential
@@ -344,8 +344,8 @@ def test_vol_delt_capped_on_accepted_volume_moves(four_particle_frame, tmp_path)
 
 def test_vol_delt_slew_bounded_per_update(four_particle_frame, tmp_path):
     """vol_max_scale caps how much a single tuning update may grow vol_delt, even
-    when acceptance is high enough to warrant a larger jump; None falls back to the
-    shared max_scale (current behavior)."""
+    when acceptance is high enough to justify a larger jump. None falls back to the
+    shared max_scale."""
     window = 10
     db_file = str(tmp_path / "sim" / "equilibration.db")
 
@@ -369,7 +369,7 @@ def test_vol_delt_slew_bounded_per_update(four_particle_frame, tmp_path):
 def test_vol_delt_slew_limits_rate_not_ceiling(four_particle_frame, tmp_path):
     """With a tight slew bound, vol_delt never jumps by more than the bound per
     update, yet still climbs past its start toward its natural ceiling over many
-    updates — the *rate* is limited, the endpoint is not capped."""
+    updates. The rate is limited, but the final value isn't capped."""
     metro = make_metro(four_particle_frame, tmp_path, vol_delt=0.05)
     window = 10
     metro.pos_decisions = [1] * window
@@ -406,9 +406,8 @@ def test_or_delt_capped_at_geometric_ceiling(four_particle_frame, tmp_path):
 
 
 def test_max_or_delt_caps_rotation_width(four_particle_frame, tmp_path):
-    """An explicit max_or_delt clamps or_delt at that value — the guard that keeps
-    a crystal start from being orientationally melted by near-randomizing
-    rotations — while leaving pos_delt tuning untouched."""
+    """An explicit max_or_delt clamps or_delt at that value, which stops large
+    rotations from melting a crystal start, and leaves pos_delt tuning alone."""
     cap = 0.25
     metro = make_metro(four_particle_frame, tmp_path, or_delt=0.2, pos_delt=0.1)
     window = 10

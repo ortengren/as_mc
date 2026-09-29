@@ -61,16 +61,18 @@ def test_volume_uniform_is_flat_in_r_cubed():
 
 
 def test_default_range_covers_the_uma_horizon_and_the_hard_core():
-    """min/max_atom_distance -- not max_com_distance -- shape a campaign's labels:
-    below ~3 A the pair is a hard-core clash, and past UMA's 6 A minimum-atom-atom
-    horizon the label is exactly zero (Delta = -E_GBQ). The window sits inside both.
+    """It's min/max_atom_distance, not max_com_distance, that shapes a campaign's labels.
+
+    Below about 3 A the pair is a hard-core clash, and once the closest atoms are
+    more than 6 A apart UMA's label is exactly zero (Delta = -E_GBQ). The window
+    sits between the two.
     """
     s = SamplingSettings()
     assert 2.4 < s.min_atom_distance < s.max_atom_distance < 6.0
 
 
 def test_mixture_sampling_concentrates_on_the_wells():
-    """The alternative shape stays reachable, and actually differs."""
+    """The other radial distribution still works, and really is different."""
     s = SamplingSettings(radial_sampling="mixture", compact_probability=0.7)
     rng = np.random.default_rng(0)
     r = s.radial().sample(rng, 20_000)
@@ -97,8 +99,8 @@ def test_cluster_shape_and_labelling(reference):
 
 
 def test_no_cluster_violates_the_hard_core(reference):
-    """min_atom_distance/max_atom_distance bound the realised separation; they
-    are rejection criteria, not suggestions."""
+    """min_atom_distance and max_atom_distance bound the actual closest distance;
+    configurations outside them are rejected."""
     s = SamplingSettings(min_atom_distance=2.5, max_atom_distance=4.0)
     for k in range(25):
         cluster = make_dimer(reference, config_rng(5, k), s)
@@ -114,7 +116,8 @@ def test_rigid_monomers_are_the_reference_up_to_rotation(reference):
     """Why monomers are rigid: one monomer energy is valid for every molecule.
 
     That is only true if each molecule is a *rigid rotation* of the reference,
-    which this pins via the (rotation-invariant) sorted internal distances.
+    which this checks using the sorted internal distances, since those don't
+    change under rotation.
     """
     cluster = make_dimer(reference, config_rng(7, 0), SamplingSettings())
     ref_d = np.sort(reference.get_all_distances().ravel())
@@ -157,7 +160,7 @@ def test_decomposition_algebra_is_exact(reference, make_stub_calculator):
 
 
 def test_rigid_monomer_energy_skips_the_per_molecule_calls(reference, make_stub_calculator):
-    """The cost saving is real: passing the constant makes zero monomer calls."""
+    """Passing the constant really does skip all the monomer calls."""
     cluster = make_dimer(reference, config_rng(13, 1), SamplingSettings())
 
     calc = make_stub_calculator()
@@ -227,12 +230,12 @@ def test_baseline_names_the_potential_it_used():
 def _run(tmp_path, n_configs, **kw):
     """Drive a campaign through the in-process path.
 
-    ``n_shards=1`` is deliberate, not a simplification: ``generate_dataset`` dispatches
-    multi-shard runs through a **spawned** ProcessPoolExecutor, and a
-    monkeypatched ``load_uma_calculator`` does not survive that boundary -- the
-    child re-imports the real module and would quietly load real UMA, turning
-    these into slow MLIP tests. The shard plan the pool would execute is
-    tested directly in ``test_shard_plan_*`` below.
+    ``n_shards=1`` is deliberate. ``generate_dataset`` runs multi-shard campaigns
+    in a spawned ProcessPoolExecutor, and the monkeypatched ``load_uma_calculator``
+    doesn't carry over into the child processes. They would re-import the real
+    module and quietly load real UMA, turning these into slow MLIP tests. The
+    shard plan the pool would run is tested directly in ``test_shard_plan_*``
+    below.
     """
     return generate_dataset(
         n_configs=n_configs,
@@ -260,9 +263,8 @@ def test_shard_plan_gives_shards_disjoint_seeds():
 
 
 def test_frames_are_written_incrementally(stub_uma, tmp_path):
-    """The old script buffered everything and wrote once at the end, so a crash
-    at the last configuration lost the whole run. Frames must land on disk as
-    they are produced."""
+    """Frames must be written to disk as they're produced, so a crash near the
+    end of a run doesn't lose everything."""
     generate_shard(
         out_dir=tmp_path, shard=0, n_configs=6, seed=1,
         settings_dict=asdict(SamplingSettings()), model="stub", device="cpu",
@@ -308,8 +310,8 @@ def test_resume_completes_a_partial_shard(stub_uma, tmp_path):
 
 
 def test_resume_reproduces_the_uninterrupted_run(stub_uma, tmp_path):
-    """Per-config seeding means an interrupted campaign is byte-identical to
-    one that ran straight through -- the property a shard-wide RNG loses."""
+    """Per-configuration seeding makes an interrupted campaign byte-identical to
+    one that ran straight through, which one random stream per shard couldn't."""
     kw = dict(
         settings_dict=asdict(SamplingSettings()), model="stub", device="cpu",
         decomposition="monomers", flush_every=1,
@@ -390,8 +392,8 @@ def test_saved_frames_carry_the_training_targets(stub_uma, tmp_path):
 
 
 def test_progress_queue_counts_every_configuration(stub_uma, tmp_path):
-    """The bar is only useful if it is honest: the posted total must equal the
-    configurations actually generated, or a long run reads as stalled or as
+    """The progress bar is only useful if it's accurate: the reported total must
+    equal the number of configurations generated, or a long run looks stalled or
     finished early."""
     import queue
 

@@ -382,7 +382,7 @@ def test_heat_capacity_known_variance():
 
 
 def test_heat_capacity_npt_enthalpy_fluctuation():
-    """With a pressure, Cp uses Var(U + P V) — incl. the U-V covariance."""
+    """With a pressure, Cp uses Var(U + P V), which includes the U-V covariance."""
     T, N, P = 250.0, 4, 1.5
     energies = np.array([1.0, 2.0, 3.0, 4.0])
     vols = np.array([10.0, 12.0, 9.0, 11.0])
@@ -530,12 +530,12 @@ def test_vibrational_heat_capacity_monotonic_in_temperature():
 
 
 def test_vibrational_heat_capacity_matches_gas_phase_residual():
-    """Physical anchor: for the ideal gas, C_p = 4R + C_vib.
+    """A check against experiment: for the ideal gas, C_p = 4R + C_vib.
 
-    Benzene's ideal-gas C_p(298.15 K) is 82.44 J/(mol K); the rigid-molecule
-    part is 4R (3/2 translation + 3/2 rotation + R for P V). What is left must
-    be the vibrational sum, which validates both the frequencies and -- far
-    more easily got wrong -- the degeneracies.
+    Benzene's ideal-gas C_p(298.15 K) is 82.44 J/(mol K), and the rigid-molecule
+    part is 4R (3/2 translation, 3/2 rotation and R for P V). What's left must be
+    the vibrational sum, so this checks both the frequencies and the
+    degeneracies, which are much easier to get wrong.
     """
     residual = 82.44 - 4 * 8.314463  # ~49.2 J/(mol K)
     c = float(vibrational_heat_capacity(298.15)) * EV_PER_K_TO_J_PER_MOL_K
@@ -564,7 +564,7 @@ def test_hc_over_k_converts_wavenumber_to_kelvin():
 
 
 def test_heat_capacity_vibrational_modes_default_off():
-    """Omitting vibrational_modes reproduces the pre-existing result exactly."""
+    """Without vibrational_modes, the result is exactly the rigid-body one."""
     T, N = 300.0, 5
     energies = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     m = HeatCapacity(temperature=T, num_particles=N)

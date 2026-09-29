@@ -272,7 +272,7 @@ def test_train_test_split_deterministic_and_partitions():
 
 
 def test_default_bounds_box():
-    """7 physical params from DEFAULT_BOUNDS; E_intra window straddles the mean."""
+    """DEFAULT_BOUNDS for the 8 physical parameters; E_intra centred on the mean."""
     data = _synthetic_fitdata()
     bounds = default_bounds(data, e_intra_half_window=5.0)
 

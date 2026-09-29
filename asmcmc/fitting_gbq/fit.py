@@ -43,7 +43,7 @@ DEFAULT_BOUNDS = {
     "mu": (-11.0, 8.0),  # mu and nu both have wide literature ranges
     "nu": (-12.46, 5.0),
     "xi": (0.5, 2.0),  # GB range scale; 1.0 is the standard identity
-    "Q": (-10.0, 0.0),  # only appears as Q^2, so pinned < 0
+    "Q": (-10.0, 0.0),  # only appears as Q^2, so its sign is fixed to negative
 }
 # Half-width (eV/molecule) of the E_intra search window around the mean target;
 # the GB+Q lattice correction sits at ~+-0.5 eV on top of the pedestal.

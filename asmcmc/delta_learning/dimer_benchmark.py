@@ -1,28 +1,30 @@
-"""The physics gate: score a potential on the benzene dimers of Cacelli et al. (2004).
+"""The dimer benchmark: score a potential on the benzene dimers of Cacelli et al. (2004).
 
 A potential can fit condensed-phase energies well and still get the pair
-interaction wrong, because a per-molecule energy is a sum over many pairs and the
-errors cancel. Every candidate is therefore scored here, on the 197 dimer
-geometries of Cacelli et al., J. Chem. Phys. 120, 3648 (2004)
-(``data/cacelli_2004_dimers``), before it is trusted in MC.
+interaction wrong, because a molecule's energy is a sum over many pairs and their
+errors can cancel. So before a candidate potential is used in MC, it's scored here
+on the 197 dimer geometries from Cacelli et al., J. Chem. Phys. 120, 3648 (2004)
+(``data/cacelli_2004_dimers``).
 
 The reference energies are UMA's (:data:`DEFAULT_REFERENCE`). The supplement's own
-MP2 energies load with ``reference="mp2"`` as a diagnostic only: GBQIII was fitted
-to them, so they reward leaving GBQIII unchanged. The verdict is
-:attr:`DimerBenchmark.improves_on_baseline`. The geometries are a structural probe
-(dense rays through the three wells), not a held-out test set.
+MP2 energies can be loaded with ``reference="mp2"``, but only as a diagnostic:
+GBQIII was fitted to them, so they favour leaving GBQIII unchanged. The verdict is
+:attr:`DimerBenchmark.improves_on_baseline`. The geometries are closely spaced
+scans along lines through the three wells. They show the shape of the wells, but
+they aren't a held-out test set.
 
-Geometry convention (supplement README): molecule A sits at the origin with its
-ring in the xz-plane and two C-H bonds on the z-axis, so its disc normal is +y;
-each row gives molecule B's centre of mass (X, Y, Z) and Euler angles (alpha,
-beta, gamma) in degrees. The README does not name the Euler sequence.
-:data:`EULER_SEQ` is the proper z-y-z convention (scipy's intrinsic ``"ZYZ"``),
-the only standard reading consistent with every angle-carrying row;
-``docs/findings.md`` §3 gives the evidence.
+The geometry convention comes from the supplement's README. Molecule A sits at
+the origin with its ring in the xz-plane and two C-H bonds along the z-axis, so
+its disc normal is +y. Each row gives molecule B's centre of mass (X, Y, Z) and
+its Euler angles (alpha, beta, gamma) in degrees. The README doesn't say which
+Euler convention it uses. :data:`EULER_SEQ` is the proper z-y-z convention
+(scipy's intrinsic ``"ZYZ"``), the only standard reading that is consistent with
+every row that has angles. ``docs/findings.md`` §3 gives the evidence.
 
-The atomistic helpers at the end rebuild the same rows as 24-atom dimers, so an
-ASE calculator (UMA) can be scored through :func:`score_energies` too; that is
-how ``scripts/uma_cacelli_dimers.py`` regenerates the UMA reference.
+The atomistic helpers at the end of the module rebuild the same rows as 24-atom
+dimers, so an ASE calculator such as UMA can also be scored with
+:func:`score_energies`. ``scripts/uma_cacelli_dimers.py`` uses them to regenerate
+the UMA reference.
 """
 
 import csv
@@ -99,12 +101,13 @@ def load_cacelli_dimers(path=None):
 
 
 def load_uma_dimers(path=None):
-    """The Cacelli dimer geometries carrying **UMA** interaction energies.
+    """The Cacelli dimer geometries with UMA interaction energies.
 
-    Geometry comes from :func:`load_cacelli_dimers`, never from the CSV, so both
-    references describe the same 197 dimers; the CSV's own coordinates are
-    checked against it and a mismatch raises rather than silently scoring a
-    different set. Regenerate with ``python scripts/uma_cacelli_dimers.py``.
+    The geometry always comes from :func:`load_cacelli_dimers`, not from the CSV,
+    so both references describe the same 197 dimers. The CSV's own coordinates
+    are checked against it, and a mismatch raises an error rather than silently
+    scoring a different set. Regenerate the CSV with
+    ``python scripts/uma_cacelli_dimers.py``.
     """
     path = UMA_DIMER_PATH if path is None else Path(path)
     if not path.exists():
@@ -143,7 +146,7 @@ def load_uma_dimers(path=None):
 
 
 def load_reference_dimers(reference=DEFAULT_REFERENCE, path=None):
-    """Dimer probe set for ``reference`` -- ``"uma"`` (ground truth) or ``"mp2"``."""
+    """The Cacelli dimers with ``"uma"`` (default) or ``"mp2"`` reference energies."""
     if reference == "uma":
         return load_uma_dimers(path)
     if reference == "mp2":
@@ -196,12 +199,13 @@ def _family_masks(data):
 
 @dataclass(frozen=True)
 class FamilyWell:
-    """One geometry family: ab initio minimum vs the model's.
+    """One geometry family: the reference minimum and the model's.
 
-    ``model_at_ab_min`` is the model energy at the ab initio minimum-energy
-    row — the single most diagnostic number (a broken model is repulsive
-    there). ``model_depth``/``model_r`` come from a dense scan along the
-    family's ray, so a shifted model minimum is still found.
+    ``model_at_ab_min`` is the model's energy at the row where the reference
+    energy is lowest. It's the most telling single number, since a broken model
+    is repulsive there. ``model_depth`` and ``model_r`` come from a fine scan
+    through the family's well, so the model's minimum is found even if it has
+    shifted.
     """
 
     ab_depth: float
@@ -230,7 +234,7 @@ class DimerBenchmark:
     @property
     def stacking_bound(self):
         """True if the model binds the cofacial stack at the reference
-        equilibrium separation — the check the condensed-phase refit fails."""
+        equilibrium separation. The condensed-phase GB+Q refit fails this."""
         return self.stacking_energy_kcal < 0.0
 
     @property
@@ -242,8 +246,8 @@ class DimerBenchmark:
     def improves_on_baseline(self):
         """Whether the correction beats the uncorrected baseline on the wells.
 
-        This is the verdict that matters, not :attr:`stacking_bound` -- a model
-        can bind the stack and still be worse than applying no correction.
+        Rank candidates on this, not on :attr:`stacking_bound`: a model can bind
+        the stack and still be worse than no correction at all.
         """
         return bool(self.well_rmse_gain_kcal > 0.0)
 
@@ -324,13 +328,13 @@ def cg_scan(potential, n_points=601):
 def score_energies(model_kcal, data, name, scan_fn=None, baseline_kcal=None, baseline_name=""):
     """Score per-row model energies (kcal/mol) against the reference dimers.
 
-    Global metrics cover all rows and the attractive subset (E < 0, where MC
-    spends its time); the repulsive wall's dynamic range would otherwise dominate.
-    ``scan_fn(family, data, i_min) -> (energies_kcal, distances)`` finds each
-    family's model minimum on a dense scan, so a shifted well is still measured;
-    without one, the well is taken from the family's own rows. ``baseline_kcal``
-    are the uncorrected potential's energies on the same rows, which a candidate
-    has to beat.
+    The overall metrics are computed on all rows and separately on the
+    attractive rows (E < 0), where MC spends its time; otherwise the large
+    energies on the repulsive wall would dominate. ``scan_fn(family, data, i_min)
+    -> (energies_kcal, distances)`` finds each family's model minimum on a fine
+    scan, so a shifted well is still measured. Without it, the well is taken from
+    the family's own rows. ``baseline_kcal`` holds the uncorrected potential's
+    energies on the same rows, which a candidate has to beat.
     """
     model = np.asarray(model_kcal, dtype=float)
     ab = data.energy_kcal

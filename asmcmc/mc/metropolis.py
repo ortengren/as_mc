@@ -217,10 +217,10 @@ class MetropolisSampler:
         widths, step count) comes from the last entry of ``{output_dir}/{db_name}``.
         Continuing the equilibration appends to the db.
 
-        ``vol_delt`` overrides the volume move width carried in the last db row. The
-        default (``None``) keeps the tuned value; pass a float to reset it — useful
-        when an old run's ``vol_delt`` is far off (e.g. pinned at ``MAX_VOL_DELT``)
-        and the gated tuner would take many windows to crawl back from it.
+        ``vol_delt`` overrides the volume move width stored in the last db row. The
+        default (``None``) keeps the tuned value. Passing a float resets it, which
+        helps when an old run's ``vol_delt`` is far off (for example stuck at
+        ``MAX_VOL_DELT``) and the tuner would need many windows to bring it back.
         """
         cfg = RunConfig.load(os.path.join(output_dir, config_name))
 
@@ -614,15 +614,15 @@ class MetropolisSampler:
         ``num_steps`` is a target, so calling again with a larger one continues the
         same run (appending to ``equilibration.db``).
 
-        ``vol_max_scale``/``vol_min_scale`` optionally give vol_delt tighter
-        per-update slew bounds than the shared ``max_scale``/``min_scale`` (see
-        ``block_update``): this slows how fast vol_delt can grow during a downhill
-        density collapse without capping the value it converges to.
+        ``vol_max_scale`` and ``vol_min_scale`` optionally limit how much vol_delt
+        can change in one update, more tightly than the shared ``max_scale`` and
+        ``min_scale`` (see ``block_update``). This slows how fast vol_delt can grow
+        while the box is collapsing, without capping the value it settles at.
 
-        ``max_or_delt`` caps the adapted rotation width (see ``block_update``);
-        pass a tight value (~0.25 rad) when starting from a crystal so the tuner
-        cannot walk or_delt up to near-randomizing rotations that melt the
-        starting order before the box equilibrates.
+        ``max_or_delt`` caps the tuned rotation width (see ``block_update``). When
+        starting from a crystal, pass a small value (about 0.25 rad) so the tuner
+        can't grow or_delt into rotations large enough to melt the crystal before
+        the box has equilibrated.
         """
 
         self._write_config(

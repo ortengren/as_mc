@@ -1,35 +1,34 @@
-"""Dimer dataset -> ellipsoid frames -> AniSOAP descriptors, aligned to the fit targets.
+"""Turn a dimer dataset into AniSOAP descriptors that line up with the fit targets.
 
-Three jobs, in the order the pipeline uses them.
+The pipeline has three steps.
 
-**1. Read the campaign once.** :func:`load_training_set` pulls only what the fit
-needs out of the extxyz shards (centres, principal axes, the Delta target) into flat
-CSR-style arrays cached as one small ``.npz``. The shards are ~32 MB of extxyz whose
-``info`` fields are ``_JSON`` blobs, so parsing them repeatedly would be inefficient.
+First, :func:`load_training_set` reads the campaign once. It pulls only what the
+fit needs out of the extxyz shards (centres, principal axes and the Delta target)
+into flat arrays, cached as one small ``.npz``. The shards are about 32 MB of
+extxyz with ``info`` fields stored as JSON strings, so parsing them repeatedly
+would be slow. The geometry is taken from the stored ``molecular_com`` and
+``principal_axes`` rather than by coarse-graining the atoms again, as in
+``dataset_analysis.pair_records``, so the numbers are exactly the ones the
+generator labelled.
 
-Geometry is read from the stored ``molecular_com``/``principal_axes`` rather
-than re-coarse-graining the atoms, for the same reason
-``dataset_analysis.pair_records`` does: the numbers are then exactly the ones the
-generator labelled, not a re-derivation that might differ in the last digits.
+Second, :func:`ellipsoid_frames` turns this into AniSOAP input by setting
+``c_q`` and ``c_diameter[1..3]`` on each frame. The quaternion comes from the
+principal axes via :func:`quaternions_from_axes`, and converting it back with
+``asmcmc.mc.trial_moves.quat_to_or_vec`` gives the stored ``or_vec``.
 
-**2. Turn it into AniSOAP input.** :func:`ellipsoid_frames` stamps ``c_q``
-and ``c_diameter[1..3]``. The quaternion comes from the principal-axis frame via
-:func:`quaternions_from_axes`, which round-trips through
-``asmcmc.mc.trial_moves.quat_to_or_vec`` back to the stored ``or_vec``.
+Third, :func:`descriptors` computes the descriptors and puts each row back with
+the frame it belongs to. This needs care because AniSOAP silently drops rows;
+see :func:`descriptor_rows`.
 
-**3. Compute descriptors that line up with the targets.**
-:func:`descriptors` is where the one genuinely dangerous property of the AniSOAP
-API is handled -- see :func:`descriptor_rows`.
+The ellipsoids are uniaxial: both in-plane semiaxes are equal
+(``Hypers.semiaxis_ab``), so rotating a particle about its disc normal doesn't
+change its descriptor. That's what allows an MC frame, which only stores
+``or_vec``, to be given an arbitrary azimuth (:func:`quaternions_from_normals`).
+A test checks this invariance.
 
-**Uniaxial ellipsoids.** Both in-plane semiaxes are equal
-(``Hypers.semiaxis_ab``), so rotating a particle about its disc normal changes no
-descriptor. That is what lets an MC frame, which stores only ``or_vec``, be
-featurised with an arbitrary azimuth (:func:`quaternions_from_normals`); a test
-pins the invariance.
-
-This module is pure computation and has no output directories or result files. All
-persistence lives in :mod:`asmcmc.delta_learning.sweep`, so swapping the sweep's
-bookkeeping (e.g. onto signac) touches that module and nothing here.
+This module only computes; it doesn't write any files. All of that lives in
+:mod:`asmcmc.delta_learning.sweep`, so moving the sweep's bookkeeping elsewhere
+(to signac, say) wouldn't touch this module.
 """
 
 from __future__ import annotations
@@ -48,10 +47,10 @@ from asmcmc.delta_learning.dataset import dataset_frames
 # any dimer.
 NONPERIODIC_CELL = 100.0
 
-# Sample-dimension names under which AniSOAP has shipped the structure index.
-# The installed version labels it "type", which is not what it holds -- every
-# bead here is the same species -- so the name alone is not trustworthy and
-# _structure_column validates whatever it picks. See descriptor_rows.
+# Names AniSOAP has used for the sample dimension that holds the structure index.
+# The installed version calls it "type", which is misleading (every bead here is
+# the same species), so the name can't be trusted on its own and
+# _structure_column checks whichever column it picks. See descriptor_rows.
 STRUCTURE_ALIASES = ("structure", "system", "type")
 
 
@@ -59,16 +58,16 @@ STRUCTURE_ALIASES = ("structure", "system", "type")
 class Hypers:
     """One AniSOAP hyperparameter point.
 
-    ``semiaxis_ab``/``semiaxis_c`` are **semiaxes** in Angstrom; AniSOAP reads
-    ``c_diameter[i]`` and halves it, so :func:`ellipsoid_frames` stamps twice
-    these. A single in-plane value enforces the uniaxial restriction the module
-    docstring explains.
+    ``semiaxis_ab`` and ``semiaxis_c`` are semiaxes in Angstrom. AniSOAP reads
+    ``c_diameter[i]`` and halves it, so :func:`ellipsoid_frames` writes twice
+    these values. Using one value for both in-plane axes keeps the ellipsoids
+    uniaxial (see the module docstring).
 
-    :meth:`to_dict` is deliberately flat and JSON-primitive: it is the identity
-    of a sweep point, and doubles as a valid signac state point should the
-    sweep's bookkeeping move there. :attr:`key` is the same identity as a
-    filesystem-safe string, rounded explicitly rather than via ``repr`` so it is
-    stable across processes and resumable runs.
+    :meth:`to_dict` is flat and uses only JSON types. It identifies a sweep
+    point, and would also work as a signac state point if the sweep's
+    bookkeeping moved there. :attr:`key` is the same identity as a string that
+    is safe to use as a directory name. It rounds explicitly rather than using
+    ``repr``, so it's the same in every process and when a run is resumed.
     """
 
     max_angular: int = 9
@@ -97,11 +96,11 @@ class Hypers:
     def n_features(self):
         """Width of the power spectrum at these hypers.
 
-        Needed because :func:`descriptor_rows` has to know the shape even when
-        AniSOAP returns nothing at all to measure it from (every centre beyond
-        the cutoff). AniSOAP does not expose this, so it is *derived*, and
-        ``tests/test_anisoap_fit.py`` pins it against the realised width
-        across the grid corners rather than trusting the arithmetic.
+        :func:`descriptor_rows` needs the width even when AniSOAP returns nothing
+        to measure it from (when every centre is beyond the cutoff). AniSOAP
+        doesn't provide it, so it's calculated here, and
+        ``tests/test_anisoap_fit.py`` checks the formula against the actual width
+        at the corners of the grid.
         """
         return (self.max_radial + 1) ** 2 * (self.max_angular + 1)
 
@@ -183,11 +182,11 @@ class TrainingSet:
 
 
 def _campaign_signature(campaign_dir):
-    """Fingerprint of the shards on disk, so a stale parse cache invalidates.
+    """Fingerprint of the shards on disk, so an out-of-date parse cache is rebuilt.
 
-    This identifies the *dataset*, not a sweep point -- it exists so that
-    extending or regenerating a campaign cannot silently be served from a cache
-    built against the old shards.
+    This identifies the dataset, not a sweep point. It makes sure that after a
+    campaign is extended or regenerated, the cache built from the old shards
+    isn't silently reused.
     """
     campaign_dir = Path(campaign_dir)
     parts = []
@@ -252,17 +251,17 @@ def load_training_set(campaign_dir, cache_dir=None, refresh=False):
 def quaternions_from_axes(axes):
     """``(w, x, y, z)`` quaternions from stacked principal-axis matrices.
 
-    ``axes`` is ``(n, 3, 3)`` with **columns** as axes, the layout
-    ``dataset`` writes, whose third column is the disc normal. A
-    principal-axis matrix is orthogonal but not necessarily a *rotation*: the
-    eigenvector signs are arbitrary, so roughly half come out left-handed.
-    Flipping the third column on those fixes the handedness without moving the
-    normal's axis (the disc is head-tail symmetric, so its sign is not physical).
+    ``axes`` is ``(n, 3, 3)`` with the axes as columns, as ``dataset`` writes
+    them, and the third column is the disc normal. A principal-axis matrix is
+    orthogonal but not necessarily a rotation: the eigenvector signs are
+    arbitrary, so about half of them come out left-handed. Flipping the third
+    column of those fixes the handedness without moving the normal's axis (the
+    disc is head-tail symmetric, so the normal's sign has no physical meaning).
 
-    ``Rotation.as_quat`` returns ``(x, y, z, w)``; AniSOAP's
-    ``rotation_type="quaternion"`` wants scalar-first, hence the roll. Getting
-    this backwards silently breaks rotational invariance, which is what
-    ``test_descriptor_is_rigid_rotation_invariant`` exists to catch.
+    ``Rotation.as_quat`` returns ``(x, y, z, w)``, but AniSOAP's
+    ``rotation_type="quaternion"`` expects the scalar first, hence the roll.
+    Getting this wrong silently breaks rotational invariance, which
+    ``test_descriptor_is_rigid_rotation_invariant`` checks for.
     """
     axes = np.asarray(axes, dtype=float)
     if axes.ndim == 2:
@@ -274,12 +273,12 @@ def quaternions_from_axes(axes):
 
 
 def quaternions_from_normals(normals, rng=None):
-    """``(w, x, y, z)`` quaternions taking body **z** onto each disc normal.
+    """``(w, x, y, z)`` quaternions that rotate the body z-axis onto each disc normal.
 
-    The deployment path: an MC frame stores ``or_vec`` only, so the azimuth about
-    the normal is undefined and is chosen arbitrarily (randomly when ``rng`` is
-    given, deterministically otherwise). Valid only for uniaxial ellipsoids --
-    see the module docstring.
+    This is what MC frames need, since they only store ``or_vec``. The azimuth
+    about the normal is undefined, so it's chosen arbitrarily (at random if
+    ``rng`` is given, otherwise deterministically). That's only valid for
+    uniaxial ellipsoids; see the module docstring.
     """
     normals = np.atleast_2d(np.asarray(normals, dtype=float))
     normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
@@ -365,12 +364,12 @@ def anisoap_projection(hypers):
 def _structure_column(samples, n_frames, bead_counts):
     """Index of the sample dimension holding the structure id, validated.
 
-    The installed AniSOAP names this dimension ``"type"`` even though it holds
-    the structure index, so the name is a hint and the validation is the real
-    evidence: a structure id must be in range, and a structure cannot contribute
-    more rows than it has beads. Were the column actually a species label (every
-    bead here is species X) it would be constant, and the row-count check fails
-    loudly instead of silently summing the whole dataset into frame 0.
+    The installed AniSOAP calls this dimension ``"type"`` even though it holds
+    the structure index, so the name is only a hint and the column is checked:
+    every structure id must be in range, and no structure can have more rows than
+    it has beads. If the column were really a species label (every bead here is
+    species X), it would be constant, and the row-count check would fail with an
+    error instead of silently adding the whole dataset into frame 0.
     """
     names = list(samples.names)
     ordered = [names.index(n) for n in STRUCTURE_ALIASES if n in names]
@@ -392,8 +391,8 @@ def _structure_column(samples, n_frames, bead_counts):
 def _any_pair_within_cutoff(frames, cutoff):
     """True if any frame has two centres closer than ``cutoff``.
 
-    The frames are isolated clusters (``pbc=False``), so this is a plain
-    pairwise distance -- no minimum-image convention to get wrong.
+    The frames are isolated clusters (``pbc=False``), so plain pairwise
+    distances are enough, with no minimum-image convention.
     """
     for frame in frames:
         positions = frame.get_positions()
@@ -413,17 +412,17 @@ def descriptor_rows(frames, hypers, projection=None):
 
     Returns ``(values, structure_ids, n_features)``.
 
-    AniSOAP emits no row for a centre with no neighbour inside the cutoff, and no
-    rows at all for a frame where every centre is isolated. Nothing in the returned
-    object flags the omission, so zipping the values against a target array
-    positionally misaligns the dataset and the fit trains on mismatched pairs. The
-    structure ids recovered here are the original frame indices (they skip dropped
-    frames rather than renumbering), which is what lets :func:`descriptors` put the
-    rows back where they belong.
+    AniSOAP returns no row for a centre with no neighbour inside the cutoff, and
+    no rows at all for a frame where every centre is isolated. Nothing in the
+    result says that rows are missing, so pairing the values with a target array
+    by position would misalign the dataset and the fit would train on mismatched
+    pairs. The structure ids returned here are the original frame indices (they
+    skip dropped frames rather than renumbering), which is what lets
+    :func:`descriptors` put the rows back in the right place.
 
-    When no frame has a neighbour inside the cutoff, AniSOAP raises from inside
-    ``cg_combine``, because it takes a max over angular channels that do not exist.
-    The right answer for our use case is an all-zero descriptor.
+    When no frame has a neighbour inside the cutoff, AniSOAP raises an error from
+    inside ``cg_combine``, because it takes a maximum over angular channels that
+    don't exist. What we want in that case is an all-zero descriptor.
     """
     projection = projection or anisoap_projection(hypers)
     if not _any_pair_within_cutoff(frames, hypers.cutoff_radius):
@@ -449,14 +448,14 @@ def descriptor_rows(frames, hypers, projection=None):
 def descriptors(frames, hypers, projection=None):
     """Per-frame descriptors, ``(len(frames), n_features)``.
 
-    Per-centre rows are summed into their frame, not averaged: the target is
-    an interaction energy, which is extensive, so a linear model on the sum is a
-    sum of per-centre energies. This is the standard local-energy decomposition, and
-    the form a deployment inside the sampler would use.
+    Per-centre rows are summed over each frame rather than averaged. The target
+    is an interaction energy, which is extensive, so a linear model on the sum is
+    a sum of per-centre energies. This is the usual local-energy decomposition,
+    and it's the form the sampler would use.
 
-    A frame with nothing inside the cutoff gets an all-zero row, since a model must
-    predict exactly zero interaction there. Paired with a no-intercept fit that gives
-    the model the correct dissociation limit by construction.
+    A frame with nothing inside the cutoff gets an all-zero row, since the model
+    must predict exactly zero interaction there. Together with a fit that has no
+    intercept, this gives the model the correct dissociation limit automatically.
     """
     values, ids, n_features = descriptor_rows(frames, hypers, projection=projection)
     matrix = np.zeros((len(frames), n_features), dtype=float)

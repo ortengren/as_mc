@@ -1,28 +1,29 @@
 """The Delta-learning model: ridge regression on AniSOAP descriptors.
 
-Fits ``Delta = E_UMA - E_GBQ`` per frame. Three choices here are physics, not
-statistics, and each is pinned by a test:
+The model fits ``Delta = E_UMA - E_GBQ`` per frame. Three of the choices here
+follow from the physics rather than the statistics, and each is checked by a test.
 
-**No intercept, and no feature centring.** A frame with nothing inside the
-cutoff has an all-zero descriptor (see :func:`descriptors.descriptors`), and the model
-must return exactly zero Delta there -- a truncated correction that returns a
-constant at infinite separation is wrong. Centring the features would destroy
-that (a zero descriptor would map to a nonzero feature vector), so scaling is a
-single scalar divide. This is not cosmetic: in deployment the per-centre
-energies are summed over N=400 particles, so a constant per centre becomes a
-large spurious extensive shift in the total energy.
+There is no intercept and no feature centring. A frame with nothing inside the
+cutoff has an all-zero descriptor (see :func:`descriptors.descriptors`), and the
+model must give exactly zero Delta for it, since a correction that tends to a
+constant at infinite separation is wrong. Centring the features would break this,
+because a zero descriptor would no longer map to a zero feature vector, so the
+features are only divided by a single scale factor. This matters in practice: in
+MC the per-centre energies are summed over N = 400 particles, so a constant per
+centre would add a large, spurious shift to the total energy.
 
-**Summed, not averaged, descriptors.** Set in :func:`descriptors.descriptors`; a linear
-model on a sum of per-centre rows *is* a sum of per-centre energies.
+Descriptors are summed over centres rather than averaged (in
+:func:`descriptors.descriptors`), so a linear model on them is a sum of
+per-centre energies.
 
-**Alpha chosen per hyperparameter point.** Feature count runs 64 to 490 across
-the sweep, so a shared fixed alpha would regularise the wide representations
-differently from the narrow ones and the comparison would measure the penalty,
-not the representation.
+The ridge penalty alpha is chosen separately at each hyperparameter point. The
+number of features runs from 64 to 490 across the sweep, so a single fixed alpha
+would regularise the wide representations differently from the narrow ones, and
+the comparison would end up measuring the penalty instead of the representation.
 
-Every metric is reported against ``null_rmse`` -- the RMSE of predicting zero --
-because Delta is small and heavily concentrated in the wells, so a model can
-post a flattering global RMSE by predicting nearly nothing everywhere.
+Every metric is reported alongside ``null_rmse``, the RMSE of always predicting
+zero. Delta is small and concentrated in the wells, so a model can get a
+flattering overall RMSE by predicting almost nothing everywhere.
 """
 
 from __future__ import annotations
@@ -56,9 +57,9 @@ WELL_MAX_R = WELL_RANGE[1]
 def train_test_split(n, test_frac=0.2, seed=0):
     """Index split, seeded once and reused at every hyperparameter point.
 
-    Every point must be scored on identical held-out frames or the sweep is
-    comparing splits as much as representations -- the same discipline
-    ``fitting_gbq.run.main`` applies across its weighting variants.
+    Every point has to be scored on the same held-out frames, otherwise the sweep
+    compares splits as much as representations. ``fitting_gbq.run.main`` does the
+    same across its weighting variants.
     """
     rng = np.random.default_rng(seed)
     order = rng.permutation(n)
@@ -70,9 +71,8 @@ def train_test_split(n, test_frac=0.2, seed=0):
 class DeltaModel:
     """A fitted correction: ``Delta_hat = (X / scale) @ coef``, in eV.
 
-    Carries its own :class:`~asmcmc.delta_learning.descriptors.Hypers` because a
-    descriptor matrix is meaningless without the hypers that produced it, so the
-    two must travel together into deployment and into the dimer gate.
+    It keeps its own :class:`~asmcmc.delta_learning.descriptors.Hypers`, because
+    the coefficients only make sense with the descriptors they were fitted on.
     """
 
     hypers: Hypers
@@ -185,7 +185,7 @@ def fit_delta(
     test_idx = np.asarray(test_idx, dtype=int)
 
     X_train = X[train_idx]
-    # One scalar, so a zero descriptor stays zero -- see the module docstring.
+    # A single scale factor, so a zero descriptor stays zero (see the module docstring).
     scale = float(np.sqrt(np.mean(X_train**2)))
     if not np.isfinite(scale) or scale == 0.0:
         scale = 1.0
@@ -223,17 +223,17 @@ def fit_delta(
 
 
 class AniSOAPDeltaPotential:
-    """A fitted correction wearing the ``Potential`` pair interface.
+    """A baseline potential (GBQIII by default) plus a fitted correction.
 
-    Exists so a candidate can be scored by
-    :func:`~asmcmc.delta_learning.dimer_benchmark.dimer_benchmark`, which only
-    calls ``pair_energy`` and reads ``name``. A good fit RMSE is not enough on
-    its own: a correction must also improve the dimer wells.
+    It has the ``pair_energy`` method and ``name`` of a ``Potential``, which is
+    all :func:`~asmcmc.delta_learning.dimer_benchmark.dimer_benchmark` needs to
+    score it. A good fit RMSE isn't enough on its
+    own; the correction also has to improve the dimer wells.
 
-    Building a two-bead frame from a pair of disc *normals* means inventing the
-    azimuth about each normal, which is exactly the deployment situation and is
-    sound for the same reason: with ``semiaxis_ab`` used for both in-plane axes,
-    spin about the normal moves no descriptor component.
+    Building a two-bead frame from a pair of disc normals means making up the
+    azimuth about each normal. MC frames have the same problem, and it's harmless
+    for the same reason: ``semiaxis_ab`` is used for both in-plane axes, so
+    spinning a particle about its normal doesn't change its descriptor.
     """
 
     def __init__(self, model, baseline=CACELLI_POTENTIAL, batch_size=512):
@@ -243,7 +243,7 @@ class AniSOAPDeltaPotential:
         self.name = f"anisoap_delta[{model.hypers.key}]"
 
     def delta(self, uhat1, uhat2, r):
-        """The learned correction alone (eV), for diagnosing the gate."""
+        """The learned correction on its own (eV), for looking into benchmark results."""
         uhat1 = np.atleast_2d(np.asarray(uhat1, dtype=float))
         uhat2 = np.atleast_2d(np.asarray(uhat2, dtype=float))
         r = np.atleast_2d(np.asarray(r, dtype=float))
@@ -267,5 +267,5 @@ class AniSOAPDeltaPotential:
         return out
 
     def pair_energy(self, uhat1, uhat2, r):
-        """Baseline + correction, in eV -- the ``Potential`` contract."""
+        """Baseline plus correction, in eV, as ``Potential.pair_energy`` returns."""
         return self.baseline.pair_energy(uhat1, uhat2, r) + self.delta(uhat1, uhat2, r)

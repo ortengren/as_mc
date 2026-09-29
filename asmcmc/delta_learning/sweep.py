@@ -1,49 +1,51 @@
-"""The hyperparameter sweep: which AniSOAP representation buys Delta-skill.
+"""The hyperparameter sweep: find which AniSOAP settings give the best Delta-model.
 
-This module owns **all** persistence for the fit. :mod:`asmcmc.delta_learning.descriptors`
-and :mod:`asmcmc.delta_learning.model` are pure computation with no notion of an
-output directory, so moving the bookkeeping elsewhere (signac, a queue) touches
-this file and nothing else -- ``Hypers.to_dict`` is already shaped as a valid
-state point for exactly that.
+This module does all of the fit's file handling. :mod:`asmcmc.delta_learning.descriptors`
+and :mod:`asmcmc.delta_learning.model` only compute and never write files, so
+moving the bookkeeping elsewhere (to signac or a job queue, say) would only mean
+changing this file. ``Hypers.to_dict`` already has the form of a signac state
+point for that reason.
 
-**What is swept, and what is not.** ``max_angular`` x ``max_radial`` x
-``cutoff_radius``. The first two set the representation's resolution (feature
-count runs 64 to 490 over the default grid); the third sets how much of the far
-field the correction can see at all. The ellipsoid semiaxes and the radial
-gaussian width are held at the ``Hypers`` defaults: they describe the *particle*
-rather than the basis, and the AniSOAP paper tuned them unsupervised (against
-atomistic SOAP), which is a different objective from Delta-skill.
+The sweep varies ``max_angular``, ``max_radial`` and ``cutoff_radius``. The first
+two set the resolution of the representation (the number of features runs from
+64 to 490 over the default grid), and the third sets how far the correction can
+see. The ellipsoid semiaxes and the radial Gaussian width stay at the ``Hypers``
+defaults. They describe the particle rather than the basis, and the AniSOAP paper
+tuned them without supervision (against atomistic SOAP), which is a different
+goal from predicting Delta.
 
-**Three things are built once, before the loop**, because the alternative
-silently changes what is being measured:
+Three things are built once, before the loop:
 
-* the :class:`~asmcmc.delta_learning.descriptors.TrainingSet` -- parsed in the *parent*
-  so spawned workers hit a warm ``.npz`` instead of each re-parsing 32 MB of
-  extxyz concurrently;
-* the train/test split -- every point must be scored on identical held-out
-  frames or the sweep compares splits as much as representations;
-* the dimer probe table -- :func:`~asmcmc.delta_learning.dimer_benchmark.load_reference_dimers`
-  re-reads the file on every call otherwise.
+* the :class:`~asmcmc.delta_learning.descriptors.TrainingSet`, parsed in the
+  parent process so the spawned workers read a cached ``.npz`` instead of each
+  re-parsing 32 MB of extxyz at the same time;
+* the train/test split, because every point has to be scored on the same
+  held-out frames, otherwise the sweep compares splits as much as
+  representations;
+* the dimer reference data, which
+  :func:`~asmcmc.delta_learning.dimer_benchmark.load_reference_dimers` would
+  otherwise re-read on every call.
 
-**The physics probe is recorded, not enforced.** Every point is scored against
-the reference dimers (UMA by default) and its ``improves_on_baseline`` verdict is
-written next to its RMSE, so ranking can weigh both: a good RMSE can hide a model
-that damages the wells. Rank on ``improves_on_baseline`` and the well errors, not
-on ``stacking_bound``, which only checks that the cofacial stack is bound at all.
+Every point is also run through the dimer benchmark against the reference dimers
+(UMA by default), and its ``improves_on_baseline`` verdict is saved next to its
+RMSE. Nothing is filtered out on it, but it matters for ranking, since a good
+RMSE can hide a model that makes the wells worse. Rank on
+``improves_on_baseline`` and the well errors, not on ``stacking_bound``, which
+only checks that the cofacial stack is bound at all.
 
-A finished sweep is re-scored against a different reference with ``--regate``,
-which recomputes each point's gate from its saved ``model.npz``. The fit is
-reference-independent -- the target is always ``E_UMA - E_GBQ`` -- so only the
-probe needs redoing, and refitting to change it would be pure waste.
+``--regate`` re-scores a finished sweep against a different reference by
+re-running the benchmark on each point's saved ``model.npz``. The fit doesn't
+depend on the benchmark's reference (the target is always ``E_UMA - E_GBQ``), so
+nothing needs to be refitted.
 """
 
 from __future__ import annotations
 
 import os
 
-# Each worker runs its own BLAS; without this they oversubscribe the machine and
-# the pool runs slower than serial. Set before numpy arrives, as the sampler's
-# parallel drivers do.
+# Each worker runs its own BLAS. Without this they oversubscribe the machine and
+# the pool runs slower than a single process. It has to be set before numpy is
+# imported, as in dataset.py.
 for _thread_var in (
     "OMP_NUM_THREADS",
     "OPENBLAS_NUM_THREADS",
@@ -95,9 +97,9 @@ DEFAULT_ANGULAR = (3, 5, 7, 9)
 DEFAULT_RADIAL = (3, 4, 5, 6)
 DEFAULT_CUTOFF = (6.0, 7.5, 9.0, 12.0)
 
-# Four cores, deliberately: a point holds the full descriptor matrix alongside
-# the campaign geometry, so the pool is bounded by what the machine can hold as
-# much as by core count. Raise it with --workers if the box has room.
+# Four workers by default, because each point holds its full descriptor matrix
+# and the campaign geometry in memory, so memory limits the pool as much as the
+# number of cores does. Use --workers to raise it on a machine with more memory.
 DEFAULT_WORKERS = 4
 
 METRICS_NAME = "metrics.json"
@@ -135,11 +137,11 @@ COMPARISON_FIELDS = [
 def build_grid(angular=DEFAULT_ANGULAR, radial=DEFAULT_RADIAL, cutoffs=DEFAULT_CUTOFF, base=None):
     """The sweep points, most expensive first.
 
-    Cost grows with all three axes, so the longest points are submitted at t=0
-    and the short ones backfill the tail -- otherwise the pool finishes its
-    cheap work early and then waits on one straggler. Ordering affects
-    scheduling only: a point's identity is its :attr:`Hypers.key`, so its output
-    directory does not depend on where it landed in the queue.
+    The cost grows along all three axes, so the slowest points are submitted
+    first and the quick ones fill in at the end. Otherwise the pool would finish
+    the cheap points early and then wait on one slow one. The order only affects
+    scheduling: each point is identified by its :attr:`Hypers.key`, so its output
+    directory doesn't depend on its place in the queue.
     """
     base = base or Hypers()
     grid = [
@@ -193,8 +195,8 @@ def save_model(point_dir, model):
         coef=model.coef,
         scale=np.array(model.scale, dtype=float),
         alpha=np.array(model.alpha, dtype=float),
-        # The hypers travel with the coefficients: a descriptor matrix is
-        # meaningless without them, and deployment needs both.
+        # Save the hypers with the coefficients, since the model can't be used
+        # without them.
         hypers=np.array(json.dumps(model.hypers.to_dict())),
     )
 
@@ -202,8 +204,8 @@ def save_model(point_dir, model):
 def load_model(point_dir):
     """Rebuild the :class:`DeltaModel` a point fitted.
 
-    The consumer-facing entry point: this is what turns a finished sweep into a
-    potential the sampler can run, via
+    This is how a finished sweep point becomes a potential that can be
+    benchmarked or run in the sampler, through
     :class:`~asmcmc.delta_learning.model.AniSOAPDeltaPotential`.
     """
     with np.load(Path(point_dir) / MODEL_NAME) as handle:
@@ -235,7 +237,7 @@ def _row_from_metrics(record):
         "test_well_rmse": test["well_rmse"],
         "test_r2": test["r2"],
         "n_zero_test": record["n_zero_test"],
-        # Blank when the stored gate does not say which reference it used.
+        # Blank when the stored benchmark result doesn't say which reference it used.
         "reference": gate.get("reference", ""),
         "improves_on_baseline": gate.get("improves_on_baseline", ""),
         "well_rmse_gain_kcal": gate.get("well_rmse_gain_kcal", ""),
@@ -251,21 +253,20 @@ def _row_from_metrics(record):
 
 
 def fit_and_score_point(hypers_dict, cfg):
-    """Fit and score one hyperparameter point, writing its three artifacts.
+    """Fit and score one hyperparameter point, and write its three output files.
 
-    Module-level and taking plain dicts so the payload pickles into a spawned
-    worker. Returns the metrics record, which is also what landed on disk.
+    It's a module-level function that takes plain dicts, so its arguments can be
+    pickled for a spawned worker. It returns the metrics record, which is the
+    same as what it writes to disk.
 
-    Idempotent: a point whose ``metrics.json`` already exists is loaded and
-    returned rather than refitted, so an interrupted sweep resumes by
-    re-running.
-    A skipped point therefore carries the timing of the computation that
-    originally produced it, not of the resume: ``timing`` describes the fit,
-    never the invocation that read it back.
+    If the point's ``metrics.json`` already exists, it's loaded and returned
+    instead of refitting, so re-running an interrupted sweep resumes it. The
+    ``timing`` in a reloaded record is from the original fit, not from the
+    resumed run.
 
-    Under ``regate`` a skipped point still has its gate recomputed from
-    ``model.npz``, which is how a finished sweep is re-scored against a
-    different reference without refitting.
+    With ``regate``, a finished point still has the benchmark re-run on its
+    ``model.npz``. That's how a finished sweep is re-scored against a different
+    reference without refitting.
     """
     hypers = Hypers.from_dict(hypers_dict)
     point_dir = Path(cfg["out_dir"]) / POINTS_DIRNAME / hypers.key
@@ -273,12 +274,11 @@ def fit_and_score_point(hypers_dict, cfg):
 
     if metrics_path.exists():
         record = json.loads(metrics_path.read_text())
-        # .get, not []: regate is optional, so a cfg built before it existed
-        # (or by hand) still drives the skip path.
+        # regate is optional, so a cfg written without it still works.
         if cfg.get("regate"):
-            # Re-gate from the saved model instead of refitting: the probe's
-            # reference is the only thing that changed, and ``test``/``train``
-            # are already Delta-against-UMA whatever the probe scores against.
+            # Re-run the benchmark on the saved model instead of refitting. Only
+            # the benchmark's reference can have changed: ``test`` and ``train``
+            # measure Delta against UMA whatever the benchmark scores against.
             record["gate"] = _gate_to_dict(
                 dimer_benchmark(
                     AniSOAPDeltaPotential(load_model(point_dir)), data=cfg["dimers"]
@@ -289,11 +289,11 @@ def fit_and_score_point(hypers_dict, cfg):
         record["skipped"] = True
         return record
 
-    # Only the two stages that are hyperparameter-dependent are timed: the
-    # descriptor build and the fit. The geometry load is a warm-npz read (~4 ms,
-    # constant across points) and the gate does not depend on the representation
-    # in any way the sweep is asking about. perf_counter, not time(): a monotonic
-    # clock that cannot step under an NTP adjustment mid-point.
+    # Only the two stages whose cost depends on the hyperparameters are timed:
+    # building the descriptors and fitting. Loading the geometry reads a cached
+    # npz (~4 ms, the same for every point), and the benchmark's cost doesn't
+    # depend on the representation. perf_counter is monotonic, so unlike time()
+    # it won't jump if the system clock is adjusted mid-point.
     timing = {}
     training_set = load_training_set(cfg["campaign"], cache_dir=cfg["cache_dir"])
 
@@ -315,7 +315,7 @@ def fit_and_score_point(hypers_dict, cfg):
 
     gate = None
     if cfg["gate"]:
-        # Isolated: a gate failure must not discard a fit that took minutes.
+        # Kept separate so a benchmark error doesn't throw away a fit that took minutes.
         try:
             gate = _gate_to_dict(
                 dimer_benchmark(AniSOAPDeltaPotential(result.model), data=cfg["dimers"])
@@ -340,8 +340,8 @@ def fit_and_score_point(hypers_dict, cfg):
     point_dir.mkdir(parents=True, exist_ok=True)
     (point_dir / HYPERS_NAME).write_text(json.dumps(hypers.to_dict(), indent=2))
     save_model(point_dir, result.model)
-    # Written last: it is the finished marker the resume path checks, so it must
-    # not appear before the artifacts it claims are present.
+    # Written last: the resume path takes this file to mean the point is finished,
+    # so it mustn't exist before the other files do.
     metrics_path.write_text(json.dumps(record, indent=2))
 
     record["skipped"] = False
@@ -455,9 +455,9 @@ def run_sweep(
         print(f"  FAILED {key}: {exc!r}")
 
     if gate and not regate:
-        # The skip path returns a stored gate verbatim, so without this a
-        # changed --reference would silently produce a comparison.csv that
-        # mixes references and looks clean.
+        # Finished points return their stored benchmark result as it is, so
+        # without this check a changed --reference would quietly produce a
+        # comparison.csv that mixes references.
         stale = [
             r["key"]
             for r in records
@@ -465,8 +465,9 @@ def run_sweep(
         ]
         if stale:
             print(
-                f"WARNING: {len(stale)} skipped points were gated against another "
-                f"reference; comparison.csv mixes references. Refresh with --regate."
+                f"WARNING: {len(stale)} finished points were scored against a "
+                f"different reference, so comparison.csv mixes references. Re-score "
+                f"them with --regate."
             )
 
     if records:
@@ -474,7 +475,10 @@ def run_sweep(
         verdicts = [(r.get("gate") or {}).get("improves_on_baseline") for r in records]
         scored = [v for v in verdicts if v is not None]
         if scored:
-            print(f"{sum(scored)}/{len(scored)} points improve on the {reference} baseline")
+            print(
+                f"{sum(scored)}/{len(scored)} points improve on GBQIII "
+                f"(scored against {reference})"
+            )
     return records
 
 
@@ -499,28 +503,33 @@ def build_parser():
     grid.add_argument("--cutoff", type=float, nargs="+", default=list(DEFAULT_CUTOFF), dest="cutoffs")
 
     parser.add_argument("--test-frac", type=float, default=0.2)
-    parser.add_argument("--split-seed", type=int, default=0, help="Held-out partition; pin it across sweeps.")
+    parser.add_argument(
+        "--split-seed",
+        type=int,
+        default=0,
+        help="Seed for the held-out split. Keep it fixed across sweeps you want to compare.",
+    )
     parser.add_argument("--cv-seed", type=int, default=0, help="RidgeCV fold assignment.")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     parser.add_argument(
         "--no-gate",
         dest="gate",
         action="store_false",
-        help="Skip the dimer-well benchmark (~12 s/point).",
+        help="Skip the dimer benchmark (~12 s per point).",
     )
     parser.add_argument(
         "--reference",
         default=DEFAULT_REFERENCE,
         choices=list(REFERENCES),
-        help="Ground truth for the dimer probe. 'mp2' is a diagnostic only — "
-        "GBQIII was fitted to those rows.",
+        help="Reference energies for the dimer benchmark. 'mp2' is only a diagnostic, "
+        "because GBQIII was fitted to those rows.",
     )
     parser.add_argument(
         "--regate",
         action="store_true",
-        help="Recompute the gate of already-finished points from their saved "
-        "model instead of returning the stored one. This is how a sweep is "
-        "re-scored against a new --reference; it refits nothing (~12 s/point).",
+        help="Re-run the dimer benchmark on finished points using their saved "
+        "models, instead of reusing the stored result. Use this to re-score a "
+        "sweep against a new --reference; nothing is refitted (~12 s per point).",
     )
     parser.add_argument("--refresh", action="store_true", help="Re-parse the campaign, ignoring the cache.")
     parser.add_argument("--no-progress", dest="progress", action="store_false")

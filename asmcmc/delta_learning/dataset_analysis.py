@@ -115,12 +115,13 @@ def gb_invariants(records):
 
 
 def stack_coordinates(records):
-    """``(height, slip)`` are the natural coordinates of a near-parallel pair.
+    """``(height, slip)``, the natural coordinates of a near-parallel pair.
 
-    ``height = r·a_hi`` is the separation along the more-aligned normal and
-    ``slip = r·sqrt(1 - a_hi²)`` the lateral offset. Cofacial, parallel-displaced
-    and far-slipped are one continuous family in ``slip`` at roughly fixed
-    ``height``, which is why these -- not ``a_hi`` -- are what the motif cuts use.
+    ``height = r·a_hi`` is the separation along the more closely aligned normal,
+    and ``slip = r·sqrt(1 - a_hi²)`` is the lateral offset. Cofacial,
+    parallel-displaced and far-slipped pairs form one continuous family in
+    ``slip`` at roughly constant ``height``, which is why the motif cuts use these
+    coordinates rather than ``a_hi``.
     """
     _, a_hi, _ = gb_invariants(records)
     r = records["r"]
@@ -130,9 +131,9 @@ def stack_coordinates(records):
 def motif_masks(records, well_range=WELL_RANGE):
     """Boolean masks naming the canonical benzene dimer contacts.
 
-    Restricted to the well region: outside it the same angles describe a pair
-    that is barely interacting, and pooling those in would dilute every
-    per-motif statistic toward zero.
+    Only pairs in the well region are included. Outside it the same angles
+    describe a pair that is barely interacting, and including those would pull
+    every per-motif statistic towards zero.
 
     Parallel contacts are split on slip (see the module constants).
     ``FAR_SLIPPED`` is kept apart from parallel-displaced because the GB+Q
@@ -155,11 +156,11 @@ def motif_masks(records, well_range=WELL_RANGE):
 
 
 def radial_profile(records, edges=DEFAULT_RADIAL_EDGES, units=EV_TO_KCAL):
-    """Per-shell counts and rms energies -- the table that localises Delta.
+    """Counts and rms energies per distance shell, showing where Delta is concentrated.
 
-    ``delta_sq_share`` is each shell's fraction of the total ``sum(Delta^2)``:
-    the quantity that decides where a fit's error budget actually goes, which
-    a count or a mean cannot show.
+    ``delta_sq_share`` is each shell's fraction of the total ``sum(Delta^2)``.
+    That's what decides where a fit's squared error mostly comes from, which a
+    count or a mean can't show.
     """
     edges = np.asarray(edges, dtype=float)
     delta = records["delta"] * units
@@ -206,7 +207,7 @@ def radial_profile(records, edges=DEFAULT_RADIAL_EDGES, units=EV_TO_KCAL):
 
 @dataclass(frozen=True)
 class QAReport:
-    """Campaign integrity. ``ok`` is the single gate; the fields say why."""
+    """Integrity checks for a campaign: ``ok`` is the verdict, the fields say why."""
 
     n_frames: int
     n_dimers: int
@@ -291,8 +292,8 @@ def qa_report(frames, config=None, potential=CACELLI_POTENTIAL):
         if not np.isfinite(energy):
             non_finite += 1
 
-        # The stored baseline against this module's per-pair rebuild: the check
-        # that licenses pair_records to trust gbq_interaction_energy directly.
+        # Compare the stored baseline with a per-pair recomputation. This check is
+        # what lets pair_records use gbq_interaction_energy directly.
         com = np.asarray(frame.info["molecular_com"], dtype=float)
         u = _normals(frame)
         i, j = np.triu_indices(len(com), k=1)

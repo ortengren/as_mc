@@ -37,9 +37,9 @@ def test_fragments_split_a_two_molecule_cell():
     assert sorted(len(idx) for idx, _ in frags) == [6, 6]
 
 
-# The regression this module exists for: an unguarded centroid over wrapped
-# positions collapses toward the cell centre. Here the ring is centred on a
-# cell face, so its atoms sit at both edges along x.
+# The main problem the module solves: a naive centroid of wrapped positions
+# collapses towards the cell centre. Here the ring is centred on a cell face, so
+# its atoms sit at both edges along x.
 def test_wrapped_molecule_is_unwrapped_before_averaging():
     # Ring plane contains x, centred on the x=0 face, so wrapping splits it.
     ring = _benzene_ring((0.0, 5.0, 5.0), normal="z")
@@ -73,8 +73,8 @@ def test_pbca_crystal_maps_to_four_distinct_ellipsoids():
     cg = coarse_grain_frame(frame)
     assert len(cg) == 4
 
-    # Every Pbca molecule straddles a boundary; the unguarded mapping put all
-    # four centres on the same point (the cell centre). Assert they are apart.
+    # Every Pbca molecule straddles a boundary, and a naive mapping puts all four
+    # centres on the same point (the cell centre). Check that they're apart.
     d = cg.get_all_distances(mic=True)
     assert d[np.triu_indices(4, k=1)].min() > 2.0
 
@@ -109,10 +109,10 @@ def test_mapping_reproduces_the_reference_ellipsoid_file():
         assert dist[np.arange(len(cg)), match].max() < 1e-4
 
         # Orientation: |u . u_ref| = 1 up to the head-tail sign. The ~1e-3
-        # floor is anisoap's own ellipsoid fit in the stored c_q, not a
-        # convention difference here -- mass-weighted, unweighted and
-        # carbons-only normals agree with each other to 1e-6, and the
-        # molecules are planar to 1.1e-4 A.
+        # tolerance comes from anisoap's own ellipsoid fit in the stored c_q,
+        # not from a difference in convention: mass-weighted, unweighted and
+        # carbon-only normals agree with each other to 1e-6, and the molecules
+        # are planar to 1.1e-4 A.
         ref_normals = quat_to_or_vec(ref.arrays["c_q"])[match]
         dots = np.abs(np.einsum("ij,ij->i", cg.arrays["or_vec"], ref_normals))
         assert np.abs(dots - 1.0).max() < 2e-3
