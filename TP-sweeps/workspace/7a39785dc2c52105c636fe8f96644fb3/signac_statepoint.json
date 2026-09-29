@@ -1,0 +1,1 @@
+{"T": 250, "P": 1.0, "potential": "gbq", "initial_config": "herringbone", "pos_jitter": 0.15, "or_jitter": 0.15, "vol_delta": 0.025, "seed": 45, "n_particles": 400, "nl_radius": 6.8, "nl_skin": 1.0, "max_or_delt": 0.25}

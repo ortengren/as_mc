@@ -122,6 +122,8 @@ data/                    inputs; see data/README.md
 docs/                    findings.md, cacelli_protocol_diff.md
 notebooks/               analyses (most read local results/)
 results/                 run outputs: local and gitignored, except results/fitting/
+TP-sweeps/               signac workspace for the planned (T, P) sweep; its code is
+                         on the signac-flow-htc-impl branch
 ```
 
 `delta_learning` and `fitting_gbq` build on `mc`, but `mc` doesn't import either
