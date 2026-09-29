@@ -5,25 +5,24 @@ in which each molecule is coarse-grained to a rigid oblate ellipsoid. It's also
 where we're trying to improve the potential those ellipsoids interact through,
 using a machine-learned AniSOAP correction.
 
-## Where things stand
+## Current Progress
 
 The sampler works and has been validated. It does NPT and NVT Metropolis MC of
 rigid ellipsoids, and with Cacelli et al.'s (2004) Gay-Berne plus quadrupole
 potential (GBQIII) it reproduces their 100 K crystal quantitatively.
 
-The problem is the potential itself, which is wrong in ways we understand. It
-melts at least 130 K too low, its liquid is about 28% too dense, and it prefers
-the wrong crystal polymorph.
+The potential itself melts at least 130 K too low, its liquid is about 28% too dense, and it prefers the wrong crystal polymorph.  This is similar to the reported behavior of Cacelli et al.
 
 Refitting GB+Q to DFT crystal energies didn't fix this: the refit matches the
-energies well but makes the stacked dimer repulsive. So the current approach is a
-Δ-learning correction, which is a ridge regression on AniSOAP descriptors trained
-on dimers labelled by the machine-learned potential UMA. The best model so far
-cuts the error in the dimer wells by 23% (from 0.465 to 0.359 kcal/mol). It
-hasn't been used in MC yet.
+energies well but makes the stacked dimer repulsive.
+
+The current approach is a Δ-learning correction, which is a ridge regression
+on AniSOAP descriptors trained on dimers labelled by the machine-learned
+potential UMA. The best model so far cuts the error in the dimer wells by 23%
+(from 0.465 to 0.359 kcal/mol). It hasn't been used in MC yet.
 
 [`docs/findings.md`](docs/findings.md) has the reasoning and the numbers behind
-all of this. Please read it before changing any of the physics.
+all of this.
 
 ## Install
 
@@ -36,24 +35,13 @@ pip install -e . --no-deps    # into an environment that already has the depende
 pip install -e ".[dev]"       # or let pip install the core dependencies and pytest
 ```
 
-`asmcmc.mc` only needs the core dependencies. There are two optional extras:
-
-- **AniSOAP**, for the `delta_learning` descriptors and model. Install AniSOAP
-  from a clone of the lab's AniSOAP repository (it builds a Rust extension), then
-  install the `anisoap` extra (`metatensor`, `scikit-learn`).
-- **UMA**, for labelling datasets. The `uma` extra installs `fairchem-core`
-  (tested with 2.12). The UMA checkpoint is gated on Hugging Face, so you'll need
-  to run `huggingface-cli login` once.
-
 ## Test
 
 ```bash
 pytest
 ```
 
-There are about 330 tests, and they take around a minute and a half. They don't
-need a GPU or fairchem (UMA is replaced by a stub), and everything they read is
-tracked in git. The AniSOAP tests are skipped if AniSOAP isn't installed.
+There are about 330 tests, and they take around a minute and a half.
 
 ## Quick start
 
@@ -143,9 +131,6 @@ python scripts/run_herringbone.py --temp 150 resume        # 9.2e6 more
 python scripts/run_herringbone.py --temp 150               # 1.5e7 production steps, then measure
 ```
 
-These runs take hours. Look at the `plot_run.py` figures before moving on to the
-next stage.
-
 ### The Δ-learning pipeline
 
 ```bash
@@ -153,18 +138,18 @@ python -m asmcmc.delta_learning.dataset --n-configs 5000 --out-dir results/clust
 python -m asmcmc.delta_learning.sweep --campaign results/cluster_new --out-dir results/anisoap_fit_new
 ```
 
-`dataset` needs fairchem and runs for hours. Keep `--max-workers` at 4 on a
-machine with 14 GB of RAM. When a campaign finishes, check it with
-`dataset_analysis.qa_report`. The sweep writes `comparison.csv`; rank its points
-by `improves_on_baseline` first and `well_rmse_kcal` second. If the reference
-data changes, `--regate` re-scores a finished sweep without refitting it.
+`dataset` needs fairchem and runs for hours. When a campaign finishes, check it
+with `dataset_analysis.qa_report`. The sweep writes `comparison.csv`; rank its
+points by `improves_on_baseline` first and `well_rmse_kcal` second. If the
+reference data changes, `--regate` re-scores a finished sweep without refitting
+it.
 
 ### The GB+Q refit
 
-Run `python -m asmcmc.fitting_gbq.run --help` to see the options. The campaign in
-`results/fitting/` was made with `scripts/run_fits.sh` and
-`scripts/run_fit_seeds.sh`, and `python -m asmcmc.fitting_gbq.summary` redraws its
-figures.
+Run `python -m asmcmc.fitting_gbq.run --help` to see the options. The campaign
+in `results/fitting/` was made with `scripts/run_fits.sh` and
+`scripts/run_fit_seeds.sh`, and `python -m asmcmc.fitting_gbq.summary` redraws
+its figures.
 
 ### Regenerating the UMA dimer reference
 
